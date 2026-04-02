@@ -4,16 +4,28 @@ const asyncHandler = require("express-async-handler");
 const admin = require("firebase-admin");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 const { BUCKET_URL } = require("../../config/server.config");
 
-// Firebase Service Account
-const serviceAccount = require("../../lux-dms-firebase-adminsdk.json");
-
 // Initialize Firebase Admin SDK
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
+const firebaseAppConfig = {
   storageBucket: BUCKET_URL,
-});
+};
+
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  firebaseAppConfig.credential = admin.credential.applicationDefault();
+} else {
+  const serviceAccountPath = path.resolve(__dirname, "../../lux-dms-firebase-adminsdk.json");
+  if (!fs.existsSync(serviceAccountPath)) {
+    throw new Error(
+      "Firebase service account file not found. Create lux-dms-firebase-adminsdk.json locally or set GOOGLE_APPLICATION_CREDENTIALS."
+    );
+  }
+  const serviceAccount = require(serviceAccountPath);
+  firebaseAppConfig.credential = admin.credential.cert(serviceAccount);
+}
+
+admin.initializeApp(firebaseAppConfig);
 
 const bucket = admin.storage().bucket();
 
