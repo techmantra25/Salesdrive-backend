@@ -1,0 +1,302 @@
+FILE: createSingleBill_steps.txt
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Step-by-step documentation of the "createSingleBill" API function.
+
+------------------------------------------------------------
+FUNCTION NAME:
+createSingleBill
+
+DESCRIPTION:
+This API endpoint is used to create a single bill (invoice) for an existing order.
+It performs multiple validations, manages inventory adjustments, updates order
+status, adjusts linked credit notes and replacement entries, and finally triggers
+bill printing.
+
+This function ensures data consistency between
+Order, Product, Inventory, Credit Notes, and Replacement models.
+
+------------------------------------------------------------
+STEP 1: Extract Request and Distributor Validation
+------------------------------------------------------------
+- Extract the distributorId from req.user._id (authenticated distributor).
+- Fetch the distributor document using:
+  Distributor.findById(distributorId)
+
+- If distributor not found:
+  → HTTP 404 Not Found
+  → Error: "Distributor not found"
+
+------------------------------------------------------------
+STEP 2: Extract Request Body Data
+------------------------------------------------------------
+The following fields are expected in req.body:
+
+{
+  orderId,
+  orderNo,
+  salesmanName,
+  routeId,
+  retailerId,
+  lineItems,
+  totalLines,
+  totalBasePoints,
+  grossAmount,
+  schemeDiscount,
+  distributorDiscount,
+  taxableAmount,
+  cgst,
+  sgst,
+  igst,
+  invoiceAmount,
+  roundOffAmount,
+  cashDiscount,
+  netAmount,
+  orderStatusToBe,
+  adjustedCreditNoteIds,
+  creditAmount,
+  adjustedReplacementIds
+}
+
+------------------------------------------------------------
+STEP 3: Validate Basic Requirements
+------------------------------------------------------------
+- If lineItems is empty:
+  → HTTP 400 Bad Request
+  → Error: "At least one line item is required"
+
+------------------------------------------------------------
+STEP 4: Validate Related Entities
+------------------------------------------------------------
+1. Order Validation:
+   - Find order using OrderEntry.findById(orderId)
+   - If order not found → HTTP 404 with message "Order not found"
+
+2. Retailer Validation:
+   - Find retailer using OutletApproved.findById(retailerId)
+   - If retailer not found → HTTP 404 with message "Retailer not found"
+
+------------------------------------------------------------
+STEP 5: Validate Line Items One by One
+------------------------------------------------------------
+For each item in lineItems:
+---------------------------------------------
+
+1. Product Validation:
+   - Find product using Product.findById(item.product)
+   - If not found → return 404 with message:
+     "Product not found for ID {productId} as provided in line items payload"
+
+2. Price Validation (if not Replacement item):
+   - If item.itemBillType !== "Replacement":
+     - Ensure price exists using Price.findById(item.price)
+     - If not found → return 404 with message:
+       "Price not found for ID {priceId}"
+
+3. Inventory Validation:
+   - If item.inventoryId is provided:
+       * Find inventory by ID
+       * If not found → return 400
+       * If availableQty < item.billQty → return 400
+         Message: "Insufficient stock for product {product_code}"
+   - If item.inventoryId is missing:
+       * Return 400 with message:
+         "Inventory not found for product {product_code}."
+
+If any step fails, bill creation for this request halts with an error.
+
+------------------------------------------------------------
+STEP 6: Generate Bill Number
+------------------------------------------------------------
+- Generate a new sequential bill number using:
+  const billNo = await generateBillNo("INV", distributorId)
+
+- If billNo generation fails → return 400 with message:
+  "Failed to generate bill number"
+
+------------------------------------------------------------
+STEP 7: Create Bill Document
+------------------------------------------------------------
+- Create a new entry in the Bill collection with all provided details
+  plus generated bill number.
+
+Syntax:
+await Bill.create({
+  distributorId,
+  billNo,
+  orderId,
+  orderNo,
+  salesmanName,
+  routeId,
+  retailerId,
+  lineItems,
+  totalLines,
+  totalBasePoints,
+  grossAmount,
+  schemeDiscount,
+  distributorDiscount,
+  taxableAmount,
+  cgst,
+  sgst,
+  igst,
+  invoiceAmount,
+  roundOffAmount,
+  cashDiscount,
+  netAmount,
+  billedType: "Single",
+  adjustedCreditNoteIds,
+  adjustedReplacementIds,
+  creditAmount
+});
+
+------------------------------------------------------------
+STEP 8: Link Bill to Order
+------------------------------------------------------------
+- Once bill is created, update the related order with the new bill ID:
+  await OrderEntry.findByIdAndUpdate(orderId, { $push: { billIds: newBill._id } })
+
+- This ensures traceability of which bills belong to which order.
+
+------------------------------------------------------------
+STEP 9: Recalculate and Update Order Status
+------------------------------------------------------------
+- Fetch the order again with populated "billIds" and "lineItems"
+  (for accurate recalculation)
+
+- Use helper utility:
+  getOrderStatusToBe(billList, LineItems)
+
+- This helper determines if the order should now be:
+  "Pending", "Partially_Billed", or "Completed_Billed"
+
+- Update order status accordingly:
+  OrderEntry.findByIdAndUpdate(orderId, { $set: { status: getOrderStatus } })
+
+------------------------------------------------------------
+STEP 10: Update Inventory Quantities
+------------------------------------------------------------
+- For each item in the bill:
+    - If inventoryId exists and billQty > 0:
+        * Reduce availableQty by billQty
+        * Increase reservedQty by billQty
+
+    Example:
+      availableQty = availableQty - billQty
+      reservedQty = reservedQty + billQty
+
+- Save the updated inventory using:
+  Inventory.findOneAndUpdate(
+      { _id: inventoryId },
+      { availableQty, reservedQty }
+  )
+
+------------------------------------------------------------
+STEP 11: Print Bill
+------------------------------------------------------------
+- After successful bill creation, call the utility:
+  billPrintUtil([newBillId])
+- This triggers printing or PDF generation of the created bill.
+
+------------------------------------------------------------
+STEP 12: Adjust Credit Notes (if provided)
+------------------------------------------------------------
+- If adjustedCreditNoteIds array contains any entries:
+  * Extract creditNoteIds from the objects:
+    creditNoteIds = adjustedCreditNoteIds.map(item => item.creditNoteId)
+  
+  For each credit note:
+  1. Find all matching CreditNoteModel documents
+  2. Push a new record into adjustedBillIds array:
+     {
+       billId,
+       adjustedAmount,
+       type: "Order_To_Bill",
+       collectionId: null
+     }
+  3. Recalculate total adjusted amount.
+  4. If totalAdjusted >= creditNote.amount:
+     → Update creditNoteStatus to "Completely Adjusted"
+
+------------------------------------------------------------
+STEP 13: Adjust Replacement Records (if provided)
+------------------------------------------------------------
+- If adjustedReplacementIds array contains entries:
+  * Extract replacementIds = adjustedReplacementIds.map(item => item.replacementId)
+  
+  For each replacement:
+  1. Find the matching record in Replacement collection.
+  2. Push a new record into adjustedBillIds array:
+     {
+       billId,
+       adjustedQty
+     }
+  3. Update status to "Completely Adjusted".
+
+------------------------------------------------------------
+STEP 14: Send Final Response
+------------------------------------------------------------
+- After successful execution of all steps, respond with:
+  HTTP 201 Created
+
+Response Example:
+{
+  "success": true,
+  "message": "Bill created successfully",
+  "data": { ...newBillData },
+  "billList": [...],
+  "LineItems": [...],
+  "getOrderStatus": "Partially_Billed"
+}
+
+------------------------------------------------------------
+STEP 15: Error Handling
+------------------------------------------------------------
+- All logic is wrapped in a try-catch block.
+- In case of an unhandled error:
+  → Respond with HTTP 500 Internal Server Error
+  → Throw the error for Express error middleware to handle.
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+When executed successfully:
+1. A valid single bill is created with the given data.
+2. Inventory stock levels are updated correctly.
+3. The order status is recalculated and updated.
+4. Bill is linked to its order.
+5. CreditNote and Replacement records are properly adjusted.
+6. The bill is printed automatically for further use.
+7. A success response is sent back to the client.
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Validate distributor and request body
+2. Validate existence of order and retailer
+3. Validate lineItems (product, price, inventory, stock levels)
+4. Generate unique sequential bill number
+5. Create bill in database
+6. Link bill to order
+7. Determine updated order status using utility
+8. Adjust inventory quantities
+9. Print generated bill
+10. Adjust relevant Credit Notes (if any)
+11. Adjust relevant Replacement records (if any)
+12. Return success response with details
+
+------------------------------------------------------------
+IMPORTANT BUSINESS RULES
+------------------------------------------------------------
+1. A bill cannot be created without at least one line item.
+2. Distributor, retailer, and order must exist before creating a bill.
+3. Inventory stock must be sufficient to fulfill requested quantities.
+4. Order status is automatically recalculated based on current bills.
+5. Adjusted Credit Notes and Replacements are updated atomically.
+6. Each bill gets a unique number using generateBillNo().
+7. The printed copy is generated as soon as bill creation completes.
+8. The system maintains full linkage between Bill, Order, Inventory,
+   Credit Note, and Replacement for traceability.
+
+------------------------------------------------------------
+AUTHOR: Srijita
+DATE: 27 Oct 2025

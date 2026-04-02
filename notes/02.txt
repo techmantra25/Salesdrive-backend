@@ -1,0 +1,25 @@
+cron.schedule("0 */6 * * *", async () => {
+  try {
+    const now = new Date();
+    const result = await Price.updateMany(
+      { expiresAt: { $lte: now }, status: true },
+      { $set: { status: false } }
+    );
+    console.log(`${result.nModified} prices updated to status false`);
+  } catch (error) {
+    console.error("Error updating prices:", error);
+  }
+});
+
+// cron.schedule('* * * * *', async () => {
+//   try {
+//     const now = new Date();
+//     const result = await Price.updateMany(
+//       { expiresAt: { $lte: now }, status: true },
+//       { $set: { status: false } }
+//     );
+//     console.log(`${result.nModified} prices updated to status false`);
+//   } catch (error) {
+//     console.error("Error updating prices:", error);
+//   }
+// });

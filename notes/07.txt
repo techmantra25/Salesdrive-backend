@@ -1,0 +1,43 @@
+transactionRoutes.route("/insert-dummy-data").get(
+  asyncHandler(async (req, res) => {
+    try {
+      const transactions = [];
+
+      for (let i = 0; i < 100000; i++) {
+        transactions.push({
+          distributorId: new mongoose.Types.ObjectId(
+            "66b1e270e2d6cbfc3cbddb58"
+          ),
+          productId: new mongoose.Types.ObjectId("66da8a0a820a644046f3e78e"),
+          transactionId: `txn_${i}`,
+          invItemId: new mongoose.Types.ObjectId("66e01833319155c35b66b905"),
+          qty: Math.floor(Math.random() * 100), // Random quantity for example
+          date: new Date(),
+          type: Math.random() > 0.5 ? "In" : "Out",
+          balanceCount: Math.floor(Math.random() * 1000), // Random balance count for example
+          description: `Description for txn ${i}`,
+        });
+
+        // Insert in bulk every 1000 records to avoid memory issues
+        if (transactions.length === 1000) {
+          await Transaction.insertMany(transactions);
+          transactions.length = 0; // Clear the array
+          console.log(`Inserted ${i + 1} documents`);
+        }
+      }
+
+      // Insert any remaining documents
+      if (transactions.length > 0) {
+        await Transaction.insertMany(transactions);
+        console.log("Inserted remaining documents");
+      }
+
+      res.status(200).json({ message: "Data insertion completed" });
+    } catch (error) {
+      console.error("Error inserting data:", error);
+      res
+        .status(400)
+        .json({ message: error.message || "Something went wrong" });
+    }
+  })
+);

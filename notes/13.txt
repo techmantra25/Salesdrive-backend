@@ -1,0 +1,250 @@
+// //////////////////////////////////////////////////// updated code ////////////////////////////////////////////
+
+// const asyncHandler = require("express-async-handler");
+// const Bill = require("../../models/bill.model");
+// const Employee = require("../../models/employee.model");
+// const Beat = require("../../models/beat.model");
+// const OutletApproved = require("../../models/outletApproved.model");
+// const { generateCode } = require("../../utils/codeGenerator");
+// const SalesReturnModel = require("../../models/salesReturn.model");
+// const Inventory = require("../../models/inventory.model");
+// const Product = require("../../models/product.model");
+// const Transaction = require("../../models/transaction.model");
+// const { transactionCode } = require("../../utils/codeGenerator");
+// const CreditNoteModel = require("../../models/creditNote.model");
+// const Price = require("../../models/price.model");
+
+// const createSalesReturn = asyncHandler(async (req, res) => {
+//   try {
+//     const {
+//       billId,
+//       salesmanName,
+//       routeId,
+//       retailerId,
+//       goodsType,
+//       collectionStatus,
+//       remarks,
+//       lineItems,
+//       totalBasePoints,
+//       grossAmount,
+//       schemeDiscount,
+//       distributorDiscount,
+//       taxableAmount,
+//       cgst,
+//       sgst,
+//       igst,
+//       invoiceAmount,
+//       roundOffAmount,
+//       cashDiscount,
+//       netAmount,
+//     } = req.body;
+
+//     const missingFields = [];
+//     if (!billId) missingFields.push("billId");
+//     if (!salesmanName) missingFields.push("salesmanName");
+//     if (!routeId) missingFields.push("routeId");
+//     if (!retailerId) missingFields.push("retailerId");
+//     if (!goodsType) missingFields.push("goodsType");
+
+//     if (missingFields.length > 0) {
+//       return res.status(400).json({
+//         status: 400,
+//         message: `Missing required fields: ${missingFields.join(", ")}`,
+//       });
+//     }
+
+//     const bill = await Bill.findById(billId);
+//     if (!bill) {
+//       return res.status(404).json({ status: 404, message: "Bill not found" });
+//     }
+
+//     const billNo = bill?.billNo;
+//     const salesReturnNogen = await generateCode("SR");
+//     const salesReturnNo = salesReturnNogen + billNo;
+
+//     const salesMan = await Employee.findById(salesmanName);
+//     if (!salesMan) {
+//       return res
+//         .status(404)
+//         .json({ status: 404, message: "Salesman not found" });
+//     }
+
+//     const beat = await Beat.findById(routeId);
+//     if (!beat) {
+//       return res.status(404).json({ status: 404, message: "Beat not found" });
+//     }
+
+//     const retailer = await OutletApproved.findById(retailerId);
+//     if (!retailer) {
+//       return res
+//         .status(404)
+//         .json({ status: 404, message: "Retailer not found" });
+//     }
+
+//     // Create sales return record
+//     const salesReturnData = new SalesReturnModel({
+//       distributorId: req.user._id,
+//       salesReturnNo,
+//       billId,
+//       salesmanName,
+//       routeId,
+//       retailerId,
+//       goodsType,
+//       collectionStatus,
+//       remarks,
+//       lineItems,
+//       totalBasePoints,
+//       grossAmount,
+//       schemeDiscount,
+//       distributorDiscount,
+//       taxableAmount,
+//       cgst,
+//       sgst,
+//       igst,
+//       invoiceAmount,
+//       roundOffAmount,
+//       cashDiscount,
+//       netAmount,
+//     });
+
+//     const salesReturn = await salesReturnData.save();
+
+//     // Link the sales return to the bill
+//     bill.salesReturnId = [...bill.salesReturnId, salesReturn?._id];
+//     await bill.save();
+
+//     let transactions = [];
+//     let creditNoteItems = [];
+//     const stockId = await transactionCode("LXSTA");
+
+//     for (const item of lineItems) {
+//       const inventory = await Inventory.findById(item.inventoryId);
+//       if (!inventory) {
+//         return res.status(404).json({
+//           status: 404,
+//           message: `Inventory item not found: ${item.inventoryId}`,
+//         });
+//       }
+
+//       // console.log(inventory);
+
+//       const product = await Product.findById(item.product);
+//       //  console.log("product", product);
+//       const priceEntry = await Price.findOne({ _id: item.price });
+
+//       let rlpbyPcs = 0;
+//       let dlpbyPcs = 0;
+
+//       if (product?.uom === "box") {
+//         const piecesPerBox = product?.no_of_pieces_in_a_box || 1;
+//         rlpbyPcs = priceEntry?.rlp_price / piecesPerBox;
+//         dlpbyPcs = priceEntry?.dlp_price / piecesPerBox;
+//       } else {
+//         rlpbyPcs = priceEntry?.rlp_price || 0;
+//         dlpbyPcs = priceEntry?.dlp_price || 0;
+//       }
+
+//       // Manually update inventory fields
+//       if (req.body.goodsType == "Salable") {
+//         inventory.availableQty =
+//           (inventory.availableQty || 0) + Number(item.returnQty);
+//         inventory.totalStockamtDlp = Math.round(
+//           (inventory.totalStockamtDlp || 0) + dlpbyPcs * Number(item.returnQty)
+//         );
+//         inventory.totalStockamtRlp = Math.round(
+//           (inventory.totalStockamtRlp || 0) + rlpbyPcs * Number(item.returnQty)
+//         );
+//       } else {
+//         inventory.unsalableQty =
+//           (inventory.unsalableQty || 0) + Number(item.returnQty);
+//         inventory.totalUnsalableamtDlp = Math.round(
+//           (inventory.totalUnsalableamtDlp || 0) +
+//             dlpbyPcs * Number(item.returnQty)
+//         );
+//         inventory.totalUnsalableStockamtRlp = Math.round(
+//           (inventory.totalUnsalableStockamtRlp || 0) +
+//             rlpbyPcs * Number(item.returnQty)
+//         );
+//       }
+
+//       // Update total quantity
+//       inventory.totalQty =
+//         (inventory.availableQty || 0) + (inventory.unsalableQty || 0);
+
+//       // Save updated inventory
+//       await inventory.save();
+
+//       // Log transaction
+//       transactions.push({
+//         distributorId: req.user._id,
+//         transactionId: stockId,
+//         invItemId: item.inventoryId,
+//         productId: inventory?.productId,
+//         qty: item.returnQty,
+//         date: new Date(),
+//         type: "In",
+//         description: `Sales Return for ${salesReturnNo}`,
+//         balanceCount:
+//           item.goodsType === "Salable"
+//             ? inventory.availableQty
+//             : inventory.unsalableQty,
+//         transactionType: "salesreturn",
+//         stockType: req.body.goodsType == "Salable" ? "salable" : "unsalable",
+//       });
+//     }
+
+//     // Save transactions in bulk
+//     if (transactions.length > 0) {
+//       await Transaction.insertMany(transactions);
+//     }
+
+//     // // add credit note salesReturnType if Credit Note is selected in lineitems store it in an seperate array
+
+//     // // lineItems add adjustmentId transaction No to lineItems based on product
+
+//     // for (const item of lineItems) {
+//     //   if (item.salesReturnType == "Credit Note") {
+//     //     creditNoteItems.push(item);
+//     //   }
+//     // }
+
+//     // //
+
+//     // //creditNoteItems >> each  netAmt sum
+
+//     // // Calculate total amount from netAmt of each credit note item
+//     // let totalAmount = creditNoteItems.reduce(
+//     //   (sum, item) => sum + (item.netAmt || 0),
+//     //   0
+//     // );
+
+//     // let creditNoteNo = await generateCode("CN");
+
+//     // //create credit note
+//     // const creditNoteData = new CreditNoteModel({
+//     //   distributorId: req.user._id,
+//     //   outletId: salesReturn.retailerId,
+//     //   salesReturnId: salesReturn._id,
+//     //   billId: bill._id,
+//     //   lineItems: creditNoteItems,
+//     //   creditNoteNo: creditNoteNo,
+//     //   amount: totalAmount,
+//     //   creditNoteCreationDate: new Date(),
+//     //   creditNoteStatus: "active",
+//     //   creditNoteRemark: salesReturn.remarks,
+//     // });
+//     // const creditNote = await creditNoteData.save();
+
+//     // console.log("creditNote", creditNote);
+
+//     res.status(201).json({
+//       status: 201,
+//       message: "Sales return created successfully",
+//       data: salesReturn,
+//     });
+//   } catch (error) {
+//     res.status(500).json({ status: 500, message: error.message });
+//   }
+// });
+
+// module.exports = { createSalesReturn };

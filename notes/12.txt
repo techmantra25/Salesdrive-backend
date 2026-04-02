@@ -1,0 +1,24 @@
+const loadSheetId = loadSheetData._id;
+const formData = new FormData();
+
+// Convert array to a string
+formData.append("loadSheetIds", JSON.stringify([loadSheetId]));
+
+// If fileName is a boolean, convert it to a string
+formData.append("fileName", "true");
+
+const CLOUDINARY_UPLOAD_URL = `${SERVER_URL}/api/v1/load-sheet/print-load-sheet`;
+
+try {
+  await axios.post(CLOUDINARY_UPLOAD_URL, formData, {
+    headers: {
+      ...formData.getHeaders(),
+    },
+  });
+} catch (error) {
+  throw error;
+}
+
+const updatedLoadSheetData = await LoadSheet.findOne({
+  _id: loadSheetId,
+});

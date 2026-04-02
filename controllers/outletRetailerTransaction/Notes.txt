@@ -1,0 +1,287 @@
+const asyncHandler = require("express-async-handler");
+const moment = require("moment-timezone");
+const { format } = require("fast-csv");
+
+const RetailerOutletTransaction = require("../../models/retailerOutletTransaction.model");
+const OutletApproved = require("../../models/outletApproved.model");
+const Bill = require("../../models/bill.model");
+const Invoice = require("../../models/invoice.model");
+
+const downloadRetailerLedgerReport = asyncHandler(async (req, res) => {
+  try {
+    let {
+      retailerId,
+      retailerIds,
+      distributorId,
+      fromDate,
+      toDate,
+      startDate,
+      endDate,
+      search,
+      transactionType,
+      transactionFor,
+      status,
+      outletCode,
+      retailerPhone,
+    } = req.query;
+
+    const actualFromDate = fromDate || startDate;
+    const actualToDate = toDate || endDate;
+
+    if (!actualFromDate || !actualToDate) {
+      return res.status(400).json({
+        message: "Missing fromDate / toDate",
+      });
+    }
+
+    const startOfDay = moment
+      .tz(actualFromDate, "Asia/Kolkata")
+      .startOf("day")
+      .toDate();
+
+    const endOfDay = moment
+      .tz(actualToDate, "Asia/Kolkata")
+      .endOf("day")
+      .toDate();
+
+    /* ---------------- TRANSACTION FILTER ---------------- */
+    const filter = {
+      createdAt: { $gte: startOfDay, $lte: endOfDay },
+    };
+
+    if (retailerId) filter.retailerId = retailerId;
+    if (distributorId) filter.distributorId = distributorId;
+    if (status) filter.status = status;
+    if (transactionType) filter.transactionType = transactionType;
+    if (transactionFor) filter.transactionFor = transactionFor;
+
+    /* ---------------- SEARCH ---------------- */
+    if (search) {
+      const regex = new RegExp(search, "i");
+      filter.$or = [{ transactionId: regex }, { remark: regex }];
+
+      const bill = await Bill.findOne({ billNo: regex }).select("_id");
+      if (bill) filter.$or.push({ billId: bill._id });
+
+      const invoice = await Invoice.findOne({ invoiceNo: regex }).select("_id");
+      if (invoice) filter.$or.push({ invoiceId: invoice._id });
+    }
+
+    /* ---------------- OUTLET FILTER ---------------- */
+    if (retailerPhone || outletCode) {
+      const outletQuery = {};
+
+      if (retailerPhone) {
+        outletQuery.mobile1 = {
+          $regex: retailerPhone.replace(/\D/g, ""),
+        };
+      }
+
+      if (outletCode) outletQuery.outletCode = outletCode;
+
+      const outletIds = await OutletApproved.find(outletQuery).distinct("_id");
+      if (!outletIds.length) return res.end();
+
+      filter.retailerId = { $in: outletIds };
+    }
+
+    /* ---------------- RESOLVE RETAILERS ---------------- */
+    let retailerObjectIds = [];
+
+    if (retailerId) {
+      retailerObjectIds = [retailerId];
+    } else if (retailerIds && retailerIds !== "all") {
+      retailerObjectIds = retailerIds.split(",").map((id) => id.trim());
+    } else {
+      retailerObjectIds = await RetailerOutletTransaction.distinct(
+        "retailerId",
+        filter,
+      );
+    }
+
+    if (!retailerObjectIds.length) return res.end();
+
+    /* ---------------- CSV SETUP ---------------- */
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=retailer-ledger-${moment().format(
+        "YYYY-MM-DD-HH-mm-ss",
+      )}.csv`,
+    );
+
+    const csvStream = format({
+      headers: [
+        "Date",
+        "Retailer code",
+        "Retailer name",
+        "Retailer state",
+        "Retailer city",
+        "DB Name",
+        "DB Code",
+        "Opening balance",
+        "Opening Point Credit",
+        "Sales Point Credit",
+        "Multiplier Point Credit",
+        "Redemption Cancellation Point Credit",
+        "Manual Adjustment Point Credit",
+        "Sales Return Point Debit",
+        "Sales Return Multiplier Point Debit",
+        "Gift Redemption Point Debit",
+        "Manual Adjustment Point Debit",
+        "Day Total Points",
+        "Closing balance",
+      ],
+    });
+
+    csvStream.pipe(res);
+
+    /* ---------------- RETAILER LOOP ---------------- */
+    const retailerCursor = OutletApproved.find({
+      _id: { $in: retailerObjectIds },
+    })
+      .populate([
+        { path: "stateId", select: "name" },
+        { path: "distributorId", select: "name dbCode" },
+      ])
+      .lean()
+      .cursor();
+
+    for await (const retailer of retailerCursor) {
+      const txns = await RetailerOutletTransaction.find({
+        ...filter,
+        retailerId: retailer._id,
+      })
+        .populate({
+          path: "distributorId",
+          select: "name dbCode",
+        })
+        .sort({ createdAt: 1 })
+        .lean();
+
+      if (!txns.length) continue;
+
+      const openingTxn = await RetailerOutletTransaction.findOne({
+        retailerId: retailer._id,
+        createdAt: { $lt: startOfDay },
+        status: "Success",
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      let runningBalance = openingTxn ? Number(openingTxn.balance) : 0;
+
+      const txnsByDate = {};
+      for (const t of txns) {
+        const key = moment(t.createdAt)
+          .tz("Asia/Kolkata")
+          .format("YYYY-MM-DD");
+        (txnsByDate[key] ||= []).push(t);
+      }
+
+      const current = moment.tz(startOfDay, "Asia/Kolkata");
+      const end = moment.tz(endOfDay, "Asia/Kolkata");
+
+      while (current.isSameOrBefore(end, "day")) {
+        const dayTxns = txnsByDate[current.format("YYYY-MM-DD")] || [];
+
+        let openingCredit = 0;
+        let salesCredit = 0;
+        let multiplierCredit = 0;
+        let redemptionCancelCredit = 0;
+        let manualCredit = 0;
+        let salesReturnDebit = 0;
+        let salesReturnMultiplierDebit = 0;
+        let giftRedemptionDebit = 0;
+        let manualDebit = 0;
+
+        for (const t of dayTxns) {
+          const p = Number(t.point) || 0;
+
+          switch (t.transactionFor) {
+            case "Opening Points":
+              openingCredit += p;
+              break;
+            case "SALES":
+              salesCredit += p;
+              break;
+            case "Multiplier Point":
+              multiplierCredit += p;
+              break;
+            case "Redemption Cancellation":
+              redemptionCancelCredit += p;
+              break;
+            case "Manual Adjustment Point":
+              t.transactionType === "credit"
+                ? (manualCredit += p)
+                : (manualDebit += p);
+              break;
+            case "Sales Return":
+              salesReturnDebit += p;
+              break;
+            case "Sales Return Multiplier":
+              salesReturnMultiplierDebit += p;
+              break;
+            case "Gift Redemption":
+              giftRedemptionDebit += p;
+              break;
+          }
+        }
+
+        const openingBalance = runningBalance;
+        const closingBalance =
+          dayTxns.length > 0
+            ? Number(dayTxns[dayTxns.length - 1].balance)
+            : runningBalance;
+
+        runningBalance = closingBalance;
+
+        const distributor =
+          dayTxns[0]?.distributorId || retailer.distributorId;
+
+        const dayTotalPoints =
+          openingCredit +
+          salesCredit +
+          multiplierCredit +
+          redemptionCancelCredit +
+          manualCredit -
+          (salesReturnDebit +
+            salesReturnMultiplierDebit +
+            giftRedemptionDebit +
+            manualDebit);
+
+        csvStream.write({
+          Date: current.format("DD-MM-YYYY"),
+          "Retailer code": retailer.outletCode || "",
+          "Retailer name": retailer.outletName || "",
+          "Retailer state": retailer.stateId?.name || "",
+          "Retailer city": retailer.city || "",
+          "DB Name": distributor?.name || "",
+          "DB Code": distributor?.dbCode || "",
+          "Opening balance": openingBalance,
+          "Opening Point Credit": openingCredit,
+          "Sales Point Credit": salesCredit,
+          "Multiplier Point Credit": multiplierCredit,
+          "Redemption Cancellation Point Credit": redemptionCancelCredit,
+          "Manual Adjustment Point Credit": manualCredit,
+          "Sales Return Point Debit": salesReturnDebit,
+          "Sales Return Multiplier Point Debit":
+            salesReturnMultiplierDebit,
+          "Gift Redemption Point Debit": giftRedemptionDebit,
+          "Manual Adjustment Point Debit": manualDebit,
+          "Day Total Points": dayTotalPoints,
+          "Closing balance": closingBalance,
+        });
+
+        current.add(1, "day");
+      }
+    }
+
+    csvStream.end();
+  } catch (err) {
+    console.error("Retailer Ledger Error:", err);
+    res.status(500).send("Failed to generate retailer ledger report");
+  }
+});
+
+module.exports = { downloadRetailerLedgerReport };

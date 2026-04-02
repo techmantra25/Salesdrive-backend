@@ -1,0 +1,236 @@
+const processOrderEntryImport = asyncHandler(async (item) => {
+  try {
+    if (!item?.Order_Id) {
+      return;
+    }
+    console.log({
+      Order_Id: item?.Order_Id,
+    });
+
+    let Order_Id = item?.Order_Id;
+    Order_Id = Order_Id.trim();
+
+    // distributorId -> dbCode
+    let dbCode = item?.DistributerCode;
+    if (!dbCode) {
+      // TODO: ERROR LOG
+      console.log("No DistributerCode found for Order_Id:", Order_Id);
+      return;
+    }
+    dbCode = dbCode.trim();
+
+    // temporary
+    const neededDbCode = ["DCAL1001"];
+    if (dbCode && !neededDbCode.includes(dbCode)) {
+      return;
+    }
+
+    const distributor = await Distributor.findOne({
+      dbCode: dbCode,
+    });
+    if (!distributor) {
+      // TODO: ERROR LOG
+      console.log(
+        "No distributor found for dbCode:",
+        dbCode + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const distributorId = distributor._id;
+
+    // salesmanName -> empId
+    let empId = item?.Label;
+    if (!empId) {
+      // TODO: ERROR LOG
+      console.log("No empId found for Order_Id:", Order_Id);
+      return;
+    }
+    empId = empId.trim();
+    const employee = await Employee.findOne({
+      empId: empId,
+    });
+    if (!employee) {
+      // TODO: ERROR LOG
+      console.log(
+        "No employee found for empId:",
+        empId + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const salesmanName = employee._id;
+
+    // retailerId -> outletId
+    let outletUID = item?.Client_Id;
+    if (!outletUID) {
+      // TODO: ERROR LOG
+      console.log("No outletUID found for Order_Id:", Order_Id);
+      return;
+    }
+    outletUID = outletUID.trim();
+    const outlet = await OutletApproved.findOne({
+      outletUID: outletUID,
+    });
+    if (!outlet) {
+      // TODO: ERROR LOG
+      console.log(
+        "No outlet found for outletUID:",
+        outletUID + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const retailerId = outlet._id;
+
+    // routeId -> beatId
+    const beatId = outlet?.beatId;
+    if (!beatId) {
+      // TODO: ERROR LOG
+      console.log(
+        "No beatId found for outletUID:",
+        outletUID + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const beat = await Beat.findById(beatId);
+    if (!beat) {
+      // TODO: ERROR LOG
+      console.log(
+        "No beatId found for outletUID:",
+        outletUID + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+
+    const routeId = beat._id;
+
+    // inside line items
+    // product -> productId
+    let product_code = item?.Variant_Extension1;
+    if (!product_code) {
+      // TODO: ERROR LOG
+      console.log("No product_code found for Order_Id:", Order_Id);
+      return;
+    }
+    product_code = product_code.trim();
+    const product = await Product.findOne({
+      product_code: product_code,
+    });
+    if (!product) {
+      // TODO: ERROR LOG
+      console.log(
+        "No product found for product_code:",
+        product_code + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const productId = product._id;
+
+    // price -> priceID
+    // Fetch pricing for the product
+    let price = null;
+    try {
+      const priceResponse = await axios.get(
+        `${SERVER_URL}/api/v1/price/product-pricing/${productId?.toString()}?distributorId=${distributorId.toString()}`
+      );
+
+      if (priceResponse?.data?.data?.length > 0) {
+        price = priceResponse?.data?.data[0];
+      } else {
+        price = null;
+      }
+    } catch (error) {
+      price = null;
+    }
+    if (!price) {
+      // TODO: ERROR LOG
+      console.log(
+        "No price found for Product Code:",
+        product_code + " for Order_Id:",
+        Order_Id
+      );
+      return;
+    }
+    const priceId = price._id;
+
+    // inventoryId -> inventoryId (optional)
+    // Fetch stock information for the product
+    let inventory = null;
+    try {
+      const stockResponse = await axios.get(
+        `${SERVER_URL}/api/v1/inventory/get-stock-product/${productId?.toString()}?distributorId=${distributorId.toString()}`
+      );
+
+      if (stockResponse?.data?.data) {
+        inventory = stockResponse?.data?.data;
+      } else {
+        inventory = null;
+      }
+    } catch (error) {
+      inventory = null;
+    }
+
+    // Generate order number
+    const orderNumber = await orderNumberGenerator("ORD");
+
+    let orderData = {
+      orderNo: orderNumber,
+      distributorId: distributorId,
+      salesmanName: salesmanName,
+      routeId: routeId,
+      retailerId: retailerId,
+      orderType: "Normal-Sale",
+      paymentMode: "Credit",
+      lineItems: [
+        {
+          product: productId,
+          price: priceId,
+          uom: "pcs",
+          inventoryId: inventoryId,
+          oderQty: "100",
+          grossAmt: 38500,
+          distributorDisc: 0,
+          distributorDiscUnit: "percent",
+          taxableAmt: 38500,
+          totalCGST: 962.5,
+          totalSGST: 962.5,
+          totalIGST: false,
+          netAmt: 40425,
+        },
+      ],
+      totalLines: 1,
+      totalBasePoints: 0,
+      grossAmount: 38500,
+      schemeDiscount: 0,
+      distributorDiscount: 0,
+      cgst: "962.50",
+      sgst: "962.50",
+      igst: false,
+      taxableAmount: 38500,
+      invoiceAmount: "40425.00",
+      roundOffAmount: 40425,
+      cashDiscount: "0.00",
+      netAmount: "40425",
+      orderSource: "SAP",
+      isBillCreate: false,
+    };
+
+    console.log(orderData);
+
+    const newOrderEntry = await OrderEntry.create(orderData);
+
+    console.log(
+      "Order Entry created successfully for Order_Id:",
+      Order_Id + " with orderNo:",
+      newOrderEntry.orderNo
+    );
+
+    return newOrderEntry;
+  } catch (error) {
+    throw error;
+  }
+});

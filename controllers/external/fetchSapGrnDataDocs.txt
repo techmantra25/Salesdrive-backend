@@ -1,0 +1,476 @@
+FILE: fetchSapGrnData_steps.txt
+
+DATE: 30 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the fetchSapGrnData API function.
+
+
+---
+FUNCTION NAME:
+
+fetchSapGrnData
+
+
+---
+DESCRIPTION:
+
+This API is responsible for synchronizing GRN (Goods Receipt Note) data from SAP systems for both MS and RUPA brands. It retrieves distributor-wise invoice data from SAP OData services, processes it into internal invoice records, and maintains GRN transaction logs for each run.
+
+Each SAP invoice record is translated into an internal standardized invoice:
+
+
+- Validates distributor, product, and plant references.
+
+- Calculates amounts (gross, discounts, taxes, and net totals).
+
+- Creates invoices in the local system.
+
+- Logs each transaction (success or failure) in the GrnLOG collection for transparency and audit purposes.
+
+It prevents concurrent processing using an internal lock mechanism, ensuring data safety and synchronization with SAP’s delivery records.
+
+
+---
+
+STEP 1: Acquire Lock for Concurrency Control
+
+
+Lock Implementation:
+if (!(await acquireLock("syncFetchSAPGRN"))) {
+  res.status(400);
+  throw new Error("Another sync is in progress. Please try again later.");
+}
+
+Purpose:
+
+
+- Ensures that only one synchronization job runs at any given time.
+
+- Prevents duplicate or overlapping imports that could cause invoice duplication or data conflicts.
+
+- In case of an ongoing sync, the API returns HTTP 400 — “Another sync is in progress.”
+
+Logs:
+console.log("🔒 [syncFetchSAPGRN] Attempting to acquire lock...");
+console.log("✅ [syncFetchSAPGRN] Lock acquired.");
+
+Cleanup: Lock is released in a finally block, guaranteeing release under any situation.
+
+STEP 2: Extract and Validate Query Parameters
+
+Parameters:
+let startDate = req.query.startDate;
+let endDate = req.query.endDate;
+let neededDbCodes = req.query.neededDbCodes?.split(",") || [];
+
+Defaults:
+
+
+- If no startDate provided → defaults to 120 days before current date.
+
+- If no endDate provided → defaults to the current date.
+
+- If neededDbCodes not provided → all active distributors are fetched.
+
+if (!startDate) {
+  const d = new Date();
+  d.setDate(d.getDate() - 120);
+  startDate = formatDateToDDMMYYYY(d);
+}
+if (!endDate) endDate = formatDateToDDMMYYYY(new Date());
+
+Purpose:
+
+
+- Allows targeted synchronization (specific distributors & custom date ranges).
+
+- Ensures missing dates or codes are automatically substituted with safe defaults.
+
+STEP 3: Fetch Distributor Codes (if not provided)
+
+Query to Database:
+if (!neededDbCodes || neededDbCodes.length === 0) {
+  const distributors = await Distributor.find({ status: true })
+    .select("dbCode")
+    .lean();
+  neededDbCodes = distributors.map((d) => d.dbCode);
+}
+
+Purpose:
+
+Retrieves all active distributor codes from the database for use in SAP OData queries.
+
+Logs:
+
+console.log("Needed Distributor Codes:", neededDbCodes);
+
+STEP 4: Prepare Data Structures and Counters
+
+Initialization:
+let allResults = [];
+let allResultsRupa = [];
+let msSuccessCount = 0;
+let msFailureCount = 0;
+let rupaSuccessCount = 0;
+let rupaFailureCount = 0;
+
+Purpose:
+
+Keeps track of results and summary counts separately for MS and RUPA brands.
+
+Success and failure counts help in batch-level monitoring.
+
+STEP 5: Utility Functions
+
+
+Date Helpers:
+
+
+- Convert SAP date string (YYYYMMDD) → Date() object.
+
+- Format any JS date → DD.MM.YYYY string for SAP queries.
+
+const parseSapDate = (sapDate) => {
+  const year = sapDate.slice(0, 4);
+  const month = sapDate.slice(4, 6);
+  const day = sapDate.slice(6, 8);
+  return new Date(`${year}-${month}-${day}`);
+};
+
+function formatDateToDDMMYYYY(date) { /* ... */ }
+
+STEP 6: SAP Data Fetching – MS Brand
+
+API Endpoint Used:
+http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_PSSPL_SALES_ODATA1_MS_SRV/
+BillHeaderSet(StartDate='{startDate}',EndDate='{endDate}',Kunnr='{DistributorCode}')/HeaderItem?$format=json
+
+Loop Through Distributors Sequentially:
+for (const distributorCode of neededDbCodes) {
+  try {
+    const response = await axios.get(MS_URL);
+    const data = response?.data?.d?.results;
+    ...
+  } catch (err) {
+    console.error(`Error fetching data for distributor ${distributorCode}:`, err.message);
+  }
+}
+
+Purpose:
+
+Fetches invoice (GRN) line-item data for every distributor code from SAP MS service.
+
+SAP Fields Used:
+
+
+- Kunnr → Distributor code
+
+- VbelnBill → Invoice number
+
+- Fkdat → Invoice date
+
+- Other line items contain product and tax information
+
+STEP 7: Processing the SAP Data Response
+
+Group Items by Invoice Number:
+const grouped = data.reduce((acc, item) => {
+  const vbelnBill = item.VbelnBill.toString();
+  if (!acc[vbelnBill]) acc[vbelnBill] = [];
+  acc[vbelnBill].push(item);
+  return acc;
+}, {});
+
+Prepare Result Array:
+const result = Object.entries(grouped).map(([VbelnBill, orders]) => ({
+  Kunnr: orders[0].Kunnr,
+  VbelnBill,
+  Fkdat: orders[0].Fkdat,
+  orders,
+}));
+
+Purpose:
+
+Batches related line items together under each unique Invoice (VbelnBill).
+
+Each invoice aggregation represents a single GRN entity for processing.
+
+STEP 8: Filter Out Already Imported GRNs
+
+
+To prevent duplication:
+
+const filtered = await Promise.all(
+  result.map(async (item) => {
+    const existingGrn = await GrnLOG.findOne({
+      Grn_Id: item?.VbelnBill,
+      GrnStatus: "Import_Success",
+    });
+    return !existingGrn;
+  })
+);
+const finalResult = result.filter((_, idx) => filtered[idx]);
+
+Purpose:
+
+Skip GRNs already marked as successfully imported in GrnLOG.
+
+STEP 9: Process Each GRN Record Sequentially
+
+
+Invoke the Helper – processGrnImport(item)
+
+Each grouped GRN payload is sent to processGrnImport() for transformation and database insertion.
+
+for (const item of finalResult) {
+  try {
+    const invoiceResult = await processGrnImport(item);
+    if (invoiceResult) msSuccessCount++;
+    else msFailureCount++;
+  } catch (error) {
+    msFailureCount++;
+    console.error(`Failed to process MS invoice ${item.VbelnBill}:`, error.message);
+  }
+}
+
+Purpose:
+
+Processes every raw SAP GRN entry into an Invoice document via processGrnImport().
+
+Each failed GRN import logs appropriate failure messages in GrnLOG.
+
+STEP 10: SAP Data Fetching – RUPA Brand
+
+
+API Endpoint Used for Rupa:
+http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_PSSPL_SALES_ODATA1_SRV/
+BillHeaderSet(StartDate='{startDate}',EndDate='{endDate}',Kunnr='{DistributorCode}')/HeaderItem?$format=json
+
+Same logic applied as MS processing:
+
+
+- Fetch SAP RUPA GRNs
+
+- Group by VbelnBill
+
+- Filter already imported GRNs
+
+- Process each GRN sequentially through processGrnImport()
+
+Counters (rupaSuccessCount, rupaFailureCount) track outcomes separately.
+
+STEP 11: The processGrnImport(item) Helper Explained
+
+
+Goal: Convert SAP GRN → Internal Invoice.
+
+Validations:
+
+
+1. Ensures distributor and product/plant mapping exist.
+
+2. Calculates all financial fields (MRP, discounts, taxes, net amount).
+
+3. Inserts line items & generates Invoice document.
+
+4. Logs success or failure in GrnLOG.
+
+Example Internal Mappings:
+
+
+- Fklmg → Quantity
+
+- Gvalu → Gross Amount
+
+- Ztrd, Ztrp → Trade Discounts
+
+- Zccd, Zqtd, Zccp → Special Discounts
+
+- Tvalu → GST Amounts
+
+Important:
+
+
+- If missing Distributor, Product, or Plant → Entry fails and log updates as Import_Failed.
+
+- Successful imports marked under GrnStatus: "Import_Success" with linked invoice ID.
+
+
+---
+
+STEP 12: Post-Processing and Summary Compilation
+
+
+After processing both MS and RUPA:
+console.log(`GRN Processing completed. MS - Success: ${msSuccessCount}, Failed: ${msFailureCount}`);
+console.log(`GRN Processing completed. RUPA - Success: ${rupaSuccessCount}, Failed: ${rupaFailureCount}`);
+
+STEP 13: Response Generation
+
+Sample Output:
+res.status(200).json({
+  status: 200,
+  data: {
+    MS: allResults,
+    RUPA: allResultsRupa
+  },
+  summary: {
+    MS: { successCount: msSuccessCount, failureCount: msFailureCount },
+    RUPA: { successCount: rupaSuccessCount, failureCount: rupaFailureCount }
+  },
+  message: "GRN data fetched & processed successfully."
+});
+
+Response Example:
+
+{
+  "status": 200,
+  "message": "GRN data fetched & processed successfully.",
+  "summary": {
+    "MS": { "successCount": 102, "failureCount": 8 },
+    "RUPA": { "successCount": 89, "failureCount": 11 }
+  }
+}
+
+STEP 14: Error Handling and Cleanup
+
+Error Handling:
+catch (error) {
+  res.status(500);
+  throw error;
+}
+
+Lock Release:
+finally {
+  await releaseLock("syncFetchSAPGRN");
+  console.log("🔓 [syncFetchSAPGRN] Lock released.");
+}
+
+Purpose:
+
+- Catches unforeseen network, insertion, or transaction errors.
+
+- Guarantees cleanup ensures safe retry on next run.
+
+FINAL OUTCOME
+
+
+When executed successfully:
+
+
+1. Fetches GRN data for all/distributor-specific SAP customers.
+
+2. Groups, filters, and transforms SAP invoices into system-compatible Invoice records.
+
+3. Automatically logs import statuses with full traceability (GrnLOG).
+
+4. Maintains synchronization across SAP and internal systems.
+
+5. Provides a dual-brand (MS & RUPA) summary of success and failure counts.
+
+
+SUMMARY OF LOGICAL FLOW
+
+1. Acquire synchronization lock (syncFetchSAPGRN).
+
+2. Read and validate input query (dates, distributors).
+
+3. Retrieve distributor codes dynamically if missing.
+
+4. Loop through each distributor code.
+
+5. Fetch GRN data (for MS brand).
+
+6. Group and filter by unique invoice number.
+
+7. Skip already imported entries (using GrnLOG).
+
+8. Process GRNs sequentially via processGrnImport().
+
+9. Repeat the same for RUPA brand SAP endpoint.
+
+10. Collect and calculate success/failure results.
+
+11. Send JSON response with detailed summary.
+
+12. Release lock and complete operation.
+
+IMPORTANT BUSINESS RULES
+
+1. 
+
+
+One active process at a time:
+
+
+	- syncFetchSAPGRN lock ensures serialized execution.
+
+
+2. 
+SAP Data Consistency:
+
+
+	- Fetches both MS brand (ZRUPA_PSSPL_SALES_ODATA1_MS_SRV) and RUPA brand (ZRUPA_PSSPL_SALES_ODATA1_SRV) datasets.
+
+
+3. 
+Incremental Imports:
+
+
+	- Date range allows selective imports between two days.
+
+
+4. 
+Duplicate Prevention:
+
+
+	- Existing GRNs (marked Import_Success) are skipped automatically.
+
+
+5. 
+Transactional Logging:
+
+
+	- Every GRN attempt stored in GrnLOG with GrnStatus, ErrorLog, and invoiceId.
+
+
+6. 
+Error Isolation:
+
+
+	- Failures for specific GRNs don’t stop the overall sync.
+
+
+7. 
+Entity Validation:
+
+
+	- Valid Distributor, Product, and Plant are mandatory. Missing references cause item skips with detailed reasons.
+
+
+8. 
+Financial Accuracy:
+
+
+	- Derived fields (gross, discounts, taxable, net) calculated consistently between GRN and internal system.
+
+
+9. 
+Scalability:
+
+
+	- Sequential invoice creation ensures system stability and prevents race conditions.
+
+
+10. 
+Partial Success Allowed:
+
+
+- Even if a few distributors fail, others continue seamlessly.
+
+---
+AUTHOR: Srijita
+
+DATE: 30 Oct 2025

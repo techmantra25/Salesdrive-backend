@@ -1,0 +1,1256 @@
+Fetch SAP Secondary Order Entry Data API Documentation
+
+
+FILE: fetchSapSecondaryOrderEntryData_documentation.txt
+
+DATE: 31 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Complete step-by-step documentation of the fetchSapSecondaryOrderEntryData API function and processOrderEntryImport helper function
+
+FUNCTION NAME:
+
+
+fetchSapSecondaryOrderEntryData
+
+DESCRIPTION:
+
+
+This API fetches secondary order data from SAP CRM system via external API and imports them into the local order management system. It processes orders with complete validation, price calculation, tax computation, and inventory verification. The system handles both successful imports and failed orders with comprehensive error logging and recovery mechanisms.
+
+The function is engineered for enterprise-level order synchronization with:
+
+
+- External API integration with authentication token management
+
+- Comprehensive data validation and error handling
+
+- Sequential processing to prevent duplicate order creation
+
+- Advanced tax calculation logic (CGST/SGST/IGST based on interstate transactions)
+
+- Price and inventory validation from multiple microservices
+
+- Detailed logging for monitoring and troubleshooting
+
+- Recovery mechanism for failed orders
+
+This ensures that all valid secondary orders from SAP CRM are accurately imported into the local system while maintaining data integrity and providing full audit trails.
+
+STEP-BY-STEP PROCESSING
+
+STEP 1: Initialize Date Range and Employee Filtering
+
+let currentDate = new Date();
+currentDate = currentDate.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+let previousDate = new Date();
+previousDate.setDate(previousDate.getDate() - 7);
+previousDate = previousDate.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+let EmpList = "";
+
+if (req?.query?.dbCode) {
+  const failedOrders = await SecondaryOrderEntryLog.find({
+    OrderStatus: "Import_Failed",
+  });
+  
+  const distributor = await Distributor.findOne({
+    dbCode: req.query.dbCode.toString(),
+  });
+  
+  const emp = await Employee.find({
+    distributorId: distributor?._id,
+  });
+  
+  const employeeIds = emp.map((e) => e.employeeLabel).join(",");
+  EmpList = employeeIds;
+}
+
+Purpose:
+
+
+- Sets default date range (current date to 7 days back)
+
+- Handles distributor-specific filtering when dbCode is provided
+
+- Retrieves employee list for the specified distributor
+
+- Determines date range based on failed orders for recovery processing
+
+Date Range Logic:
+
+
+- Default: 7 days lookback window
+
+- Recovery mode: Starts from oldest failed order date
+
+- Override: Uses query parameter date if provided
+
+- Format conversion: MM/DD/YYYY for SAP API compatibility
+
+Employee Filtering:
+
+
+- Fetches employees associated with specific distributor
+
+- Creates comma-separated employee label list for API filtering
+
+- Enables distributor-specific order import
+
+STEP 2: Handle Failed Order Recovery
+
+if (!failedOrders || failedOrders.length === 0) {
+  const current = new Date();
+  current.setDate(current.getDate() - 7);
+  previousDate = current.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+} else {
+  const failedOrderDates = failedOrders.map((order) => {
+    return transformDate(order.OrderData?.Order_Date);
+  });
+  
+  const oldestDate = failedOrderDates.reduce((oldest, curr) => {
+    const oldestDate = new Date(oldest);
+    const currDate = new Date(curr);
+    return currDate < oldestDate ? curr : oldest;
+  });
+  
+  previousDate = oldestDate;
+}
+
+Purpose:
+
+
+- Implements intelligent recovery mechanism for failed orders
+
+- Determines optimal date range for re-processing failed imports
+
+- Ensures no orders are missed during system downtime or failures
+
+Recovery Logic:
+
+
+- No failed orders: Uses standard 7-day window
+
+- Failed orders exist: Starts from oldest failed order date
+
+- Automatic retry mechanism for previously failed imports
+
+- Prevents data loss during system interruptions
+
+STEP 3: Authenticate with SAP CRM API
+
+const tokenResponse = await axios({
+  method: "post",
+  url: "https://api.massistcrm.com/token",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+  },
+  data: qs.stringify({
+    username: RUPA_USERNAME,
+    grant_type: "password",
+    password: RUPA_PASSWORD,
+  }),
+});
+
+const token = tokenResponse.data.access_token;
+
+Purpose:
+
+
+- Obtains OAuth access token for SAP CRM API authentication
+
+- Uses environment-configured credentials for security
+
+- Establishes secure connection to external order data source
+
+Authentication Details:
+
+
+- Protocol: OAuth 2.0 with password grant type
+
+- Credentials: Environment variables (RUPA_USERNAME, RUPA_PASSWORD)
+
+- Token management: Fresh token for each API session
+
+- Security: Credentials stored in secure configuration
+
+STEP 4: Fetch Order Data from SAP CRM API
+
+const reportResponse = await axios({
+  method: "post",
+  url: "https://api.massistcrm.com/api/v2/Employee/GetAllOrderSKUData",
+  headers: {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  },
+  data: {
+    EmpList: EmpList,
+    ClientList: "",
+    StartDate: previousDate,
+    EndDate: currentDate,
+    Category: "C1",
+    DataFor: "OrderSKUDateWise",
+    Division: "",
+    DataState: "",
+    filter: "order",
+    DataZone: "South,North East,East,North,Center,West,Other",
+    DataCity: "",
+    ClientType: "",
+    SubType: "",
+    DataFilter: "",
+    FromClientType: "",
+    FromSubType: "",
+    FromClientList: "",
+    ClientTypeGroup: "",
+    FromClientTypeGroup: "",
+    ExcelName: "OrderSKUDateWise",
+    ProductId: "",
+    VarientId: "",
+    Manufacturer: "__",
+    ProductScheme: "",
+    TotalOrderScheme: "",
+    IsActive: "",
+    IsDMS: "",
+  },
+});
+
+let data = reportResponse?.data?.AllData || [];
+
+Purpose:
+
+
+- Retrieves comprehensive order data from SAP CRM system
+
+- Filters data by date range, employee list, and geographical zones
+
+- Provides structured order information with SKU-level details
+
+API Parameters:
+
+
+- EmpList: Comma-separated employee identifiers for filtering
+
+- Date Range: StartDate to EndDate for order filtering
+
+- Category: "C1" for specific order category
+
+- DataZone: All geographical zones included
+
+- Filter: "order" to get order-specific data
+
+Data Structure:
+
+
+- Returns array of order records with line items
+
+- Each record contains order header and product details
+
+- Includes pricing, quantity, and customer information
+
+STEP 5: Filter and Validate Raw Data
+data = data.filter((item) => !!item?.Order_Id);
+
+const distributors = await Distributor.find({ status: true })
+  .select("dbCode")
+  .lean();
+let neededDbCode = distributors.map((distributor) => distributor.dbCode);
+
+if (req?.query?.dbCode) {
+  neededDbCode = neededDbCode.filter(
+    (code) => code === req.query.dbCode.toString()
+  );
+}
+
+data = data.filter((item) => {
+  if (!item?.DistributerCode) {
+    return false;
+  }
+  if (item.DistributerCode && !neededDbCode.includes(item.DistributerCode)) {
+    return false;
+  }
+  return true;
+});
+
+Purpose:
+
+
+- Removes orders without valid Order_Id
+
+- Validates distributor codes against active distributors
+
+- Filters data for specific distributor when requested
+
+- Ensures data quality before processing
+
+Validation Rules:
+
+
+- Order_Id: Must be present and valid
+
+- DistributerCode: Must exist and be active in system
+
+- Distributor Filter: Applies single distributor filter if specified
+
+- Status Check: Only active distributors are processed
+
+STEP 6: Group Orders by Order_Id
+
+const commonFields = [
+  "Order_Id",
+  "Order_Date", 
+  "Label",
+  "DistributerCode",
+  "Client_Id",
+];
+
+const grouped = data.reduce((acc, item) => {
+  const orderId = item.Order_Id.toString();
+  if (!acc[orderId]) {
+    acc[orderId] = [];
+  }
+  acc[orderId].push(item);
+  return acc;
+}, {});
+
+let result = Object.entries(grouped).map(([orderId, orders]) => {
+  const firstOrder = orders[0];
+  const commonData = {};
+  commonFields.forEach((field) => {
+    commonData[field] = firstOrder[field];
+  });
+  
+  const orderItems = orders.map((order) => {
+    return { ...order };
+  });
+  
+  return {
+    orderId,
+    ...commonData,
+    orders: orderItems,
+  };
+});
+
+Purpose:
+
+
+- Groups multiple SKU records by Order_Id to create complete orders
+
+- Extracts common order header information
+
+- Creates structured order objects with line items array
+
+- Prepares data for individual order processing
+
+Grouping Logic:
+
+
+- Key: Order_Id for grouping related line items
+
+- Header Data: Common fields extracted from first record
+
+- Line Items: All records for the order included in orders array
+
+- Structure: Single order object with multiple line items
+
+STEP 7: Filter Already Imported Orders
+
+const filteredResult = await Promise.all(
+  result.map(async (item) => {
+    const Order_Id = item.orderId;
+    
+    const existingLog = await SecondaryOrderEntryLog.findOne({
+      Order_Id,
+      OrderStatus: "Import_Success",
+    });
+    if (existingLog) {
+      console.log(`Order with Order_Id: ${Order_Id} already imported successfully. Skipping...`);
+      return null;
+    }
+    
+    const isOrderExisted = await OrderEntry.findOne({ orderId: Order_Id });
+    if (isOrderExisted) {
+      console.log(`Order Entry already imported successfully before this cron for Order_Id: ${Order_Id} with orderNo: ${isOrderExisted.orderNo} Skipping...`);
+      return null;
+    }
+    
+    return item;
+  })
+);
+
+result = filteredResult.filter((item) => item !== null);
+
+Purpose:
+
+
+- Prevents duplicate order imports by checking existing records
+
+- Verifies both log table and main order table for duplicates
+
+- Optimizes performance by skipping already processed orders
+
+- Maintains data integrity across multiple import runs
+
+Duplicate Detection:
+
+
+- Log Table: Checks SecondaryOrderEntryLog for successful imports
+
+- Order Table: Verifies OrderEntry for existing orders
+
+- Efficiency: Parallel async checks for better performance
+
+- Safety: Double-check mechanism prevents any duplicates
+
+STEP 8: Sequential Order Processing
+
+let successCount = 0;
+let failureCount = 0;
+
+for (const item of result) {
+  try {
+    const orderResult = await processOrderEntryImport(item);
+    if (orderResult) {
+      successCount++;
+    } else {
+      failureCount++;
+    }
+  } catch (error) {
+    console.error(`Failed to process order ${item.Order_Id || item.orderId}:`, error.message);
+    failureCount++;
+  }
+}
+
+Purpose:
+
+
+- Processes orders sequentially to prevent race conditions
+
+- Ensures unique order number generation
+
+- Provides comprehensive success/failure tracking
+
+- Handles individual order failures gracefully
+
+Sequential Processing Benefits:
+
+
+- Race Condition Prevention: Avoids duplicate order creation
+
+- Resource Management: Prevents database overload
+
+- Error Isolation: Single order failure doesn't affect others
+
+- Progress Tracking: Real-time success/failure monitoring
+
+PROCESS ORDER ENTRY IMPORT FUNCTION
+
+STEP 9: Validate Order Dependencies (processOrderEntryImport)
+const processOrderEntryImport = async (item) => {
+  try {
+    let Order_Id = item?.Order_Id;
+    let dbCode = item?.DistributerCode;
+    
+    const distributor = await Distributor.findOne({ dbCode: dbCode });
+    if (!distributor) {
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No distributor found for dbCode: ${dbCode} for Order_Id: ${Order_Id}`,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      return;
+    }
+    
+    const distributorId = distributor._id;
+    const disStateId = distributor?.stateId;
+
+    Purpose:
+
+
+- Validates core order dependencies before processing
+
+- Ensures distributor exists and is valid
+
+- Captures state information for tax calculations
+
+- Logs validation failures with detailed error messages
+
+Validation Sequence:
+
+
+1. Order_Id: Extracted from order data
+
+2. Distributor: Validated against dbCode
+
+3. State Information: Retrieved for tax calculations
+
+4. Error Logging: Failed validations logged with context
+
+STEP 10: Validate Employee and Customer Information
+
+let empId = item?.Label;
+if (!empId) {
+  // Error logging for missing empId
+  return;
+}
+
+const employee = await Employee.findOne({ empId: empId });
+if (!employee) {
+  // Error logging for invalid employee
+  return;
+}
+const salesmanName = employee._id;
+
+let outletUID = item?.Client_Id;
+if (!outletUID) {
+  // Error logging for missing outletUID
+  return;
+}
+
+const outlet = await OutletApproved.findOne({ outletUID: outletUID });
+if (!outlet) {
+  // Error logging for invalid outlet
+  return;
+}
+
+const retailerId = outlet._id;
+const retailerStateId = outlet?.stateId;
+const ISIGST = disStateId?.toString() !== retailerStateId?.toString();
+
+Purpose:
+
+
+- Validates employee assignment to order
+
+- Verifies customer/outlet exists and is approved
+
+- Determines tax calculation method (IGST vs CGST+SGST)
+
+- Establishes interstate transaction flag for tax computation
+
+Tax Determination Logic:
+
+
+- ISIGST: True if distributor and retailer are in different states
+
+- Interstate: Uses IGST (Integrated GST) for tax calculation
+
+- Intrastate: Uses CGST + SGST for tax calculation
+
+- State Comparison: String comparison of state IDs
+
+STEP 11: Validate Route and Beat Information
+
+const beatId = outlet?.beatId;
+if (!beatId) {
+  // Error logging for missing beatId
+  return;
+}
+
+const beat = await Beat.findById(beatId);
+if (!beat) {
+  // Error logging for invalid beat
+  return;
+}
+const routeId = beat._id;
+
+Purpose:
+
+
+- Validates route assignment through beat information
+
+- Ensures proper sales territory mapping
+
+- Links order to correct sales route for reporting
+
+- Maintains sales hierarchy integrity
+
+Route Validation:
+
+
+- Beat Assignment: Outlet must have assigned beat
+
+- Beat Existence: Beat must exist in system
+
+- Route Mapping: Beat serves as route identifier
+
+- Sales Territory: Ensures proper sales coverage mapping
+
+STEP 12: Process Order Line Items with Product Validation
+
+let lineItems = [];
+let skippedItems = [];
+const orderProducts = item?.orders || [];
+
+for (const orderProduct of orderProducts) {
+  let product_code = orderProduct?.Variant_Extension1;
+  if (!product_code) {
+    skippedItems.push({
+      ...orderProduct,
+      reason: `No product_code found for Order_Id: ${Order_Id}`,
+    });
+    continue;
+  }
+  
+  const product = await Product.findOne({ product_code: product_code });
+  if (!product) {
+    skippedItems.push({
+      ...orderProduct,
+      reason: `No product found for product_code: ${product_code} for Order_Id: ${Order_Id}`,
+    });
+    continue;
+  }
+  const productId = product._id;
+}
+
+Purpose:
+
+
+- Processes each line item in the order
+
+- Validates product codes against master data
+
+- Maintains list of valid and invalid items
+
+- Ensures all products exist before order creation
+
+Product Validation:
+
+
+- Product Code: Extracted from Variant_Extension1 field
+
+- Master Data: Validated against Product collection
+
+- Error Tracking: Invalid items logged with reasons
+
+- Continuation: Processing continues despite individual failures
+
+STEP 13: Fetch Pricing Information for Each Product
+
+let price = null;
+try {
+  const priceResponse = await axios.get(
+    `${SERVER_URL}/api/v1/price/product-pricing/${productId?.toString()}?distributorId=${distributorId.toString()}`
+  );
+  if (priceResponse?.data?.data?.length > 0) {
+    price = priceResponse?.data?.data[0];
+  }
+} catch (error) {
+  price = null;
+}
+
+if (!price || !price?.rlp_price) {
+  skippedItems.push({
+    ...orderProduct,
+    reason: `No price found for Product Code: ${product_code} for Order_Id: ${Order_Id}`,
+  });
+  continue;
+}
+
+Purpose:
+
+
+- Retrieves current pricing for product-distributor combination
+
+- Validates price availability before order processing
+
+- Ensures accurate pricing for order calculations
+
+- Handles pricing service failures gracefully
+
+Pricing Integration:
+
+
+- API Call: Uses pricing microservice for current rates
+
+- Validation: Ensures RLP (Retailer Landing Price) exists
+
+- Error Handling: Skips items without valid pricing
+
+- Distributor-Specific: Prices vary by distributor relationship
+
+STEP 14: Verify Inventory Availability
+let inventory = null;
+try {
+  const stockResponse = await axios.get(
+    `${SERVER_URL}/api/v1/inventory/get-stock-product/${productId?.toString()}?distributorId=${distributorId.toString()}`
+  );
+  
+  if (stockResponse?.data?.data) {
+    inventory = stockResponse?.data?.data;
+  } else {
+    inventory = null;
+  }
+} catch (error) {
+  inventory = null;
+}
+
+if (!inventory || !inventory?._id) {
+  skippedItems.push({
+    ...orderProduct,
+    reason: `No inventory found for Product Code: ${product_code} for Order_Id: ${Order_Id}`,
+  });
+  continue;
+}
+
+Purpose:
+
+
+- Verifies inventory record exists for product-distributor combination
+
+- Links order line items to specific inventory records
+
+- Enables stock tracking and allocation
+
+- Prevents orders for non-stocked items
+
+Inventory Integration:
+
+
+- API Call: Uses inventory microservice for stock verification
+
+- Record Validation: Ensures inventory record exists
+
+- Stock Linking: Connects line items to inventory records
+
+- Availability Check: Confirms product is available for sale
+
+STEP 15: Calculate Order Quantities and Amounts
+const getOrderQty = (orderProduct) => safeNumber(orderProduct?.Quantity);
+
+const getGrossAmount = (orderProduct) => {
+  const productRLP = safeNumber(orderProduct?.price?.rlp_price);
+  return toTwoDecimal(getOrderQty(orderProduct) * productRLP);
+};
+
+const getTaxableAmount = (orderProduct) => {
+  return toTwoDecimal(getGrossAmount(orderProduct));
+};
+
+const toTwoDecimal = (num) => {
+  return Number(((safeNumber(num) * 100) / 100).toFixed(2));
+};
+
+function safeNumber(val) {
+  const num = Number(val);
+  return isNaN(num) ? 0 : num;
+}
+
+Purpose:
+
+
+- Implements robust numerical calculations for order amounts
+
+- Handles invalid or missing numerical data safely
+
+- Maintains consistent decimal precision across calculations
+
+- Provides foundation for tax and total calculations
+
+Calculation Logic:
+
+
+- Quantity: Extracted from SAP order data with safety checks
+
+- Gross Amount: Quantity × RLP price
+
+- Taxable Amount: Same as gross amount (no pre-tax discounts)
+
+- Precision: All amounts rounded to 2 decimal places
+
+STEP 16: Implement Advanced Tax Calculation Logic
+
+const getApplicableTaxRate = (orderProduct) => {
+  const taxableAmt = Number(getTaxableAmount(orderProduct));
+  let cgst = Number(orderProduct?.product?.cgst ?? orderProduct?.cgst) || 0;
+  let sgst = Number(orderProduct?.product?.sgst ?? orderProduct?.sgst) || 0;
+  let igst = Number(orderProduct?.product?.igst ?? orderProduct?.igst) || 0;
+  
+  let qty = Number(getOrderQty(orderProduct)) || 0;
+  let taxablePricePerProduct = Number(taxableAmt / qty);
+  
+  if (taxablePricePerProduct >= 2500) {
+    if (cgst === 2.5) cgst = 9;
+    if (sgst === 2.5) sgst = 9;
+    if (igst === 5) igst = 18;
+  }
+  
+  return {
+    cgst: cgst > 0 ? cgst : 0,
+    sgst: sgst > 0 ? sgst : 0,
+    igst: igst > 0 ? igst : 0,
+  };
+};
+
+const getCGST = (orderProduct) => {
+  if (ISIGST) return 0;
+  const cgstRate = safeNumber(getApplicableTaxRate(orderProduct)?.cgst);
+  return toTwoDecimal(getTaxableAmount(orderProduct) * (cgstRate / 100));
+};
+
+const getSGST = (orderProduct) => {
+  if (ISIGST) return 0;
+  const sgstRate = safeNumber(getApplicableTaxRate(orderProduct)?.sgst);
+  return toTwoDecimal(getTaxableAmount(orderProduct) * (sgstRate / 100));
+};
+
+const getIGST = (orderProduct) => {
+  if (!ISIGST) return 0;
+  const igstRate = safeNumber(getApplicableTaxRate(orderProduct)?.igst);
+  return toTwoDecimal(getTaxableAmount(orderProduct) * (igstRate / 100));
+};
+
+Purpose:
+
+
+- Implements complex GST tax calculation rules
+
+- Handles price-based tax rate adjustments (₹2500+ products)
+
+- Manages interstate vs intrastate tax application
+
+- Ensures compliance with Indian GST regulations
+
+Tax Calculation Rules:
+
+
+- Price Threshold: Products ≥₹2500 per unit have higher tax rates
+
+- Rate Adjustment: 2.5%→9% for CGST/SGST, 5%→18% for IGST
+
+- Interstate: Only IGST applied (CGST=SGST=0)
+
+- Intrastate: CGST+SGST applied (IGST=0)
+
+STEP 17: Build Line Item Structure
+orderProduct.product = product;
+orderProduct.price = price;
+orderProduct.inventory = inventory;
+
+let lineItem = {
+  product: product,
+  price: price,
+  uom: "pcs",
+  inventoryId: inventory ? inventory._id : null,
+  oderQty: getOrderQty(orderProduct),
+  grossAmt: getGrossAmount(orderProduct),
+  distributorDisc: 0,
+  distributorDiscUnit: "percent",
+  taxableAmt: getTaxableAmount(orderProduct),
+  totalCGST: getCGST(orderProduct),
+  totalSGST: getSGST(orderProduct),
+  totalIGST: getIGST(orderProduct),
+  netAmt: getNetAmount(orderProduct),
+};
+
+// Sanitize all number fields in lineItem
+Object.keys(lineItem).forEach((key) => {
+  if (typeof lineItem[key] === "number" && isNaN(lineItem[key])) {
+    lineItem[key] = 0;
+  }
+});
+
+lineItems.push(lineItem);
+
+Purpose:
+
+
+- Creates complete line item structure with all required fields
+
+- Links product, price, and inventory information
+
+- Calculates all monetary values for the line item
+
+- Sanitizes data to prevent NaN values in database
+
+Line Item Structure:
+
+
+- Product Information: Full product details
+
+- Pricing: Current distributor-specific pricing
+
+- Inventory: Link to stock record for tracking
+
+- Calculations: All amounts and taxes calculated
+
+- Validation: NaN values converted to 0
+
+STEP 18: Handle Invalid Line Items and Generate Order Totals
+if (skippedItems.length > 0) {
+  await SecondaryOrderEntryLog.findOneAndUpdate(
+    { Order_Id: Order_Id },
+    {
+      Order_Id: Order_Id,
+      OrderData: {
+        ...item,
+        skippedOrders: skippedItems,
+        orders: orderProducts,
+      },
+      searchKey: JSON.stringify({
+        ...item,
+        skippedOrders: skippedItems,
+        orders: orderProducts,
+      }),
+      OrderStatus: "Import_Failed",
+      ErrorLog: `${skippedItems.length} products have invalid data for Order_Id: ${Order_Id}. Please check reason in the OrderData.`,
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  return;
+}
+
+const getTotalBasePoints = (lineItems) => {
+  return toTwoDecimal(
+    lineItems.reduce((total, item) => {
+      const productBasePoint = safeNumber(item?.product?.base_point);
+      return total + productBasePoint * safeNumber(item.oderQty);
+    }, 0)
+  );
+};
+
+Purpose:
+
+
+- Prevents order creation if any line items are invalid
+
+- Calculates order-level totals from line item summations
+
+- Logs detailed failure information for troubleshooting
+
+- Maintains data integrity by requiring complete valid orders
+
+Total Calculation Functions:
+
+
+- Base Points: Sum of (base_point × quantity) for all items
+
+- Gross Amount: Sum of all line item gross amounts
+
+- Tax Totals: Aggregate CGST, SGST, IGST amounts
+
+- Invoice Amount: Final amount including all taxes
+
+STEP 19: Generate Unique Order Number and Check Duplicates
+const isOrderExisted = await OrderEntry.findOne({ orderId: Order_Id });
+if (isOrderExisted) {
+  console.log(`Order Entry already created before this cron for Order_Id: ${Order_Id} with orderNo: ${isOrderExisted.orderNo}`);
+  return;
+}
+
+const orderNumber = await orderNumberGeneratorNew("ORD");
+
+Purpose:
+
+
+- Performs final duplicate check before order creation
+
+- Generates unique order number for internal tracking
+
+- Prevents race conditions in concurrent processing
+
+- Ensures each order has unique identifier
+
+Order Number Generation:
+
+
+- Prefix: "ORD" for order identification
+
+- Sequence: Auto-incrementing sequence number
+
+- Uniqueness: Guaranteed unique across all orders
+
+- Format: ORD followed by sequential number
+
+STEP 20: Create Complete Order Record
+
+let orderData = {
+  orderNo: orderNumber,
+  orderId: Order_Id,
+  distributorId: distributorId,
+  salesmanName: salesmanName,
+  routeId: routeId,
+  retailerId: retailerId,
+  orderType: "Normal-Sale",
+  paymentMode: "Credit",
+  lineItems: lineItems,
+  totalLines: lineItems.length,
+  totalBasePoints: getTotalBasePoints(lineItems),
+  grossAmount: getTotalGrossAmount(lineItems),
+  schemeDiscount: 0,
+  distributorDiscount: 0,
+  cgst: getTotalCGST(lineItems),
+  sgst: getTotalSGST(lineItems),
+  igst: getTotalIGST(lineItems),
+  taxableAmount: getTotalTaxableAmount(lineItems),
+  invoiceAmount: getTotalInvoiceAmount(lineItems),
+  roundOffAmount: getTotalRoundOffAmount(lineItems),
+  cashDiscount: 0,
+  netAmount: getTotalRoundOffAmount(lineItems),
+  orderSource: "SFA",
+  isBillCreate: false,
+};
+
+// Sanitize all number fields in orderData
+Object.keys(orderData).forEach((key) => {
+  if (typeof orderData[key] === "number" && isNaN(orderData[key])) {
+    orderData[key] = 0;
+  }
+});
+
+const newOrderEntry = await OrderEntry.create(orderData);
+
+Purpose:
+
+
+- Creates comprehensive order record with all calculated fields
+
+- Links order to distributor, salesman, route, and retailer
+
+- Establishes order for downstream billing and fulfillment
+
+- Maintains complete audit trail of order creation
+
+Order Structure:
+
+
+- Identifiers: Order number and SAP order ID
+
+- Relationships: Links to all related entities
+
+- Financial: All amounts, taxes, and totals
+
+- Operational: Line items, quantities, and points
+
+- Status: Source system and billing status
+
+STEP 21: Create Success Log and Link References
+
+const log = await SecondaryOrderEntryLog.findOneAndUpdate(
+  { Order_Id: Order_Id },
+  {
+    Order_Id: Order_Id,
+    OrderData: item,
+    searchKey: JSON.stringify(item),
+    orderId: newOrderEntry._id,
+    OrderStatus: "Import_Success",
+    ErrorLog: "",
+  },
+  { upsert: true, new: true, setDefaultsOnInsert: true }
+);
+
+const createdOrderEntry = await OrderEntry.findById(newOrderEntry._id);
+createdOrderEntry.secondaryOrderEntryLogId = log._id;
+await createdOrderEntry.save();
+
+return newOrderEntry;
+
+Purpose:
+
+
+- Creates success log entry for monitoring and audit
+
+- Establishes bidirectional reference between order and log
+
+- Enables tracking of import success/failure rates
+
+- Provides complete traceability of order import process
+
+Log Management:
+
+
+- Success Status: Records successful import
+
+- Data Storage: Preserves original SAP data
+
+- Linking: Cross-references order and log records
+
+- Audit Trail: Complete history of import process
+
+RESPONSE FORMAT
+
+Success Response (200):
+
+{
+  "status": 200,
+  "message": "Order SKU Report data fetched successfully",
+  "data": [
+    {
+      "orderId": "SAP_ORDER_ID_123",
+      "Order_Id": "SAP_ORDER_ID_123",
+      "Order_Date": "05/21/2025",
+      "Label": "EMP001",
+      "DistributerCode": "DIST001",
+      "Client_Id": "OUTLET_UID_456",
+      "orders": [
+        {
+          "Order_Id": "SAP_ORDER_ID_123",
+          "Variant_Extension1": "PROD001",
+          "Quantity": 10,
+          "cgst": 9,
+          "sgst": 9,
+          "igst": 18
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalOrders": 50,
+    "successCount": 45,
+    "failureCount": 5
+  }
+}
+
+Error Response (400):
+{
+  "error": true,
+  "status": 400,
+  "message": "No data found for the given date range."
+}
+
+DATA MODELS INVOLVED
+
+Collections Used:
+
+1. OrderEntry - Main order records with line items
+
+2. SecondaryOrderEntryLog - Import tracking and error logging
+
+3. Distributor - Distributor master data and validation
+
+4. Employee - Salesman information and validation
+
+5. OutletApproved - Customer/retailer information
+
+6. Beat - Route and territory mapping
+
+7. Product - Product master data and validation
+
+External Services:
+
+1. Pricing Service - Real-time price retrieval
+
+2. Inventory Service - Stock verification and allocation
+
+3. SAP CRM API - Source system for order data
+
+Key Relationships:
+
+- OrderEntry.distributorId → Distributor._id
+
+- OrderEntry.salesmanName → Employee._id
+
+- OrderEntry.retailerId → OutletApproved._id
+
+- OrderEntry.routeId → Beat._id
+
+- LineItem.product → Product._id
+
+- OrderEntry.secondaryOrderEntryLogId → SecondaryOrderEntryLog._id
+
+BUSINESS RULES
+
+1. Sequential Processing: Orders processed one at a time to prevent duplicates
+
+2. Complete Validation: All dependencies must be valid for order creation
+
+3. Tax Calculation: Based on interstate vs intrastate transactions
+
+4. Price Thresholds: Higher tax rates for products ≥₹2500 per unit
+
+5. Error Isolation: Individual order failures don't affect batch processing
+
+6. Duplicate Prevention: Multiple checks prevent duplicate order creation
+
+7. Data Integrity: Invalid line items cause entire order rejection
+
+8. Audit Trail: Complete logging of success and failure scenarios
+
+PERFORMANCE CONSIDERATIONS
+
+1. Sequential Processing: Prevents race conditions but limits throughput
+
+2. API Integration: Multiple external service calls per line item
+
+3. Database Queries: Individual queries for each entity validation
+
+4. Memory Management: Large order batches may consume significant memory
+
+5. Error Handling: Comprehensive logging may impact performance
+
+6. Network Latency: External API dependencies affect processing time
+
+ERROR HANDLING
+
+1. Validation Failures: Logged with specific error messages
+
+2. API Failures: Graceful handling with fallback mechanisms
+
+3. Database Errors: Transaction rollback and error propagation
+
+4. Network Issues: Retry mechanisms for external service calls
+
+5. Data Integrity: Complete order rejection for any validation failure
+
+6. Recovery: Failed orders can be reprocessed in subsequent runs
+
+INTEGRATION POINTS
+
+1. SAP CRM API: Source system for order data with OAuth authentication
+
+2. Pricing Service: Real-time price lookup for accurate calculations
+
+3. Inventory Service: Stock verification and allocation management
+
+4. Order Management: Integration with billing and fulfillment systems
+
+5. Audit System: Comprehensive logging for monitoring and compliance
+
+MONITORING AND LOGGING
+
+1. Import Statistics: Success/failure counts for each batch
+
+2. Error Details: Specific reasons for each failed order
+
+3. Performance Metrics: Processing time and throughput tracking
+
+4. Data Quality: Validation failure patterns and trends
+
+5. Recovery Tracking: Failed order reprocessing success rates
+
+6. Business Metrics: Order volumes, values, and patterns
+
+SECURITY CONSIDERATIONS
+
+1. API Authentication: Secure token management for external APIs
+
+2. Data Validation: Input sanitization and validation at all levels
+
+3. Access Control: System-level API access with proper authorization
+
+4. Audit Trail: Complete logging for security and compliance
+
+5. Error Information: Secure handling of sensitive data in error logs
+
+AUTHOR: Srijita
+
+DATE: 31 Oct 2025

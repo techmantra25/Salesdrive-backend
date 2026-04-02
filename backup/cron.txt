@@ -1,0 +1,138 @@
+1. fetchSecondaryOrderEntryJob
+
+- Purpose: Fetches secondary order entry data from SAP.
+
+- Schedule: Every 20 minutes between 7:00 AM and 8:00 PM.
+
+- Cron Expression: */20 7-20 * * *
+
+---
+
+2. fetchPrimaryInvoicesJob
+
+- Purpose: Fetches primary invoices (GRN data) from SAP.
+
+- Schedule: Every 3 hours at :23 minutes past the hour, between 6:00 AM and 7:00 PM.
+
+- Cron Expression: 23 6-19/3 * * *
+
+---
+
+3. fetchProductsJob
+
+- Purpose: Syncs product master data from SAP.
+
+- Schedule: Every 5 hours at :39 minutes past the hour, between 9:00 AM and 9:00 PM.
+
+- Cron Expression: 39 9-21/5 * * *
+
+---
+
+4. fetchQuotationStatusJob
+
+- Purpose: Fetches updated quotation statuses.
+
+- Schedule: Every 2 hours at :11 minutes past the hour, between 8:00 AM and 2:00 PM.
+
+- Cron Expression: 11 8-14/2 * * *
+
+---
+
+5. fetchProductPricesJob
+
+- Purpose: Syncs product price master data.
+
+- Schedule: Once daily at 9:00 PM.
+
+- Cron Expression: 0 21 * * *
+
+---
+
+6. AutoApprovePriceJob
+
+- Purpose: Automatically approves price CSV files.
+
+- Schedule: Once daily at 10:00 PM.
+
+- Cron Expression: 0 22 * * *
+
+---
+
+7. bulkPriceStatusUpdateJob
+
+- Purpose: Performs bulk updates for price status.
+
+- Schedule: Every 53 minutes between 4:00 PM and 11:00 PM.
+
+- Cron Expression: */53 16-23 * * *
+
+---
+
+
+8. fetchOutletsJob
+
+- Purpose: Syncs outlet data from the external system.
+
+- Schedule: Every hour between 10:00 AM and 8:00 PM.
+
+- Cron Expression: 0 10-20/1 * * *
+
+---
+
+
+9. balanceUpdateMorningAfternoonJob
+
+- Purpose: Updates outlet current balances.
+
+- Schedule: Runs daily at 6:45 AM, 2:45 PM, and 5:45 PM.
+
+- Cron Expression: 45 6,14,17 * * *
+
+---
+
+
+10. balanceUpdateEveningJob
+
+- Purpose: Performs an additional outlet balance update in the evening.
+
+- Schedule: Runs daily at 9:30 PM.
+
+- Cron Expression: 30 21 * * *
+
+---
+
+
+11. processRetailerMultiplierForRetailer
+
+- Purpose: Process multiplier points for Retailer.
+
+- Schedule: Runs on the 1st of every month at 00:30 AM
+
+- Cron Expression: 30 00 1 * *
+
+---
+
+
+12. syncInventoryForDistributor
+
+- Purpose: Sync Inventory for all distributors with 0 stock for brand mapped products.
+
+- Schedule: Runs on every 37 minutes
+
+- Cron Expression: */37 * * * *
+
+---
+
+
+13. syncSAPGRNForDistributor
+
+- Purpose: fetch primary invoices for all newly added distributors 
+
+- Schedule: Runs on every 27 minutes
+
+- Cron Expression: */37 * * * *
+
+---
+
+
+

@@ -1,0 +1,219 @@
+// const { Worker } = require("bullmq");
+// const connection = require("../redisConnection");
+// const Notification = require("../models/notification.model");
+// const { getIO } = require("../socket");
+
+// const worker = new Worker(
+//   "notifications",
+//   async (job) => {
+//     try {
+//       const { type, room, userId, userType, data } = job.data;
+
+//       if (!type || !data?.message) {
+//         throw new Error("Invalid notification payload");
+//       }
+
+//       console.log("🔔 Processing notification:", type, { room, userId, userType });
+
+//       // -----------------------------
+//       // 1️⃣ Determine target
+//       // -----------------------------
+//       let role = null;
+//       let targetRoom = null;
+
+//       // Priority 1: Explicit room (for role-based broadcasts)
+//       if (room?.startsWith("role:")) {
+//         role = room.replace("role:", "");
+//         targetRoom = room;
+//       }
+//       // Priority 2: userId + userType combination
+//       else if (userId && userType) {
+//         // Map userType to room prefix
+//         const roomPrefix = {
+//           User: "user",
+//           OutletApproved: "user",
+//           Distributor: "user",
+//           Retailer: "user",
+//         }[userType] || "user";
+
+//         targetRoom = `${roomPrefix}:${userId}`;
+//       }
+//       // Priority 3: Fallback to userId only
+//       else if (userId) {
+//         targetRoom = `user:${userId}`;
+//       }
+
+//       // -----------------------------
+//       // 2️⃣ Save to MongoDB
+//       // -----------------------------
+//       const newNotification = await Notification.create({
+//         userId: userId || null,
+//         userType: userType || null,
+//         role,
+//         type,
+//         title: data.title || null,
+//         message: data.message,
+//         read: false,
+//       });
+
+//       // -----------------------------
+//       // 3️⃣ Emit via Socket
+//       // -----------------------------
+//       const io = getIO(); // get inside processor (important)
+
+//       if (targetRoom) {
+//         io.to(targetRoom).emit("notification", {
+//           _id: newNotification._id,
+//           type,
+//           title: newNotification.title,
+//           message: newNotification.message,
+//           createdAt: newNotification.createdAt,
+//         });
+//       }
+
+//       return { success: true };
+//     } catch (error) {
+//       console.error("❌ Notification worker error:", error.message);
+//       throw error; // let BullMQ handle retry
+//     }
+//   },
+//   {
+//     connection,
+//     concurrency: 5, // handle multiple notifications simultaneously
+//     removeOnComplete: {
+//       age: 60 * 60, // keep completed jobs for 1 hour
+//       count: 1000,  // or max 1000 jobs
+//     },
+//     removeOnFail: {
+//       age: 24 * 60 * 60, // keep failed jobs 24h
+//     },
+//   }
+// );
+
+// //
+// // -----------------------------
+// // Worker Events
+// // -----------------------------
+// worker.on("completed", (job) => {
+//   console.log(`✅ Notification job ${job.id} completed`);
+// });
+
+// worker.on("failed", (job, err) => {
+//   console.error(`❌ Notification job ${job?.id} failed:`, err.message);
+// });
+
+// worker.on("error", (err) => {
+//   console.error("🚨 Worker crashed:", err);
+// });
+
+// //
+// // -----------------------------
+// // Graceful Shutdown
+// // -----------------------------
+// const shutdown = async () => {
+//   console.log("🛑 Closing notification worker...");
+//   await worker.close();
+//   process.exit(0);
+// };
+
+// process.on("SIGTERM", shutdown);
+// process.on("SIGINT", shutdown);
+
+// module.exports = worker;
+
+const { Worker } = require("bullmq");
+const connection = require("../redisConnection");
+const Notification = require("../models/notification.model");
+const { getIO } = require("../socket");
+
+const BATCH_SIZE = 200;
+
+const worker = new Worker(
+  "notifications",
+  async (job) => {
+    try {
+      const { type, userId, userType, data } = job.data;
+
+      if (!type || !data?.message) throw new Error("Invalid notification payload");
+
+      const io = getIO();
+      const now = new Date();
+
+      // Ensure userId is array
+      const recipientIds = Array.isArray(userId) ? userId : [userId];
+
+      // -----------------------------
+      // 1️⃣ Prepare notifications for bulk insert
+      // -----------------------------
+      const notificationsToInsert = recipientIds.map(uid => ({
+        userId: uid,
+        userType: userType || null,
+        type,
+        title: data.title || null,
+        message: data.message,
+        read: false,
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      // Bulk insert
+      const insertedNotifications = await Notification.insertMany(notificationsToInsert, { ordered: false });
+
+      // -----------------------------
+      // 2️⃣ Prepare socket payloads
+      // -----------------------------
+      const socketPayloads = insertedNotifications.map(n => {
+        const roomPrefix = {
+          User: "user",
+          OutletApproved: "user",
+          Distributor: "user",
+        }[n.userType] || "user";
+
+        return {
+          room: `${roomPrefix}:${n.userId}`,
+          payload: {
+            _id: n._id,
+            type: n.type,
+            title: n.title,
+            message: n.message,
+            createdAt: n.createdAt,
+          },
+        };
+      });
+
+      // Emit in batches
+      for (let i = 0; i < socketPayloads.length; i += BATCH_SIZE) {
+        const batch = socketPayloads.slice(i, i + BATCH_SIZE);
+        batch.forEach(({ room, payload }) => io.to(room).emit("notification", payload));
+      }
+
+      console.log(`✅ Notifications processed: ${insertedNotifications.length}`);
+      return { success: true, count: insertedNotifications.length };
+    } catch (error) {
+      console.error("❌ Notification worker error:", error.message);
+      throw error;
+    }
+  },
+  {
+    connection,
+    concurrency: 50,
+    removeOnComplete: { age: 60 * 60, count: 5000 },
+    removeOnFail: { age: 24 * 60 * 60 },
+  }
+);
+
+// Worker events
+worker.on("completed", job => console.log(`✅ Job ${job.id} completed`));
+worker.on("failed", (job, err) => console.error(`❌ Job ${job?.id} failed:`, err.message));
+worker.on("error", err => console.error("🚨 Worker crashed:", err));
+
+// Graceful shutdown
+const shutdown = async () => {
+  console.log("🛑 Closing notification worker...");
+  await worker.close();
+  process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+module.exports = worker;

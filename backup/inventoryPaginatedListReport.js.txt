@@ -1,0 +1,301 @@
+const asyncHandler = require("express-async-handler");
+const Inventory = require("../../models/inventory.model");
+const mongoose = require("mongoose");
+const Transaction = require("../../models/transaction.model");
+const getInTransitQty = require("../../utils/getInTransitQty");
+const Invoice = require("../../models/invoice.model");
+
+const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 10,
+      productId,
+      searchTerm,
+      brandId,
+      categoryId,
+      collectionId,
+      godownType,
+      closingStockDate,
+      stockType,
+    } = req.query;
+
+    const distributorId = req.user._id;
+
+    // Convert page and limit to numbers
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
+    // Build the aggregation pipeline
+    const pipeline = [];
+
+    // --- Stage 1: Match Inventory ---
+    const matchStage = {
+      distributorId: distributorId,
+    };
+    if (godownType) {
+      matchStage.godownType = godownType;
+    }
+    if (Object.keys(matchStage).length > 0) {
+      pipeline.push({ $match: matchStage });
+    }
+
+    // --- Stage 2: Lookup Product ---
+    pipeline.push({
+      $lookup: {
+        from: "products", // The "products" collection
+        localField: "productId", // Field in Inventory
+        foreignField: "_id", // Field in Product
+        as: "product", // Alias for the lookup result
+      },
+    });
+
+    // --- Stage 3: Unwind Product ---
+    // Use preserveNullAndEmptyArrays if an inventory item might exist without a matching product (unlikely but safe)
+    pipeline.push({
+      $unwind: { path: "$product", preserveNullAndEmptyArrays: true },
+    });
+
+    // --- Stage 4: Match Product Fields (Filters) ---
+    const productMatchStage = {};
+    if (productId) {
+      productMatchStage["product._id"] = new mongoose.Types.ObjectId(productId);
+    }
+    if (searchTerm) {
+      productMatchStage["$or"] = [
+        { "product.product_code": { $regex: searchTerm, $options: "i" } },
+        { "product.name": { $regex: searchTerm, $options: "i" } },
+      ];
+    }
+    if (brandId) {
+      productMatchStage["product.brand"] = new mongoose.Types.ObjectId(brandId);
+    }
+    if (categoryId) {
+      productMatchStage["product.cat_id"] = new mongoose.Types.ObjectId(
+        categoryId
+      );
+    }
+    if (collectionId) {
+      productMatchStage["product.collection_id"] = new mongoose.Types.ObjectId(
+        collectionId
+      );
+    }
+    // Add a check to ensure product is not null after the unwind
+    productMatchStage["product"] = { $ne: null };
+
+    if (Object.keys(productMatchStage).length > 0) {
+      pipeline.push({ $match: productMatchStage });
+    }
+
+    // --- Stage 5: Lookup Brand ---
+    pipeline.push({
+      $lookup: {
+        from: "brands", // Assuming your brands collection is named "brands"
+        localField: "product.brand", // The ObjectId in the product object
+        foreignField: "_id", // The _id in the brands collection
+        as: "product.brandDetails", // Store the looked-up brand here temporarily
+      },
+    });
+
+    // --- Stage 6: Unwind Brand ---
+    pipeline.push({
+      $unwind: {
+        path: "$product.brandDetails",
+        preserveNullAndEmptyArrays: true, // Keep products even if brand is null/not found
+      },
+    });
+
+    // --- Stage 7: Lookup Category ---
+    pipeline.push({
+      $lookup: {
+        from: "categories", // Assuming your categories collection is named "categories"
+        localField: "product.cat_id", // The ObjectId in the product object
+        foreignField: "_id", // The _id in the categories collection
+        as: "product.categoryDetails", // Store the looked-up category here temporarily
+      },
+    });
+
+    // --- Stage 8: Unwind Category ---
+    pipeline.push({
+      $unwind: {
+        path: "$product.categoryDetails",
+        preserveNullAndEmptyArrays: true, // Keep products even if category is null/not found
+      },
+    });
+
+    // --- Stage 9: Lookup Collection ---
+    pipeline.push({
+      $lookup: {
+        from: "collections", // Assuming your collections collection is named "collections"
+        localField: "product.collection_id", // The ObjectId in the product object
+        foreignField: "_id", // The _id in the collections collection
+        as: "product.collectionDetails", // Store the looked-up collection here temporarily
+      },
+    });
+
+    // --- Stage 10: Unwind Collection ---
+    pipeline.push({
+      $unwind: {
+        path: "$product.collectionDetails",
+        preserveNullAndEmptyArrays: true, // Keep products even if collection is null/not found
+      },
+    });
+
+    // --- Stage 11: Reshape Product (Replace IDs with Details) ---
+    pipeline.push({
+      $addFields: {
+        "product.brand": "$product.brandDetails",
+        "product.cat_id": "$product.categoryDetails", // Or rename to product.category if preferred
+        "product.collection_id": "$product.collectionDetails", // Or rename to product.collection if preferred
+        // Remove temporary fields if desired (optional)
+        "product.brandDetails": "$$REMOVE",
+        "product.categoryDetails": "$$REMOVE",
+        "product.collectionDetails": "$$REMOVE",
+      },
+    });
+    // Optional: Remove the temporary fields explicitly if $addFields doesn't overwrite cleanly in all cases
+    pipeline.push({
+      $project: {
+        "product.brandDetails": 0,
+        "product.categoryDetails": 0,
+        "product.collectionDetails": 0,
+      },
+    });
+
+    // --- Stage 12: Lookup Distributor (Optional, already present) ---
+    pipeline.push({
+      $lookup: {
+        from: "distributors",
+        localField: "distributorId",
+        foreignField: "_id",
+        as: "distributor",
+      },
+    });
+    // You might want to unwind distributor too if needed, or project specific fields
+    pipeline.push({
+      $unwind: { path: "$distributor", preserveNullAndEmptyArrays: true },
+    });
+
+    // --- Stage 13: Sort ---
+    pipeline.push({ $sort: { _id: -1 } }); // Or sort by other relevant fields
+
+    // --- Pagination Pipelines ---
+    const paginatedPipeline = [...pipeline];
+    paginatedPipeline.push({ $skip: (pageNum - 1) * limitNum });
+    paginatedPipeline.push({ $limit: limitNum });
+
+    // --- Count Pipelines (Need to use the base pipeline *before* pagination) ---
+    const totalCountPipeline = [
+      { $match: { distributorId: distributorId } }, // Simple count on inventory
+      { $count: "totalItems" },
+    ];
+
+    // Filtered count uses the pipeline *before* sort, skip, limit
+    const filteredCountPipeline = [
+      ...pipeline.slice(0, -1), // Exclude the $sort stage for counting
+      { $count: "totalFilteredItems" },
+    ];
+
+    // --- Execute Aggregations ---
+    let [inventories, totalCountResult, filteredCountResult] =
+      await Promise.all([
+        Inventory.aggregate(paginatedPipeline),
+        Inventory.aggregate(totalCountPipeline),
+        Inventory.aggregate(filteredCountPipeline),
+      ]);
+
+    const totalItems =
+      totalCountResult.length > 0 ? totalCountResult[0].totalItems : 0;
+    const totalFilteredItems =
+      filteredCountResult.length > 0
+        ? filteredCountResult[0].totalFilteredItems
+        : 0;
+    const totalPages = Math.ceil(totalFilteredItems / limitNum);
+
+    // --- Closing Stock Calculation (Post-Aggregation) ---
+    if (closingStockDate && stockType) {
+      let endDate = new Date(closingStockDate);
+      endDate.setHours(23, 59, 59, 999);
+
+      // This calculation still happens *after* pagination.
+      // It only calculates closing stock for the items on the current page.
+      inventories = await Promise.all(
+        inventories.map(async (invItem) => {
+          // Ensure productId exists before querying transactions
+          if (!invItem.productId) {
+            return { ...invItem, closingStockCount: null };
+          }
+          const transactions = await Transaction.find({
+            $and: [
+              { distributorId: distributorId },
+              { productId: invItem.productId },
+              { createdAt: { $lt: endDate } },
+              { stockType: stockType },
+            ],
+          }).sort({ createdAt: -1 });
+
+          if (transactions.length > 0) {
+            const lastTransaction = transactions[0];
+            return {
+              ...invItem,
+              closingStockCount: lastTransaction?.balanceCount,
+            };
+          } else {
+            // If no transactions before the date, need to determine the opening stock logic
+            // For simplicity here, setting to null if no prior transactions found.
+            // A more robust solution might look for the earliest transaction or assume 0.
+            return {
+              ...invItem,
+              closingStockCount: null, // Or potentially invItem.openingStock if that exists and is relevant
+            };
+          }
+        })
+      );
+    }
+
+    // get In-Transit invoices for this distributor (to calculate the in transit for each product)
+    const inTransitInvoices = await Invoice.find({
+      distributorId: distributorId,
+      status: "In-Transit",
+    }).populate("lineItems.product");
+
+    let resultInventories = [...inventories];
+
+    resultInventories = resultInventories.map((invItem) => {
+      const intransitQty = getInTransitQty(
+        inTransitInvoices,
+        invItem?.productId
+      );
+
+      return {
+        ...invItem,
+        intransitQty: intransitQty,
+      };
+    });
+
+    // --- Respond ---
+    return res.status(200).json({
+      status: 200,
+      message: "Inventories fetched successfully",
+      data: resultInventories,
+      pagination: {
+        currentPage: pageNum,
+        limit: limitNum,
+        totalPages,
+        totalCount: totalItems,
+        filteredCount: totalFilteredItems,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching inventory report:", error); // Log the error for debugging
+    res.status(400).json({
+      error: true,
+      status: 400,
+      message: error?.message || "Something went wrong",
+    });
+  }
+});
+
+module.exports = {
+  inventoryPaginatedListReport,
+};

@@ -1,0 +1,125 @@
+
+// transactionReport production
+const transactionReport = async (query, body, user) => {
+  try {
+    const { searchTerm, adType, toDate, fromDate } = body;
+
+    const limit = parseInt(query.limit) || 1000; // Limit records per page
+    const page = parseInt(query.page) || 1;
+    const skip = (page - 1) * limit;
+
+    const matchStage = {
+      distributorId: new mongoose.Types.ObjectId(user?._id),
+    };
+
+    if (fromDate && toDate) {
+      matchStage.createdAt = {};
+      if (fromDate) {
+        const startOfDay = new Date(fromDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        matchStage.createdAt.$gte = startOfDay;
+      }
+      if (toDate) {
+        const endOfDay = new Date(toDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        matchStage.createdAt.$lte = endOfDay;
+      }
+    } else {
+      throw new Error("Date range is required");
+    }
+
+    if (adType) {
+      matchStage.type = adType;
+    }
+
+    const aggregationPipeline = [
+      { $match: matchStage },
+      {
+        $lookup: {
+          from: "products",
+          localField: "productId",
+          foreignField: "_id",
+          as: "product",
+        },
+      },
+      { $unwind: "$product" },
+      {
+        $match: {
+          $or: [
+            { "product.name": { $regex: searchTerm || "", $options: "i" } },
+            {
+              "product.product_code": {
+                $regex: searchTerm || "",
+                $options: "i",
+              },
+            },
+            { transactionId: { $regex: searchTerm || "", $options: "i" } },
+          ],
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $project: {
+          transactionId: 1,
+          qty: 1,
+          date: 1,
+          type: 1,
+          description: 1,
+          "product.name": 1,
+          "product.product_code": 1,
+        },
+      },
+    ];
+
+    const transactionData = await Transaction.aggregate(aggregationPipeline)
+      .allowDiskUse(true)
+      .exec();
+
+    const csvData = transactionData.map((transaction) => ({
+      "Adjustment No": transaction.transactionId,
+      "Product Code": transaction?.product?.product_code,
+      "Product Name": transaction?.product?.name,
+      "Adjustment Date": moment(transaction.date)
+        .tz("Asia/Kolkata")
+        .format("DD-MM-YYYY hh:mm A"),
+      "Adjustment Type": transaction.type,
+      "Adjustment Quantity": transaction.qty,
+      Remarks: transaction.description || "",
+    }));
+
+    const fields = [
+      { label: "Adjustment No", value: "Adjustment No" },
+      { label: "Product Code", value: "Product Code" },
+      { label: "Product Name", value: "Product Name" },
+      { label: "Adjustment Date", value: "Adjustment Date" },
+      { label: "Adjustment Type", value: "Adjustment Type" },
+      { label: "Adjustment Quantity", value: "Adjustment Quantity" },
+      { label: "Remarks", value: "Remarks" },
+    ];
+
+    const json2csvParser = new Parser({ fields });
+    const csv = json2csvParser.parse(csvData);
+
+    const filePath = path.join(__dirname, "transactions.csv");
+    fs.writeFileSync(filePath, csv);
+
+    const result = await cloudinary.uploader.upload(filePath, {
+      resource_type: "raw",
+      public_id: `transactions-${Date.now()}`,
+      folder: "lux-dms",
+    });
+
+    fs.unlinkSync(filePath);
+
+    return {
+      csvLink: result.secure_url,
+      count: transactionData.length,
+      query: query,
+      body: body,
+    };
+  } catch (error) {
+    throw new Error(error?.message || "Something went wrong");
+  }
+};

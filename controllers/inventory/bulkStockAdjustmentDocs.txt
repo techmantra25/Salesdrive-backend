@@ -1,0 +1,491 @@
+FILE: bulkStockAdjustment_steps.txt
+
+DATE: 28 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the "bulkStockAdjustment" API function.
+
+---
+FUNCTION NAME:
+
+bulkStockAdjustment
+
+DESCRIPTION:
+
+This API endpoint processes stock quantity adjustments in bulk for distributors based on a CSV file upload. It reads adjustment data from a remote CSV, validates every row, updates the corresponding product inventory quantities (salable, unsalable, and offer stock), records stock transactions, and updates distributor reward points based on adjustments.
+
+The function ensures system-wide synchronization between Inventory, Product, Transaction, Distributor, and DistributorTransaction models while providing auditability and error tolerance.
+
+STEP 1: Extract Request and Validate CSV URL
+
+Extract from Request:
+
+const { csvUrl } = req.body;
+const distributorId = req.user?._id;
+
+Validation:
+
+- Ensures the required csvUrl parameter is in the request body.
+
+- If missing, return:
+
+→ HTTP 400 Bad Request
+
+→ Error: "CSV URL is required"
+
+Purpose: The CSV URL points to a file containing stock adjustment data that will be read, validated, and processed.
+
+STEP 2: Download CSV File from Provided URL
+
+
+Create File Path:
+
+
+- Generate a unique file name:
+
+	const fileName = `${uuidv4()}.csv`;
+	const filePath = path.join(__dirname, fileName);
+
+
+Download CSV File:
+
+- Use Axios stream to retrieve and save the file locally 
+
+const response = await axios({
+  method: "GET",
+  url: csvUrl,
+  responseType: "stream",
+});
+
+const writer = fs.createWriteStream(filePath);
+response.data.pipe(writer);
+
+Error Handling:
+
+- If the file cannot be downloaded, saved, or written, return HTTP 500 with "Error downloading file".
+
+STEP 3: Parse CSV Data
+
+File Format Expected:
+Product code, Product Name, Adjustment, Qty In Pcs, Remarks, Stock Type
+
+Supported Adjustment Values:
+
+Add or Reduce
+
+Supported Stock Types:
+
+salable, unsalable, offer
+
+CSV Parsing Starts When File Download Completes:
+
+fs.createReadStream(filePath)
+  .pipe(csv({ headers: [...], skipLines: 1 }))
+  .on("data", (data) => results.push(data))
+  .on("end", async () => { ... });
+
+  Purpose:
+
+
+- Efficiently reads and transforms CSV data row-by-row.
+
+- Skips the header line.
+
+- Pushes parsed data to results[] for processing.
+
+STEP 4: Initialize Core Variables and Constants
+
+Variables Initialized:
+const results = [];
+const skippedRows = [];
+const transactions = [];
+const stockId = await transactionCode("LXSTA");
+let totalAdjustmentPoints = 0;
+const processedProducts = [];
+
+Purpose of Each:
+
+
+- results: Stores parsed CSV data.
+
+- skippedRows: Contains rows that failed validation.
+
+- transactions: Holds all stock adjustment transaction entries for bulk insert.
+
+- stockId: Sequential transaction identifier for grouping.
+
+- totalAdjustmentPoints: Tracks total points adjusted across products.
+
+- processedProducts: Records each successfully adjusted product with point and quantity details.
+
+---
+
+STEP 5: Record Validation and Data Integrity Checks
+
+Each row in results undergoes the following validation steps:
+
+1. 
+Quantity Validation:
+if (isNaN(qty) || qty <= 0)
+
+- 
+
+→ Reject invalid or zero quantities.
+
+
+
+- 
+Adjustment Type Validation:
+
+Must be Add or Reduce (not case-sensitive).
+
+if (!["add", "reduce"].includes(adjustmentType))
+
+- 
+
+→ Reject rows with invalid adjustment types.
+
+
+
+- 
+Stock Type Validation:
+
+Must be one of: salable, unsalable, offer.
+if (!["salable", "unsalable", "offer"].includes(stockType))
+
+- 
+
+→ Reject invalid stock types.
+
+- 
+Product Existence Validation:
+const product = await Product.findOne({
+  product_code: productCode
+});
+if (!product)
+
+- 
+
+→ Reject if product does not exist.
+
+- 
+Price Fetch and Validation:
+
+- Fetch the pricing using axios
+const priceResponse = await axios.get(`${SERVER_URL}/api/v1/price/product-pricing/${product._id}?distributorId=${req.user?._id}`);
+
+- Validate that a valid price entry exists.
+
+- Compute product per-piece price:
+const piecesPerBox = product.no_of_pieces_in_a_box || 1;
+rlpbyPcs = priceEntry.rlp_price / piecesPerBox;
+dlpbyPcs = priceEntry.dlp_price / piecesPerBox;
+
+Inventory Validation:
+
+- Confirm inventory exists
+
+let inventory = await Inventory.findOne({
+  productId: product._id,
+  distributorId
+});
+
+1. 	- Reject if inventory not found.
+
+Invalid rows are added to skippedRows[] with row number and reason for skipping.
+
+STEP 6: Calculate Adjustment Reward Points
+
+Logic:
+
+- Each product’s base_point is used to calculate changes in distributor’s reward points.
+
+const basePoint = Number(product.base_point) || 0;
+if (basePoint > 0) {
+  let productAdjustmentPoints = basePoint * qty;
+  if (adjustmentType === "add")
+    totalAdjustmentPoints += productAdjustmentPoints;
+  else if (adjustmentType === "reduce")
+    totalAdjustmentPoints -= productAdjustmentPoints;
+}
+
+Explanation:
+
+- Add Adjustment: Credits points (stock added).
+
+- Reduce Adjustment: Debits points (stock reduced).
+
+- Points accumulate in totalAdjustmentPoints.
+
+The logic enables tracking of whether the distributor gains or loses reward points following stock adjustments.
+
+STEP 7: Update Inventory Quantities
+
+Adjustment Logic:
+if (adjustmentType === "add") {
+  if (stockType === "salable") {
+    inventory.availableQty += qty;
+    inventory.totalStockamtDlp += dlpbyPcs * qty;
+    inventory.totalStockamtRlp += rlpbyPcs * qty;
+  } else if (stockType === "unsalable") {
+    inventory.unsalableQty += qty;
+    inventory.totalUnsalableamtDlp += dlpbyPcs * qty;
+    inventory.totalUnsalableStockamtRlp += rlpbyPcs * qty;
+  } else if (stockType === "offer") {
+    inventory.offerQty += qty;
+  }
+} else if (adjustmentType === "reduce") {
+  // Reduce quantities but prevent negative stock
+  inventory.availableQty = Math.max(inventory.availableQty - qty, 0);
+  ...
+}
+
+Purpose:
+
+- Adjust quantities according to stock category.
+
+- Maintain accurate total quantity by recalculating
+
+inventory.totalQty = inventory.availableQty + inventory.unsalableQty + inventory.offerQty;
+
+After update, call
+await inventory.save();
+
+STEP 8: Record Stock Adjustment Transactions
+
+Every updated inventory triggers a corresponding transaction entry:
+
+transactions.push({
+  distributorId,
+  transactionId: stockId,
+  invItemId: inventory._id,
+  productId: product._id,
+  qty,
+  date: new Date(),
+  type: adjustmentType === "add" ? "In" : "Out",
+  description: row["Remarks"],
+  balanceCount: stockType === "salable" 
+    ? inventory.availableQty 
+    : stockType === "unsalable" 
+    ? inventory.unsalableQty 
+    : inventory.offerQty,
+  transactionType: "stockadjustment",
+  stockType,
+});
+
+Purpose:
+
+
+- Tracks real-time inventory change history for audit and analytics.
+
+- Represents how stock levels were altered based on CSV input.
+
+Batch Insert:
+
+After processing all rows:
+await Transaction.insertMany(transactions);
+
+STEP 9: Create DistributorTransaction for RBP Points
+
+
+Condition:
+
+If the distributor has RBP scheme mapping and total adjustment points ≠ 0.
+
+const distributor = await Distributor.findById(distributorId).lean();
+if (distributor?.RBPSchemeMapped === "yes" && totalAdjustmentPoints !== 0) {
+  const latestTransaction = await DistributorTransaction.findOne({
+    distributorId
+  }).sort({ createdAt: -1 });
+
+  const currentBalance = latestTransaction ? Number(latestTransaction.balance) : 0;
+  const transactionType = totalAdjustmentPoints > 0 ? "credit" : "debit";
+  const pointsToRecord = Math.abs(totalAdjustmentPoints);
+
+  const newBalance = transactionType === "credit"
+    ? currentBalance + pointsToRecord
+    : Math.max(currentBalance - pointsToRecord, 0);
+}
+
+Create Distributor Transaction Record:
+
+const distributorTransaction = new DistributorTransaction({
+  distributorId,
+  transactionType,
+  transactionFor: "Adjustment Point",
+  point: Math.round(pointsToRecord),
+  balance: newBalance,
+  status: "Success",
+  remark: `Stock adjustment points for ${processedProducts.length} products for DB Code ${distributor.dbCode} via CSV adjustment`,
+});
+await distributorTransaction.save();
+
+Purpose of Points Transaction:
+
+- Reflects how distributor’s points balance changes due to stock additions or deductions.
+
+- Ensures reward system consistency.
+
+STEP 10: Clean Up Temporary File After Completion
+
+Once all data is processed and saved:
+
+await fsPromises.unlink(filePath);
+
+This step permanently deletes the downloaded CSV file to clean up disk space.
+
+Error Handling:
+
+If deletion fails, the process continues, but errors are logged internally to avoid halting the API.
+
+STEP 11: Generate and Send Final Response
+
+If all operations complete successfully:
+
+res.status(201).json({
+  message: "Stock adjustment processed successfully",
+  transactions,
+  skippedRows,
+  adjustmentSummary: {
+    totalProcessedProducts: processedProducts.length,
+    totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
+    processedProducts: processedProducts.map((product) => ({
+      productCode: product.productCode,
+      adjustmentType: product.adjustmentType,
+      qty: product.qty,
+      basePoint: product.basePoint,
+      points: product.points,
+    })),
+  },
+});
+
+Response Includes:
+
+
+- Summary of processed transactions
+
+- Skipped rows with reasons
+
+- Total points credited or debited
+
+- Per-product adjustment details
+
+STEP 12: Comprehensive Error Handling
+
+
+Each operational block is wrapped in multiple try-catch layers to ensure fault tolerance.
+
+Possible Errors and Respective Handling:
+
+
+1. Invalid CSV URL → 400 Bad Request
+
+2. Download Failure → 500 Internal Server Error
+
+3. CSV Parsing Errors → 500 Internal Server Error
+
+4. Database Connectivity or Insert Failures → Logged, not fatal to global process.
+
+5. Price or Product Missing Cases → Marked as skipped rows.
+
+6. RBP Calculation Failure → Logged silently to prevent blocking the process.
+
+Final catch:
+catch (error) {
+  console.error("Error in bulk stock adjustment:", error.message);
+  res.status(500).json({ message: error.message });
+}
+Ensures every exception is caught and responded uniformly.
+
+STEP 13: BUSINESS OBJECTIVES AND IMPACT
+
+
+Primary Objectives:
+
+
+1. Provide a seamless mechanism for distributors to bulk-adjust stock quantities.
+
+2. Maintain accurate and traceable inventory adjustments.
+
+3. Integrate adjustments automatically with distributor reward points through RBP (Reward Bonus Points).
+
+Impact:
+
+- Reduces manual adjustment time for large stock updates.
+
+- Maintains distributor point integrity.
+
+- Offers a transparent and auditable record of every adjustment.
+
+STEP 14: FINAL OUTCOME
+
+
+When executed successfully:
+
+
+1. CSV file is downloaded, parsed, and processed efficiently.
+
+2. Each valid product’s inventory is updated according to adjustment rules.
+
+3. Corresponding transaction records are created for each change.
+
+4. Distributor reward points (RBP) are adjusted to reflect net stock change.
+
+5. Summary response shows details of successful adjustments and skipped entries.
+
+6. Temporary files are deleted post-processing.
+
+7. Entire flow supports partial success (valid rows processed even if others fail).
+
+SUMMARY OF LOGICAL FLOW
+
+1. Validate request input for csvUrl.
+
+2. Download CSV and save it locally.
+
+3. Parse CSV rows and validate individual entries.
+
+4. Verify product, price, and inventory existence.
+
+5. Adjust inventory stock quantities.
+
+6. Calculate total point impact (Add = credit, Reduce = debit).
+
+7. Record all stock transactions in bulk.
+
+8. Adjust distributor reward points based on the total points.
+
+9. Clean up CSV file.
+
+10. Send summarized response with details.
+
+11. Handle all errors gracefully.
+
+
+IMPORTANT BUSINESS RULES
+
+1. Only add or reduce adjustment types are valid inputs.
+
+2. Only salable, unsalable, and offer stock types are allowed.
+
+3. Each product in the CSV must exist in the system prior to adjustment.
+
+4. Inventory entries must already exist for the product and distributor.
+
+5. Points are adjusted only if the distributor is mapped under RBP scheme.
+
+6. The entire CSV may contain valid and invalid rows; partial processing is supported.
+
+7. Adjustments that reduce stock cannot reduce quantity below zero.
+
+8. Price and base point values are mandatory for accurate point calculations.
+
+9. File cleanup is performed after every operation, even on error.
+
+10. Distributor balance will never become negative during point debit operations.
+
+
+AUTHOR: Srijita
+DATE: 28 Oct 2025
+

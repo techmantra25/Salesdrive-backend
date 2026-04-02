@@ -1,0 +1,719 @@
+const asyncHandler = require("express-async-handler");
+const Category = require("../models/category.model");
+const Brand = require("../models/brand.model");
+const Collection = require("../models/collection.model");
+const Product = require("../models/product.model");
+const Region = require("../models/region.model"); // Import Region model
+const State = require("../models/state.model"); // Import State model
+const Zone = require("../models/zone.model"); // Import Zone model
+const User = require("../models/user.model"); // Import User model
+const Price = require("../models/price.model"); // Import Price model
+const SubBrand = require("../models/subBrand.model"); // Import SubBrand model
+const csv = require("csv-parser");
+const axios = require("axios");
+const { generateCode } = require("../utils/codeGenerator");
+const moment = require("moment-timezone");
+
+const saveCsvToDB = asyncHandler(async (req, res) => {
+  try {
+    const results = [];
+    const fileUrl = req.body.file;
+    // const fileMime = fileUrl.split(".").reverse()[0].toLowerCase();
+
+    // if (fileMime !== "csv") {
+    //   return res
+    //     .status(400)
+    //     .send({ error: true, message: "Only CSV file is allowed." });
+    // }
+
+    // Extract file extension using regex
+    const fileMime = fileUrl.match(/\.([^.?]+)(?:\?|$)/)?.[1]?.toLowerCase();
+
+    if (fileMime !== "csv") {
+      return res
+        .status(400)
+        .send({ error: true, message: "Only CSV file is allowed." });
+    }
+
+    const response = await axios({
+      method: "get",
+      url: fileUrl,
+      responseType: "stream",
+    });
+
+    response.data
+      .pipe(csv())
+      .on("data", (data) => {
+        results.push(data);
+      })
+      .on("end", async () => {
+        try {
+          let resp = [];
+          let skippedRows = [];
+
+          switch (req.params.csvType) {
+            case "State": {
+              const processedStateNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1; // Add row index starting from 1
+
+                if (!row["State Name"].trim() || !row["Zone Code"].trim()) {
+                  row.reason = `Missing required fields at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                const zone = await Zone.findOne({
+                  code: row["Zone Code"].trim(),
+                });
+
+                if (!zone) {
+                  row.reason = `Zone not found at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  continue;
+                }
+
+                if (row["Zone Name"].trim() !== zone.name) {
+                  row.reason = `Zone name mismatch at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  continue;
+                }
+
+                const zone_id = zone._id;
+
+                const existingState = await State.findOne({
+                  name: row["State Name"].trim(),
+                  zoneId: zone_id,
+                });
+
+                if (existingState) {
+                  processedStateNames.add(row["State Name"].trim());
+                  row.reason = `Duplicate state name at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  continue;
+                }
+
+                row["Zone Code"] = zone_id;
+              }
+
+              const validStates = results.filter(
+                (row) =>
+                  row["State Name"] &&
+                  row["Zone Code"] &&
+                  !processedStateNames.has(row["State Name"].trim())
+              );
+
+              if (validStates.length > 0) {
+                const stateDocs = await Promise.all(
+                  validStates.map(async (row) => {
+                    const StateCode = await generateCode("ST-LX");
+                    return {
+                      name: row["State Name"].trim(),
+                      code: StateCode,
+                      zoneId: row["Zone Code"],
+                    };
+                  })
+                );
+
+                resp = await State.insertMany(stateDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            case "Region": {
+              const processedRegionNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1; // Add row index starting from 1
+
+                if (
+                  !row["Region Name"].trim() ||
+                  !row["Zone Code"].trim() ||
+                  !row["State Code"].trim()
+                ) {
+                  row.reason = `Missing required fields at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                const zone = await Zone.findOne({
+                  code: row["Zone Code"].trim(),
+                });
+                const state = await State.findOne({
+                  code: row["State Code"].trim(),
+                });
+
+                if (!zone || !state) {
+                  row.reason = `Zone or State not found at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  row["State Code"] = null;
+                  continue;
+                }
+
+                if (row["Zone Name"].trim() !== zone.name) {
+                  row.reason = `Zone name mismatch at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  continue;
+                }
+
+                if (row["State Name"].trim() !== state.name) {
+                  row.reason = `State name mismatch at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["State Code"] = null;
+                  continue;
+                }
+
+                const zone_id = zone._id;
+                const state_id = state._id;
+
+                const existingRegion = await Region.findOne({
+                  name: row["Region Name"].trim(),
+                  zoneId: zone_id,
+                  stateId: state_id,
+                });
+
+                if (existingRegion) {
+                  processedRegionNames.add(row["Region Name"].trim());
+                  row.reason = `Duplicate region name at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Zone Code"] = null;
+                  row["State Code"] = null;
+                  continue;
+                }
+
+                row["Zone Code"] = zone._id;
+                row["State Code"] = state._id;
+              }
+
+              const validRegions = results.filter(
+                (row) =>
+                  row["Zone Code"] &&
+                  row["Region Name"] &&
+                  row["State Code"] &&
+                  !processedRegionNames.has(row["Region Name"].trim())
+              );
+
+              if (validRegions.length > 0) {
+                const regionDocs = await Promise.all(
+                  validRegions.map(async (row) => {
+                    const RegionCode = await generateCode("REG-LX");
+                    return {
+                      name: row["Region Name"].trim(),
+                      code: RegionCode,
+                      zoneId: row["Zone Code"],
+                      stateId: row["State Code"],
+                    };
+                  })
+                );
+
+                resp = await Region.insertMany(regionDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            case "Brand": {
+              const processedBrandNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1;
+
+                if (!row["Brand Name"]?.trim()) {
+                  row.reason = `Missing required fields at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                const existingBrand = await Brand.findOne({
+                  name: row["Brand Name"].trim(),
+                });
+
+                if (existingBrand) {
+                  processedBrandNames.add(row["Brand Name"].trim());
+                  row.reason = `Duplicate brand name at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+              }
+
+              const validBrands = results.filter(
+                (row) =>
+                  row["Brand Name"] &&
+                  !processedBrandNames.has(row["Brand Name"].trim())
+              );
+
+              if (validBrands.length > 0) {
+                const brandDocs = await Promise.all(
+                  validBrands.map(async (row) => {
+                    return {
+                      name: row["Brand Name"].trim(),
+                      code: row["Brand Name"].trim(),
+                      desc: row["Brand Description"]?.trim() || null,
+                      image_path: row["Image Path"]?.trim() || null,
+                      slug: row["Slug"]?.trim() || null,
+                      status: true,
+                    };
+                  })
+                );
+
+                resp = await Brand.insertMany(brandDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            case "Category": {
+              const processedCategoryNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1;
+
+                if (!row["Category Name"].trim()) {
+                  row.reason = `Missing required fields at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                const existingCategory = await Category.findOne({
+                  name: row["Category Name"].trim(),
+                });
+
+                if (existingCategory) {
+                  processedCategoryNames.add(row["Category Name"].trim());
+                  row.reason = `Duplicate category name at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+              }
+
+              const validCategories = results.filter(
+                (row) =>
+                  row["Category Name"] &&
+                  !processedCategoryNames.has(row["Category Name"].trim())
+              );
+              if (validCategories.length > 0) {
+                const categoryDocs = await Promise.all(
+                  validCategories.map(async (row) => {
+                    const CategoryCode = row["Category Name"];
+                    return {
+                      name: row["Category Name"].trim(),
+                      code: CategoryCode,
+                      image_path: row["Image Path"]
+                        ? row["Image Path"].trim()
+                        : null,
+                      slug: row.slug || null,
+                    };
+                  })
+                );
+
+                resp = await Category.insertMany(categoryDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            case "Collection": {
+              const processedCollectionNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1;
+
+                if (
+                  !row["Collection Name"].trim() ||
+                  !row["Category Code"].trim()
+                ) {
+                  row.reason = `Missing required fields at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                const category = await Category.findOne({
+                  code: row["Category Code"].trim(),
+                });
+
+                if (!category) {
+                  row.reason = `Category not found at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Category Code"] = null;
+                  continue;
+                }
+
+                if (row["Category Name"].trim() !== category.name) {
+                  row.reason = `Category name mismatch at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  row["Category Code"] = null;
+                  continue;
+                }
+
+                const cat_id = category._id;
+
+                const existingCollection = await Collection.findOne({
+                  $and: [
+                    { name: row["Collection Name"].trim() },
+                    { cat_id: cat_id },
+                  ],
+                });
+
+                if (existingCollection) {
+                  processedCollectionNames.add(row["Collection Name"].trim());
+                  row.reason = `Duplicate collection name at row ${row.index}`;
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                row["Category Code"] = cat_id;
+              }
+
+              const validCollections = results.filter(
+                (row) =>
+                  row["Collection Name"] &&
+                  row["Category Code"] &&
+                  !processedCollectionNames.has(row["Collection Name"].trim())
+              );
+
+              if (validCollections.length > 0) {
+                const collectionDocs = await Promise.all(
+                  validCollections.map(async (row) => {
+                    const CollectionCode = row["Collection Name"];
+                    return {
+                      name: row["Collection Name"].trim(),
+                      code: CollectionCode,
+                      cat_id: row["Category Code"],
+                      image_path: row["Image Path"]
+                        ? row["Image Path"].trim()
+                        : null,
+                      slug: row.slug || null,
+                      description: row["Collection Description"]
+                        ? row["Collection Description"].trim()
+                        : null,
+                    };
+                  })
+                );
+
+                resp = await Collection.insertMany(collectionDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            case "Product": {
+              console.log("Processing Product CSV");
+
+              const processedProductNames = new Set();
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+
+                console.log(`Processing row ${i + 1}`);
+
+                row.index = i + 1; // Add row index starting from 1
+
+                if (
+                  !row["Product Code"].trim() ||
+                  !row["Product Name"].trim() ||
+                  !row["Brand Code"].trim() ||
+                  !row["Sub Brand Code"].trim() ||
+                  !row["Collection Code"].trim() ||
+                  !row["Category Code"].trim() ||
+                  !row["SKU Group Name"].trim() ||
+                  !row["SKU Group Code"].trim() ||
+                  !row["Product Size"].trim()
+                ) {
+                  row.reason = `Missing required fields at row ${
+                    row.index
+                  }. Product Code: ${row["Product Code"].trim()}`;
+                  skippedRows.push({ ...{ ...row } });
+                  continue;
+                }
+
+                const existingProduct = await Product.findOne({
+                  product_code: row["Product Code"].trim(),
+                });
+                if (existingProduct) {
+                  processedProductNames.add(row["Product Name"].trim());
+                  row.reason = `Duplicate product code at row ${
+                    row.index
+                  }. Product Code: ${row["Product Code"].trim()}`;
+                  skippedRows.push({ ...row });
+                  console.log(
+                    `Duplicate product code at row ${
+                      row.index
+                    }. Product Code: ${row["Product Code"].trim()}`
+                  );
+                  continue;
+                }
+
+                console.log(
+                  `validation passed for row ${i + 1}. Product Code: ${row[
+                    "Product Code"
+                  ].trim()}`
+                );
+
+                const category = await Category.findOne({
+                  code: row["Category Code"].trim(),
+                });
+                const collection = await Collection.findOne({
+                  code: row["Collection Code"].trim(),
+                });
+                const brand = await Brand.findOne({
+                  code: row["Brand Code"].trim(),
+                });
+                const subBrand = await SubBrand.findOne({
+                  code: row["Sub Brand Code"].trim(),
+                });
+
+                if (!category || !collection || !brand || !subBrand) {
+                  row.reason = `Category or Collection or Brand or Sub Brand not found at row ${
+                    row.index
+                  }. Product Code: ${row["Product Code"].trim()}`;
+                  skippedRows.push({ ...row });
+                  row["Category Code"] = null;
+                  row["Collection Code"] = null;
+                  row["Brand Code"] = null;
+                  row["Sub Brand Code"] = null;
+                  continue;
+                }
+
+                console.log(
+                  `Category, Collection, Brand, and Sub Brand found for row ${
+                    i + 1
+                  }. Product Code: ${row["Product Code"].trim()}`
+                );
+
+                const cat_id = category._id;
+                const collection_id = collection._id;
+                const brand_id = brand._id;
+                const subBrand_id = subBrand._id;
+
+                row["Category Code"] = cat_id;
+                row["Collection Code"] = collection_id;
+                row["Brand Code"] = brand_id;
+                row["Sub Brand Code"] = subBrand_id;
+                row["SKU Group Code"] = row["SKU Group Code"].trim();
+                row["SKU Group Name"] = row["SKU Group Name"].trim();
+                row["Product Size"] = row["Product Size"].trim();
+                row["Pieces in a box"] = row["Pieces in a box"].trim() || null;
+                row["Product Type"] = row["Product Type"].trim() || null;
+                row["Product HSN Code"] =
+                  row["Product HSN Code"].trim() || null;
+                row.CGST = row.CGST.trim() || null;
+                row.SGST = row.SGST.trim() || null;
+                row.IGST = row.IGST.trim() || null;
+                row.SBU = row.SBU.trim() || null;
+                row["Base Points"] = row["Base Points"].trim() || null;
+                row["Unit of Measure"] = row["Unit of Measure"].trim() || null;
+                row["Image Path"] = row["Image Path"].trim() || null;
+
+                console.log(
+                  `Processed row ${i + 1}: ${row["Product Name"].trim()}`
+                );
+
+                // check if product is valid then insert into database
+                if (
+                  row["Category Code"] &&
+                  row["Collection Code"] &&
+                  row["Brand Code"] &&
+                  row["Sub Brand Code"] &&
+                  row["Product Name"] &&
+                  row["Product Code"] &&
+                  row["SKU Group Name"] &&
+                  row["Product Size"] &&
+                  !processedProductNames.has(row["Product Name"].trim())
+                ) {
+                  const product = {
+                    name: row["Product Name"].trim(),
+                    product_code: row["Product Code"].trim(),
+                    sku_group_id: row["SKU Group Code"].trim(),
+                    sku_group__name: row["SKU Group Name"].trim(),
+                    cat_id: row["Category Code"],
+                    collection_id: row["Collection Code"],
+                    brand: row["Brand Code"],
+                    subBrand: row["Sub Brand Code"],
+                    size: row["Product Size"].trim(),
+                    no_of_pieces_in_a_box: row["Pieces in a box"].trim(),
+                    img_path: row["Image Path"]
+                      ? row["Image Path"].trim()
+                      : null,
+                    product_type: row["Product Type"].trim(),
+                    product_hsn_code: row["Product HSN Code"].trim(),
+                    base_point: row["Base Points"].trim(),
+                    cgst: row.CGST.trim(),
+                    sgst: row.SGST.trim(),
+                    igst: row.IGST.trim(),
+                    sbu: row.SBU ? row.SBU.trim() : null,
+                    uom: row["Unit of Measure"].trim(),
+                  };
+
+                  try {
+                    const newProduct = await Product.create(product);
+                    console.log(
+                      `Product created: ${newProduct.name} for row ${
+                        i + 1
+                      }. Product Code: ${row["Product Code"].trim()}`
+                    );
+                    resp = [...resp, newProduct];
+                  } catch (error) {
+                    console.error(
+                      `Error creating product for row ${i + 1}: ${
+                        error.message
+                      }. Product Code: ${row["Product Code"].trim()}`
+                    );
+                    row.reason = `Error creating product: ${
+                      error.message
+                    }. Product Code: ${row["Product Code"].trim()}`;
+                    skippedRows.push({ ...row });
+                    continue;
+                  }
+                } else {
+                  row.reason = `Invalid product data at row ${
+                    row.index
+                  }. Product Code: ${row["Product Code"].trim()}`;
+                  skippedRows.push({ ...row });
+                  console.log(
+                    `Invalid product data at row ${
+                      row.index
+                    }. Product Code: ${row["Product Code"].trim()}`
+                  );
+                }
+              }
+
+              break;
+            }
+
+            case "Price": {
+              const processedPricing = new Set();
+
+              for (const row of results) {
+                if (
+                  !row["Region Code"].trim() ||
+                  !row["Product Code"].trim() ||
+                  !row["MRP"].trim() ||
+                  !row["Effective Date"].trim()
+                ) {
+                  row.reason = "Missing required fields";
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                row["Price Type"] =
+                  row["Distributor Code"].trim().length == 0
+                    ? "regional"
+                    : "distributor";
+
+                const region = await Region.findOne({
+                  code: row["Region Code"],
+                });
+
+                const product = await Product.findOne({
+                  product_code: row["Product Code"],
+                });
+
+                let distributor = null;
+                if (row["Distributor Code"]) {
+                  distributor = await User.findOne({
+                    dbCode: row["Distributor Code"],
+                  });
+                }
+
+                if (!region || !product) {
+                  row["Region Code"] = null;
+                  row["Product Code"] = null;
+                  row.reason = "Region or Product not found";
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+
+                row["Region Code"] = region._id;
+                row["Product Code"] = product._id;
+                row["Distributor Code"] = distributor ? distributor._id : null;
+
+                const parsedDate = moment(row["Effective Date"], "DD-MM-YYYY");
+                if (isNaN(parsedDate)) {
+                  row.reason = "Invalid Effective Date";
+                  skippedRows.push({ ...row });
+                  continue;
+                }
+                row.effective_date = parsedDate;
+              }
+
+              const validPrices = results.filter(
+                (row) =>
+                  row["Region Code"] &&
+                  row["Product Code"] &&
+                  !skippedRows.includes(row)
+              );
+
+              if (validPrices.length > 0) {
+                const priceDocs = await Promise.all(
+                  validPrices.map(async (row) => {
+                    const PriceCode = await generateCode("PR-LX");
+                    return {
+                      code: PriceCode,
+                      productId: row["Product Code"],
+                      price_type: row["Price Type"],
+                      regionId: row["Region Code"],
+                      mrp_price: row["MRP"],
+                      dlp_price: row["DLP"] || null,
+                      rlp_price: row["RLP"] || null,
+                      effective_date: row.effective_date,
+                      distributorId: row["Distributor Code"] || null,
+                      createdBy: req.user._id,
+                    };
+                  })
+                );
+
+                resp = await Price.insertMany(priceDocs);
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+              break;
+            }
+
+            default: {
+              return res
+                .status(400)
+                .send({ error: true, message: "Invalid CSV type" });
+            }
+          }
+
+          return res.status(200).send({
+            error: false,
+            message: "Data saved successfully",
+            data: resp,
+            skippedRows: skippedRows,
+          });
+        } catch (error) {
+          console.error("Error during data processing:", error);
+          return res.status(500).send({
+            error: true,
+            message: "Internal Server Error",
+            error: error.message,
+          });
+        }
+      })
+      .on("error", (error) => {
+        console.error("Error reading file:", error);
+        return res.status(500).send({
+          error: true,
+          message: "Failed to read file",
+          error,
+        });
+      });
+  } catch (error) {
+    console.error("Server Error:", error);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});
+
+module.exports = { saveCsvToDB };

@@ -1,0 +1,411 @@
+const asyncHandler = require("express-async-handler");
+const { releaseLock, acquireLock } = require("../../models/lock.model");
+const axios = require("axios");
+const Region = require("../../models/region.model");
+const path = require("path");
+const fs = require("fs");
+const FormData = require("form-data");
+const { SERVER_URL } = require("../../config/server.config");
+const generateToken = require("../../utils/generateToken");
+const User = require("../../models/user.model");
+
+const syncPriceMaster = asyncHandler(async (req, res) => {
+  console.log("syncPriceMaster: Entry");
+
+  if (!(await acquireLock("syncPriceMaster"))) {
+    console.log("syncPriceMaster: Lock not acquired, another sync in progress");
+    res.status(400);
+    throw new Error("Another sync is in progress. Please try again later.");
+  }
+
+  try {
+    // build date strings in DD.MM.YYYY
+    const formatDate = (d) => {
+      const [y, m, day] = d.toISOString().split("T")[0].split("-");
+      return `${day}.${m}.${y}`;
+    };
+    let currentDate = formatDate(new Date());
+    let previousDate = formatDate(new Date());
+
+    console.log("syncPriceMaster: Default dates set", {
+      currentDate,
+      previousDate,
+    });
+
+    if (req.query.previousDate && req.query.currentDate) {
+      console.log("syncPriceMaster: Custom dates provided", req.query);
+      if (new Date(req.query.previousDate) > new Date(req.query.currentDate)) {
+        console.log("syncPriceMaster: Invalid date range");
+        res.status(400);
+        throw new Error("Previous date cannot be greater than current date");
+      }
+      previousDate = req.query.previousDate;
+      currentDate = req.query.currentDate;
+    }
+
+    console.log("syncPriceMaster: Fetching regions from DB");
+    const regions = await Region.find({}).populate("stateId", "");
+    if (!regions.length) {
+      console.log("syncPriceMaster: No regions found");
+      res.status(404);
+      throw new Error("No regions found");
+    }
+    console.log("syncPriceMaster: Regions fetched", regions.length);
+
+    // normalize region objects
+    const normRegions = regions.map((r) => ({
+      code: r.code,
+      name: r.name,
+      state_code: r.stateId.code.padStart(2, "0"),
+      state_name: r.stateId.name,
+    }));
+    console.log("syncPriceMaster: Regions normalized");
+
+    const getInternalRegion = (code) => {
+      return (
+        normRegions.find((r) => r.state_code === code) || { code: "", name: "" }
+      );
+    };
+
+    // // fetch master list
+    // const masterUrl = ...
+    // const masterResp = await axios.get(masterUrl, { ... });
+    // let data = masterResp.data?.d?.results || [];
+
+    let data = [];
+    try {
+      const filePath = path.join(
+        __dirname,
+        "./data/unique_products_2025-07-15T13-46-38-555Z.json"
+      );
+      console.log("syncPriceMaster: Attempting to read file:", filePath);
+      const fileContent = fs.readFileSync(filePath, "utf8");
+      data = JSON.parse(fileContent);
+      console.log(
+        "syncPriceMaster: File read and parsed, data length:",
+        data.length
+      );
+    } catch (err) {
+      console.error("syncPriceMaster: File read/parse error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to read or parse the file.json",
+        error: err.message,
+        stack: err.stack,
+      });
+    }
+
+    if (!data || data.length === 0) {
+      console.log("syncPriceMaster: No product master data found");
+      return res.status(404).json({
+        success: false,
+        message: "No product master data found",
+        data: [],
+      });
+    }
+
+    if (!data.length) {
+      console.log("syncPriceMaster: No data found for the given date range");
+      res.status(404);
+      throw new Error("No data found for the given date range");
+    }
+
+    // keep only first occurrence of each VSKU
+    console.log("syncPriceMaster: Filtering unique VSKU");
+    const seen = new Set();
+    data = data.filter((i) => {
+      if (seen.has(i.VSKU)) return false;
+      seen.add(i.VSKU);
+      return true;
+    });
+    console.log("syncPriceMaster: Unique VSKU count:", data.length);
+
+    const getPcsInBox = (item) => {
+      const raw = String(item.ProductExntension1 || "").trim();
+      const num = parseFloat(raw.replace(/[^0-9.]/g, "")) || 1;
+      return num > 0 ? num : 1;
+    };
+
+    const getMRP = (item) => {
+      const MRP = Number(parseFloat(item.SalePrice || "0.00")).toFixed(2);
+      return isNaN(MRP) || MRP < 0 ? "0.00" : MRP;
+    };
+
+    const getDLP = (item) => {
+      const UnitPrice = Number(parseFloat(item.UnitPrice || "0.00")).toFixed(2);
+      const pcsInBox = getPcsInBox(item);
+      const DLP = Number(UnitPrice / pcsInBox).toFixed(2);
+      return isNaN(DLP) || DLP < 0 ? "0.00" : DLP;
+    };
+
+    console.log("syncPriceMaster: Fetching price data for each product");
+    let priceData = await Promise.all(
+      data.map(async (item, idx) => {
+        const product_code = item.VSKU || "";
+        const mrp = getMRP(item);
+        const dlp = getDLP(item);
+        const pcsInBox = getPcsInBox(item);
+
+        const url = `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_MASSIST_MAT_REG_PR1_SRV/HeaderSet(RegionCode='',Material='${product_code}',FromDate='01.01.2019',ToDate='31.12.9999')/HeaderItem?$format=json`;
+
+        try {
+          console.log(
+            `syncPriceMaster: [${idx + 1}/${
+              data.length
+            }] Fetching region prices for product_code: ${product_code}`
+          );
+          const resp = await axios.get(url, {
+            headers: { Cookie: "sap-usercontext=sap-client=100" },
+          });
+
+          // 200 ms delay
+          await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+          });
+
+          let regionPrices = resp.data?.d?.results || [];
+          regionPrices = regionPrices.map((r) => {
+            const totalPrice = r?.Kbetr || "0.00";
+            let price = Number(Number(totalPrice) / pcsInBox).toFixed(2);
+            if (isNaN(price) || price < 0) {
+              price = 0;
+            }
+
+            return {
+              region_code_external: r?.Regio,
+              region_name_external: r?.Bezei,
+              region_code_internal: getInternalRegion(r.Regio)?.code,
+              region_name_internal: getInternalRegion(r.Regio)?.name,
+              price: price,
+            };
+          });
+
+          // if more than one price is there for a region, take the last one
+          const regionMap = new Map();
+          regionPrices.forEach((r) => {
+            const key = `${r.region_code_external}-${r.region_code_internal}`;
+            if (!regionMap.has(key)) {
+              regionMap.set(key, r);
+            } else {
+              // update the price if it is greater than the existing one
+              const existing = regionMap.get(key);
+              if (Number(r.price) > Number(existing.price)) {
+                regionMap.set(key, r);
+              }
+            }
+          });
+
+          regionPrices = Array.from(regionMap.values());
+
+          return {
+            product_code,
+            MRP: mrp,
+            DLP: dlp,
+            regionPrices,
+          };
+        } catch (error) {
+          console.error(
+            `syncPriceMaster: Error fetching region prices for product_code: ${product_code}`,
+            error.message
+          );
+          return {
+            product_code,
+            MRP: mrp,
+            DLP: dlp,
+            regionPrices: [],
+          };
+        }
+      })
+    );
+    console.log("syncPriceMaster: Price data fetched for all products");
+
+    let finalPrices = [];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const effectiveDate = tomorrow
+      .toLocaleDateString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+      .split("/")
+      .join("-");
+
+    console.log("syncPriceMaster: Building finalPrices array");
+    for (const item of priceData) {
+      if (item.regionPrices.length > 0) {
+        // entry national price
+        finalPrices.push({
+          "Region Code": "",
+          "Region Name": "",
+          "Distributor Code": "",
+          "Distributor Name": "",
+          "Product Code": item.product_code,
+          MRP: item.MRP,
+          DLP: item.DLP,
+          RLP: item.DLP,
+          "Effective Date": effectiveDate,
+        });
+
+        // entry regional price
+        for (const region of item.regionPrices) {
+          finalPrices.push({
+            "Region Code": region.region_code_internal,
+            "Region Name": region.region_name_internal,
+            "Distributor Code": "",
+            "Distributor Name": "",
+            "Product Code": item.product_code,
+            MRP: item.MRP,
+            DLP: region.price,
+            RLP: region.price,
+            "Effective Date": effectiveDate,
+          });
+        }
+      } else {
+        // entry nation price
+        finalPrices.push({
+          "Region Code": "",
+          "Region Name": "",
+          "Distributor Code": "",
+          "Distributor Name": "",
+          "Product Code": item.product_code,
+          MRP: item.MRP,
+          DLP: item.DLP,
+          RLP: item.DLP,
+          "Effective Date": effectiveDate,
+        });
+      }
+    }
+    console.log(
+      "syncPriceMaster: finalPrices built, count:",
+      finalPrices.length
+    );
+
+    // filter out prices that have no DLP or DLP is 0
+    finalPrices = finalPrices.filter(
+      (item) => item.DLP && parseFloat(item.DLP) > 0
+    );
+    console.log(
+      `syncPriceMaster: Final prices count after 0 dlp filter: ${finalPrices.length}`
+    );
+
+    // create a csv
+    const csvHeader = [
+      "Region Code",
+      "Region Name",
+      "Distributor Code",
+      "Distributor Name",
+      "Product Code",
+      "MRP",
+      "DLP",
+      "RLP",
+      "Effective Date",
+    ];
+
+    const csvRows = finalPrices.map((row) =>
+      csvHeader.map((field) => `"${row[field] || ""}"`).join(",")
+    );
+
+    csvRows.unshift(csvHeader.map((field) => `"${field}"`).join(","));
+    const csvContent = csvRows.join("\n");
+
+    // Ensure uploads directory exists
+    const uploadsDir = path.join(__dirname, "../../uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      console.log("syncPriceMaster: Creating uploads directory");
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const csvFileName = `price_master_${currentDate}.csv`;
+    const csvFilePath = path.join(uploadsDir, csvFileName);
+    fs.writeFileSync(csvFilePath, csvContent);
+    console.log("syncPriceMaster: CSV file written", csvFilePath);
+
+    // Upload to cloudinary (or your upload endpoint)
+    const formData = new FormData();
+    formData.append("my_file", fs.createReadStream(csvFilePath));
+    formData.append("fileName", csvFileName);
+
+    console.log("syncPriceMaster: Uploading CSV to cloudinary/upload endpoint");
+    const result = await axios.post(
+      `${SERVER_URL}/api/v1/cloudinary/upload`,
+      formData,
+      { headers: formData.getHeaders() }
+    );
+
+    const urlData = result.data;
+    console.log("syncPriceMaster: CSV uploaded, urlData:", urlData);
+
+    // Cleanup the file
+    try {
+      fs.unlinkSync(csvFilePath);
+      console.log("syncPriceMaster: Local CSV file deleted");
+    } catch (cleanupErr) {
+      // Log but don't fail the request
+      console.error(
+        "syncPriceMaster: Failed to delete local CSV file:",
+        cleanupErr.message
+      );
+    }
+
+    console.log("syncPriceMaster: Fetching admin user");
+    const adminUser = await User.findOne({ role: "admin" });
+
+    if (!adminUser) {
+      console.log("syncPriceMaster: Admin user not found");
+      res.status(404);
+      throw new Error("Admin user not found");
+    }
+
+    const token = generateToken(adminUser._id);
+    console.log("syncPriceMaster: Token generated for admin user");
+
+    console.log("syncPriceMaster: Posting to bulk/save/Price");
+    const bulkAddResponse = await axios.post(
+      `${SERVER_URL}/api/v1/bulk/save/Price`,
+      {
+        file: urlData?.secure_url,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    const bulkAddData = bulkAddResponse.data;
+    console.log("syncPriceMaster: bulk/save/Price response received");
+
+    // bulk price status update api
+    console.log("syncPriceMaster: Calling price/bulk-update-status");
+    await axios.put(
+      `${SERVER_URL}/api/v1/price/bulk-update-status`,
+      {},
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log("syncPriceMaster: price/bulk-update-status called");
+
+    res.status(200).json({
+      message: "Price master data synced and uploaded successfully",
+      data: { urlData, bulkAddData, priceData },
+    });
+    console.log("syncPriceMaster: Success response sent");
+  } catch (err) {
+    console.error("syncPriceMaster: Error caught in main try/catch", err);
+    res.status(res.statusCode === 200 ? 500 : res.statusCode);
+    throw err;
+  } finally {
+    console.log("syncPriceMaster: Releasing lock");
+    await releaseLock("syncPriceMaster");
+    console.log("syncPriceMaster: Lock released, exit");
+  }
+});
+
+module.exports = { syncPriceMaster };

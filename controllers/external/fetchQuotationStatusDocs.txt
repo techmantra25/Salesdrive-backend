@@ -1,0 +1,366 @@
+FILE: fetchQuotationStatus_steps.txt
+
+DATE: 29 Oct 2025
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the fetchQuotationStatus API function
+
+FUNCTION NAME:
+fetchQuotationStatus
+
+DESCRIPTION:
+
+This API fetches updated quotation statuses for selected or all purchase orders from the external SAP OData Service system. It queries quotation records for each distributor (Kunnr) from SAP based on order creation date ranges and updates their sapStatus and related data within the local database.
+
+The endpoint supports:
+
+
+- Specific purchase orders (explicitly given by ID array).
+
+- Bulk synchronization for all distributed purchase orders where quotation creation was successful.
+
+It ensures data integrity by using application-level locking to prevent concurrent processes and updates all relevant PurchaseOrderEntry records with accurate SAP status logs.
+
+STEP 1: Acquire Lock to Prevent Concurrent Execution
+
+
+Locking Mechanism:
+if (!(await acquireLock("fetchQuotationStatus"))) {
+  res.status(400);
+  throw new Error("Another sync is in progress. Please try again later.");
+}
+
+Purpose:
+
+
+- Prevent concurrent synchronization jobs that might query or overwrite shared status fields simultaneously.
+
+- Returns HTTP 400 if another job for quotation sync is already running.
+
+The lock is always released in a finally block:
+
+await releaseLock("fetchQuotationStatus");
+
+STEP 2: Determine Purchase Orders to Process
+
+Custom List (if provided):
+if (req.body.purchaseOrderIds && Array.isArray(req.body.purchaseOrderIds) && req.body.purchaseOrderIds.length > 0) {
+  purchaseOrderIds = req.body.purchaseOrderIds;
+}
+
+- Client can explicitly pass an array of purchaseOrderIds for selective status fetching.
+
+Fallback Query Logic (fetch automatically):
+
+let query = { quotationSuccess: true };
+
+if (req.body.distributorId && req.body.distributorId !== "") {
+  query.distributorId = req.body.distributorId;
+}
+
+const purchaseOrdersWithIds = await PurchaseOrderEntry.find(query).select("_id");
+purchaseOrderIds = purchaseOrdersWithIds.map((po) => po._id.toString());
+
+Purpose:
+
+
+- If no list provided, system automatically targets all successfully quoted purchase orders (quotationSuccess: true), optionally filtered by distributor ID.
+
+STEP 3: Fetch Purchase Order Objects from Database
+
+Populate Related References:
+const purchaseOrders = await PurchaseOrderEntry.find({
+  _id: { $in: purchaseOrderIds },
+})
+  .populate([
+    { path: "distributorId", select: "" },
+    { path: "supplierId", select: "" },
+    {
+      path: "lineItems.product",
+      populate: [
+        { path: "cat_id" },
+        { path: "collection_id" },
+        { path: "brand" },
+      ],
+    },
+    { path: "lineItems.price" },
+    { path: "lineItems.inventoryId" },
+    { path: "approved_by" },
+    { path: "updatedBy" },
+    { path: "lineItems.plant" },
+  ])
+  .lean();
+
+  Purpose:
+
+
+- Retrieves all relevant purchase order details with relational mappings.
+
+- Complete context ensures access to:
+	- Distributor’s SAP customer code (dbCode)
+
+	- PO number (purchaseOrderNo)
+
+	- Creation date for date-range filtering in SAP system.
+
+    STEP 4: Format and Prepare Data for SAP API Calls
+
+
+Flatten and Index Data:
+const purchaseOrderMap = {};
+purchaseOrders.forEach((po) => {
+  purchaseOrderMap[po._id.toString()] = po;
+});
+
+Purpose:
+
+
+- Speeds up lookups during parallel processing by using a map instead of array searches.
+
+STEP 5: Date Formatting Utility (Support Function)
+
+Helper Function:
+const formattedDate = (date) => {
+  if (date instanceof Date && !isNaN(date)) {
+    const dd = String(date.getDate()).padStart(2, "0");
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const yyyy = date.getFullYear();
+    return `${dd}.${mm}.${yyyy}`;
+  }
+  return "";
+};
+
+Purpose:
+
+
+- SAP OData expects dates in DD.MM.YYYY format.
+
+- Ensures consistent date formatting for query parameters.
+
+STEP 6: SAP OData API Integration (Quotation Status Fetch)
+
+
+The API queries SAP’s ZRUPA_MASSIST_QUOT_STATUS1_SRV OData service for each distributor and purchase order.
+
+Construct Dynamic Query:
+
+For each purchase order:
+const previousDate = formattedDate(new Date(purchaseOrder.createdAt.getTime() - 24h));
+const nextDate = formattedDate(new Date(purchaseOrder.createdAt.getTime() + 7 days));
+const dbCode = purchaseOrder.distributorId?.dbCode;
+
+const url = `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_MASSIST_QUOT_STATUS1_SRV/QuotHeaderSet(FromDate='${previousDate}',ToDate='${nextDate}',Kunnr='${dbCode}')/HeaderItem?$format=json`;
+
+SAP Response Example:
+{
+  "d": {
+    "results": [
+      { "Bstnk": "PO12345", "Status": "Completed", ... },
+      { "Bstnk": "PO12346", "Status": "Pending", ... }
+    ]
+  }
+}
+
+Purpose:
+
+
+- Fetches status details for all purchase orders within dynamically determined date windows relative to creation date.
+
+- One call per PO-distributor combination.
+
+STEP 7: Process and Update Status in Parallel
+
+Parallel Execution Using Promise.all:
+await Promise.all(
+  purchaseOrderIds.map(async (purchaseOrderId) => {
+    const purchaseOrder = purchaseOrderMap[purchaseOrderId];
+    if (!purchaseOrder) {
+      errorCount++;
+      return;
+    }
+
+    try {
+      const response = await axios.get(url, { headers: { Cookie: "sap-usercontext=sap-client=100" } });
+      const data = response.data?.d?.results || [];
+      const statusData = data.find(item => item.Bstnk === purchaseOrder.purchaseOrderNo);
+
+      if (statusData) {
+        foundCount++;
+        await PurchaseOrderEntry.findByIdAndUpdate(purchaseOrderId, {
+          sapStatus: statusData.Status,
+          sapStatusData: statusData,
+        });
+      } else {
+        notFoundCount++;
+        await PurchaseOrderEntry.findByIdAndUpdate(purchaseOrderId, {
+          sapStatus: "Not Found",
+          sapStatusData: null,
+        });
+      }
+    } catch (err) {
+      errorCount++;
+      await PurchaseOrderEntry.findByIdAndUpdate(purchaseOrderId, {
+        sapStatus: "Error Fetching",
+        sapStatusData: null,
+      });
+    }
+  })
+);
+
+Counters Tracked:
+
+
+- foundCount: POs found in SAP system (status updated successfully).
+
+- notFoundCount: POs not found during SAP search (possibly expired or missing).
+
+- errorCount: Network or data fetch errors encountered during SAP API call.
+
+Purpose:
+
+
+- Runs all requests asynchronously for high performance.
+
+- Ensures each PO’s status is updated individually, allowing partial success.
+
+STEP 8: Update Purchase Order Status in MongoDB
+
+Found Case:
+
+sapStatus: statusData.Status
+sapStatusData: statusData
+
+Not Found Case:
+sapStatus: "Not Found"
+sapStatusData: null
+
+Error Case:
+sapStatus: "Error Fetching"
+sapStatusData: null
+
+Purpose:
+
+
+- Provides meaningful tracking within each PurchaseOrderEntry.
+
+- Keeps the full SAP response data (sapStatusData) for debugging and audit purposes.
+
+STEP 9: Return Summary Response
+
+
+Successful Execution Response:
+res.status(200).json({
+  message: "Quotation status fetched successfully",
+  data: {
+    purchaseOrderIds,
+    foundCount,
+    notFoundCount,
+    errorCount,
+  },
+});
+
+Response Example:
+{
+  "message": "Quotation status fetched successfully",
+  "data": {
+    "purchaseOrderIds": ["66ef1a7b91", "66ef1b3f25"],
+    "foundCount": 8,
+    "notFoundCount": 3,
+    "errorCount": 1
+  }
+}
+
+Purpose:
+
+
+- Returns a complete operational outcome summary including:
+	- Number of orders processed
+
+	- Order counts categorized by result type
+
+    STEP 10: Error Handling and Lock Release
+
+
+Error Management:
+
+All logic is wrapped in a global try-catch-finally structure.
+
+catch (error) {
+  res.status(500);
+  throw error;
+} finally {
+  await releaseLock("fetchQuotationStatus");
+}
+
+Purpose:
+
+
+- Ensures any unexpected exceptions return a controlled HTTP 500 response.
+
+- Guarantees that locks are released even if errors occur during SAP API execution.
+
+
+
+FINAL OUTCOME
+
+When executed successfully:
+
+1. Fetches up-to-date quotation statuses directly from SAP for all or specific purchase orders.
+
+2. Updates each purchase order’s sapStatus and stores raw response data for traceability.
+
+3. Skips already processed or failed cases without blocking the rest.
+
+4. Returns a compact summary of processed, found, not found, and error results.
+
+5. Ensures only one synchronization run occurs at a time, avoiding data race conditions.
+
+
+SUMMARY OF LOGICAL FLOW
+
+1. Acquire processing lock to avoid concurrent runs.
+
+2. Identify purchase orders: from request body or DB query.
+
+3. Retrieve corresponding purchase order details with necessary relationships.
+
+4. Prepare formatted date range around creation date for SAP query.
+
+5. Call SAP OData service to fetch quotation header data.
+
+6. Find and update status match (Bstnk = local purchaseNo).
+
+7. Update PurchaseOrderEntry records accordingly.
+
+8. Batch process asynchronously with parallel requests.
+
+9. Aggregate counters for found/missing/error conditions.
+
+10. Return summary response and release synchronization lock.
+
+
+IMPORTANT BUSINESS RULES
+
+1. Only one synchronization instance executes at any given time (fetchQuotationStatus lock).
+
+2. Quotation fetch range calculated dynamically: from one day before to seven days after PO’s creation date.
+
+3. PO matching occurs by comparing purchaseOrderNo with SAP field Bstnk.
+
+4. SAP API response is stored in full within each PO record for audit.
+
+5. Orders not found in SAP are marked as "Not Found" to allow rechecking later.
+
+6. Orders with network/API errors are marked as "Error Fetching".
+
+7. Supports both single and bulk PO processing modes.
+
+8. System fails gracefully; one bad request does not cancel others.
+
+9. Errors logged and counted separately for reporting accuracy.
+
+10. Lock is always released regardless of errors, ensuring no deadlocks.
+
+---
+AUTHOR: Srijita
+DATE: 29 Oct 2025

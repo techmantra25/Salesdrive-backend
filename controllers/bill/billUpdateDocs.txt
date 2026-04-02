@@ -1,0 +1,231 @@
+FILE: billUpdate_steps.txt
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Step-by-step documentation of the "billUpdate" API function.
+
+------------------------------------------------------------
+FUNCTION NAME:
+billUpdate
+
+DESCRIPTION:
+This API endpoint is used to update an existing bill with new data.
+The function performs several critical operations:
+1. Validates the existing bill and new bill data
+2. Checks inventory availability for updated quantities
+3. Updates the bill record in the database
+4. Adjusts inventory quantities (available/reserved) based on changes
+5. Updates the related order status based on billing completion
+6. Triggers bill reprinting after successful update
+
+------------------------------------------------------------
+STEP 1: Receive Request and Validate Input
+------------------------------------------------------------
+- The API expects the following data in the request body:
+  {
+    "previousBillData": { existing bill data with lineItems },
+    "newBillData": { updated bill data with lineItems }
+  }
+
+- The bill ID is passed as a URL parameter (req.params.bid)
+
+- Input Validation:
+  - If previousBillData or newBillData is missing, the API responds with:
+    HTTP 400 Bad Request
+    Message: "Invalid request body"
+
+------------------------------------------------------------
+STEP 2: Verify Bill Exists
+------------------------------------------------------------
+- The system checks if the bill with the given ID exists using:
+  Bill.findOne({ _id: req.params.bid })
+
+- If the bill is not found, the API responds with:
+  HTTP 404 Not Found
+  Message: "Bill not found"
+
+- The existing bill data is stored in existingBillData variable for later use.
+
+------------------------------------------------------------
+STEP 3: Extract and Validate Line Items
+------------------------------------------------------------
+- The function extracts line items from both datasets:
+  - oldLineItems = previousBillData.lineItems || []
+  - newLineItems = newBillData.lineItems || []
+
+- For each item in newLineItems, the system performs validations:
+
+  3.1 Inventory Stock Check:
+      - Fetches the inventory record: Inventory.findOne({ _id: item.inventoryId._id })
+      - Gets current available quantity: prevAvailableQty
+      - If item.billQty > prevAvailableQty:
+        -> Returns HTTP 400 with message:
+           "Insufficient stock for {product_code}. Available: {available} Requested: {requested}"
+
+  3.2 Quantity Validation:
+      - If item.billQty < 0:
+        -> Returns HTTP 400 with message:
+           "Invalid quantity for {product_code}"
+
+------------------------------------------------------------
+STEP 4: Update Bill Record
+------------------------------------------------------------
+- After all validations pass, the bill is updated using:
+  Bill.findOneAndUpdate(
+    { _id: req.params.bid },
+    { $set: newBillData },
+    { new: true }
+  )
+
+- The updated bill data is stored in updateBillData variable.
+
+------------------------------------------------------------
+STEP 5: Process Inventory Adjustments
+------------------------------------------------------------
+- A helper function getOldLineItem(productId) is defined to find
+  the corresponding old line item for each product.
+
+- For each item in newLineItems:
+  1. Find the corresponding old line item using product ID
+  2. If no old item found, skip to next item
+  3. Fetch the current inventory record
+  4. Get current reserved and available quantities
+
+- Three scenarios for inventory adjustment:
+
+  SCENARIO A: Increased Quantity (item.billQty > oldItem.billQty)
+  ----------------------------------------------------------------
+  - Calculate difference: diff = item.billQty - oldItem.billQty
+  - Update inventory:
+    * reservedQty = prevReservedQty + diff
+    * availableQty = prevAvailableQty - diff
+  - Save inventory changes
+
+  SCENARIO B: Decreased Quantity (item.billQty < oldItem.billQty)
+  ----------------------------------------------------------------
+  - Calculate difference: diff = oldItem.billQty - item.billQty
+  - Update inventory:
+    * reservedQty = prevReservedQty - diff
+    * availableQty = prevAvailableQty + diff
+  - Save inventory changes
+
+  SCENARIO C: Same Quantity
+  -------------------------
+  - No inventory changes needed
+
+------------------------------------------------------------
+STEP 6: Update Related Order Status
+------------------------------------------------------------
+- Extract orderId from existingBillData.orderId
+- Fetch the complete order with all populated references:
+  OrderEntry.findById(orderId).populate([...])
+
+- Extract order data:
+  - orderLineItems = order.lineItems
+  - billList = order.billIds (all bills related to this order)
+
+- Filter non-cancelled bills:
+  notCanceledBillList = billList.filter(bill => bill.status !== "Cancelled")
+
+  ------------------------------------------------------------
+  CASE 1: All bills cancelled
+  ------------------------------------------------------------
+  - If notCanceledBillList.length === 0:
+    -> Update order status to "Pending"
+
+  ------------------------------------------------------------
+  CASE 2: Some bills exist
+  ------------------------------------------------------------
+  - For each product in orderLineItems:
+    1. Get orderQty = item.orderQty
+    2. Get productId = item.product._id
+    3. Calculate total billQty across all non-cancelled bills for that product:
+       billQty = Sum of lineItem.billQty where bill.status !== "Cancelled"
+              and lineItem.product._id === productId
+
+    4. Compare quantities and update order status:
+       - If orderQty > billQty:  -> "Partially_Billed"
+       - If orderQty < billQty:  -> "Completed_Billed"
+       - If orderQty === billQty: -> "Completed_Billed"
+
+------------------------------------------------------------
+STEP 7: Trigger Bill Reprint
+------------------------------------------------------------
+- After successful bill update, the system triggers bill reprinting:
+  billPrintUtil([billId])
+
+- This function handles the printing/generation of the updated bill document.
+
+------------------------------------------------------------
+STEP 8: Send Success Response
+------------------------------------------------------------
+- If the bill update is successful, the API responds with:
+  HTTP 200 OK
+  JSON Response:
+  {
+    "status": 200,
+    "message": "Bill updated successfully",
+    "data": updateBillData
+  }
+
+- If the bill update fails, the API responds with:
+  HTTP 400 Bad Request
+  Message: "Bill not updated"
+
+------------------------------------------------------------
+STEP 9: Error Handling
+------------------------------------------------------------
+- All operations are wrapped in a try-catch block
+- Any unexpected error results in:
+  HTTP 400 Bad Request
+  The original error is thrown for middleware handling
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+After successful completion:
+1. The bill record is updated with new data
+2. Inventory quantities are properly adjusted (reserved/available)
+3. Related order status reflects current billing completion
+4. A new bill document is generated/printed
+5. Updated bill data is returned to the client
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Validate request input and bill existence
+2. Extract old and new line items
+3. Validate inventory availability for new quantities
+4. Update bill record in database
+5. Adjust inventory quantities based on changes
+6. Update related order status
+7. Trigger bill reprinting
+8. Return success response
+9. Handle errors appropriately
+
+------------------------------------------------------------
+IMPORTANT BUSINESS RULES
+------------------------------------------------------------
+1. Stock availability must be validated before allowing quantity increases
+2. Negative quantities are not allowed
+3. Inventory adjustments maintain consistency between available and reserved stock
+4. Order status is dynamically calculated based on all related bills
+5. Bill reprinting is automatically triggered after successful updates
+6. All database operations are atomic to prevent data inconsistency
+
+------------------------------------------------------------
+INVENTORY ADJUSTMENT LOGIC
+------------------------------------------------------------
+When bill quantity is increased:
+- More stock is reserved from available inventory
+- availableQty decreases, reservedQty increases
+
+When bill quantity is decreased:
+- Reserved stock is returned to available inventory  
+- availableQty increases, reservedQty decreases
+
+When bill quantity remains same:
+- No inventory changes are made
+
+------------------------------------------------------------
+AUTHOR: Srijita
+DATE: 27 Oct 2025

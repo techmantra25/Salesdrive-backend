@@ -1,0 +1,1122 @@
+const asyncHandler = require("express-async-handler");
+const axios = require("axios");
+const {
+  RUPA_PASSWORD,
+  RUPA_USERNAME,
+  SERVER_URL,
+} = require("../../config/server.config");
+const qs = require("querystring");
+const Distributor = require("../../models/distributor.model");
+const Employee = require("../../models/employee.model");
+const Beat = require("../../models/beat.model");
+const OutletApproved = require("../../models/outletApproved.model");
+const Product = require("../../models/product.model");
+const OrderEntry = require("../../models/orderEntry.model");
+const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
+const { orderNumberGeneratorNew } = require("../../utils/codeGenerator");
+const notificationQueue = require("../../queues/notificationQueue");
+
+const processOrderEntryImport = async (item) => {
+  try {
+    // --- Utility Functions ---
+    function safeNumber(val) {
+      const num = Number(val);
+      return isNaN(num) ? 0 : num;
+    }
+
+    const toTwoDecimal = (num) => {
+      return Number(((safeNumber(num) * 100) / 100).toFixed(2));
+    };
+
+    // --- Extract IDs and Validate ---
+    let Order_Id = item?.Order_Id;
+    let dbCode = item?.DistributerCode;
+    const distributor = await Distributor.findOne({ dbCode: dbCode });
+    if (!distributor) {
+      console.log(
+        "No distributor found for dbCode:",
+        dbCode,
+        "for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No distributor found for dbCode: ${dbCode} for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+    const distributorId = distributor._id;
+    const disStateId = distributor?.stateId;
+
+    let empId = item?.Label;
+    if (!empId) {
+      console.log("No empId found for Order_Id:", Order_Id);
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No empId found for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+    const employee = await Employee.findOne({ empId: empId });
+    if (!employee) {
+      console.log(
+        "No employee found for empId:",
+        empId,
+        "for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No employee found for empId: ${empId} for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+    const salesmanName = employee._id;
+
+    let outletCode = item?.Client_Id;
+    if (!outletCode) {
+      console.log("No outletCode found for Order_Id:", Order_Id);
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No outletCode found for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+    // const outlet = await OutletApproved.findOne({
+    //   $or: [
+    //     { outletCode: outletCode },
+    //     { massistRefIds: { $in: [outletCode] } }
+    //   ]
+    // });
+    // if (!outlet) {
+    //   console.log(
+    //     "No outlet found for outletCode or sourceIds:",
+    //     outletCode,
+    //     "for Order_Id:",
+    //     Order_Id
+    //   );
+    let outlet = await OutletApproved.findOne({
+      outletCode: outletCode,
+      status: true,
+    });
+
+    if (!outlet) {
+      outlet = await OutletApproved.findOne({
+        massistRefIds: outletCode,
+        status: true,
+      });
+    }
+
+    if (!outlet) {
+      console.log(
+        "No outlet found for outletCode or massistRefIds:",
+        outletCode,
+        "for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No outlet found for outletCode or sourceIds: ${outletCode} for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+    const retailerId = outlet._id;
+    const retailerStateId = outlet?.stateId;
+    const ISIGST = disStateId?.toString() !== retailerStateId?.toString();
+
+    const beatId = outlet?.beatId;
+    if (!beatId || (Array.isArray(beatId) && beatId.length === 0)) {
+      console.log(
+        "No beatId found for outletCode or sourceIds:",
+        outletCode,
+        "for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No beatId found for outletCode or sourceIds: ${outletCode} for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+
+    // Handle beatId as an array - use the first beatId if it's an array
+    const selectedBeatId = Array.isArray(beatId) ? beatId[0] : beatId;
+    const beat = await Beat.findById(selectedBeatId);
+    if (!beat) {
+      console.log(
+        "No beat found for outletCode or sourceIds:",
+        outletCode,
+        "for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No beat found for beatId: ${selectedBeatId} for outletCode or sourceIds: ${outletCode} for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+
+      return;
+    }
+    const routeId = beat._id;
+
+    // --- Prepare Line Items ---
+    let lineItems = [];
+    let skippedItems = [];
+    const orderProducts = item?.orders || [];
+    if (!orderProducts || orderProducts.length === 0) {
+      console.log("No order products found for Order_Id:", Order_Id);
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `No order products found for Order_Id: ${Order_Id}`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return;
+    }
+
+    // --- Calculation Functions ---
+    const getOrderQty = (orderProduct) => safeNumber(orderProduct?.Quantity);
+
+    const getGrossAmount = (orderProduct) => {
+      const productRLP = safeNumber(orderProduct?.price?.rlp_price);
+      return toTwoDecimal(getOrderQty(orderProduct) * productRLP);
+    };
+
+    const getTaxableAmount = (orderProduct) => {
+      return toTwoDecimal(getGrossAmount(orderProduct));
+    };
+
+    const getApplicableTaxRate = (orderProduct) => {
+      const taxableAmt = Number(getTaxableAmount(orderProduct));
+      let cgst = Number(orderProduct?.product?.cgst ?? orderProduct?.cgst) || 0;
+      let sgst = Number(orderProduct?.product?.sgst ?? orderProduct?.sgst) || 0;
+      let igst = Number(orderProduct?.product?.igst ?? orderProduct?.igst) || 0;
+
+      let qty = Number(getOrderQty(orderProduct)) || 0;
+      let taxablePricePerProduct = Number(taxableAmt / qty);
+
+      if (taxablePricePerProduct >= 2500) {
+        if (cgst === 2.5) cgst = 9;
+        if (sgst === 2.5) sgst = 9;
+        if (igst === 5) igst = 18;
+      }
+
+      return {
+        cgst: cgst > 0 ? cgst : 0,
+        sgst: sgst > 0 ? sgst : 0,
+        igst: igst > 0 ? igst : 0,
+      };
+    };
+
+    const getCGST = (orderProduct) => {
+      if (ISIGST) return 0;
+      const cgstRate = safeNumber(getApplicableTaxRate(orderProduct)?.cgst);
+      return toTwoDecimal(getTaxableAmount(orderProduct) * (cgstRate / 100));
+    };
+
+    const getSGST = (orderProduct) => {
+      if (ISIGST) return 0;
+      const sgstRate = safeNumber(getApplicableTaxRate(orderProduct)?.sgst);
+      return toTwoDecimal(getTaxableAmount(orderProduct) * (sgstRate / 100));
+    };
+
+    const getIGST = (orderProduct) => {
+      if (!ISIGST) return 0;
+      const igstRate = safeNumber(getApplicableTaxRate(orderProduct)?.igst);
+      return toTwoDecimal(getTaxableAmount(orderProduct) * (igstRate / 100));
+    };
+
+    const getNetAmount = (orderProduct) => {
+      return toTwoDecimal(
+        getGrossAmount(orderProduct) +
+          getCGST(orderProduct) +
+          getSGST(orderProduct) +
+          getIGST(orderProduct),
+      );
+    };
+
+    // --- Build Line Items ---
+    for (const orderProduct of orderProducts) {
+      let product_code = orderProduct?.Variant_Extension1;
+      if (!product_code) {
+        console.log("No product_code found for Order_Id:", Order_Id);
+        skippedItems.push({
+          ...orderProduct,
+          reason: `No product_code found for Order_Id: ${Order_Id}`,
+        });
+        continue;
+      }
+      const product = await Product.findOne({ product_code: product_code });
+      if (!product) {
+        console.log(
+          "No product found for product_code:",
+          product_code,
+          "for Order_Id:",
+          Order_Id,
+        );
+        skippedItems.push({
+          ...orderProduct,
+          reason: `No product found for product_code: ${product_code} for Order_Id: ${Order_Id}`,
+        });
+        continue;
+      }
+      const productId = product._id;
+
+      // Fetch pricing for the product
+      let price = null;
+      try {
+        const priceResponse = await axios.get(
+          `${SERVER_URL}/api/v1/price/product-pricing/${productId?.toString()}?distributorId=${distributorId.toString()}`,
+        );
+        if (priceResponse?.data?.data?.length > 0) {
+          price = priceResponse?.data?.data[0];
+        }
+      } catch (error) {
+        price = null;
+      }
+      if (!price || !price?.rlp_price) {
+        console.log(
+          "No price found for Product Code:",
+          product_code,
+          "for Order_Id:",
+          Order_Id,
+        );
+        skippedItems.push({
+          ...orderProduct,
+          reason: `No price found for Product Code: ${product_code} for Order_Id: ${Order_Id}`,
+        });
+        continue;
+      }
+
+      // Fetch stock information for the product
+      let inventory = null;
+      try {
+        const stockResponse = await axios.get(
+          `${SERVER_URL}/api/v1/inventory/get-stock-product/${productId?.toString()}?distributorId=${distributorId.toString()}`,
+        );
+
+        if (stockResponse?.data?.data) {
+          inventory = stockResponse?.data?.data;
+        } else {
+          inventory = null;
+        }
+      } catch (error) {
+        inventory = null;
+      }
+      if (!inventory || !inventory?._id) {
+        console.log(
+          "No inventory found for Product Code:",
+          product_code,
+          "for Order_Id:",
+          Order_Id,
+        );
+        skippedItems.push({
+          ...orderProduct,
+          reason: `No inventory found for Product Code: ${product_code} for Order_Id: ${Order_Id}`,
+        });
+        continue;
+      }
+
+      orderProduct.product = product;
+      orderProduct.price = price;
+      orderProduct.inventory = inventory;
+
+      let lineItem = {
+        product: product,
+        price: price,
+        uom: "pcs",
+        inventoryId: inventory ? inventory._id : null,
+        oderQty: getOrderQty(orderProduct),
+        grossAmt: getGrossAmount(orderProduct),
+        distributorDisc: 0,
+        distributorDiscUnit: "percent",
+        taxableAmt: getTaxableAmount(orderProduct),
+        totalCGST: getCGST(orderProduct),
+        totalSGST: getSGST(orderProduct),
+        totalIGST: getIGST(orderProduct),
+        netAmt: getNetAmount(orderProduct),
+        usedBasePoint: Number(product.base_point ?? 0),
+      };
+
+      // Sanitize all number fields in lineItem
+      Object.keys(lineItem).forEach((key) => {
+        if (typeof lineItem[key] === "number" && isNaN(lineItem[key])) {
+          lineItem[key] = 0;
+        }
+      });
+
+      lineItems.push(lineItem);
+    }
+
+    console.log(
+      `Processed ${lineItems.length} valid line items for Order_Id: ${Order_Id}`,
+    );
+    console.log(
+      `Skipped ${skippedItems.length} items due to missing or invalid data for Order_Id: ${Order_Id}`,
+    );
+
+    if (skippedItems.length > 0) {
+      console.log(
+        skippedItems.length + " products have invalid data for Order_Id:",
+        Order_Id,
+      );
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: {
+            ...item,
+            skippedOrders: skippedItems,
+            orders: orderProducts,
+          },
+          searchKey: JSON.stringify({
+            ...item,
+            skippedOrders: skippedItems,
+            orders: orderProducts,
+          }),
+          OrderStatus: "Import_Failed",
+          ErrorLog: `${skippedItems.length} products have invalid data for Order_Id: ${Order_Id}. Please check reason in the OrderData.`,
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+
+      return;
+    }
+
+    // --- Order Totals ---
+    const getTotalBasePoints = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce((total, item) => {
+          const productBasePoint = safeNumber(item?.product?.base_point);
+          return total + productBasePoint * safeNumber(item.oderQty);
+        }, 0),
+      );
+    };
+
+    const getTotalGrossAmount = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce((total, item) => total + safeNumber(item.grossAmt), 0),
+      );
+    };
+
+    const getTotalTaxableAmount = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce(
+          (total, item) => total + safeNumber(item.taxableAmt),
+          0,
+        ),
+      );
+    };
+
+    const getTotalCGST = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce(
+          (total, item) => total + safeNumber(item.totalCGST),
+          0,
+        ),
+      );
+    };
+
+    const getTotalSGST = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce(
+          (total, item) => total + safeNumber(item.totalSGST),
+          0,
+        ),
+      );
+    };
+
+    const getTotalIGST = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce(
+          (total, item) => total + safeNumber(item.totalIGST),
+          0,
+        ),
+      );
+    };
+
+    const getTotalInvoiceAmount = (lineItems) => {
+      return toTwoDecimal(
+        lineItems.reduce((total, item) => total + safeNumber(item.netAmt), 0),
+      );
+    };
+
+    const getTotalRoundOffAmount = (lineItems) => {
+      return getTotalInvoiceAmount(lineItems).toFixed(0);
+    };
+
+    // Check if Order Entry with the same Order_Id already exists
+    // const isOrderExisted = await OrderEntry.findOne({ orderId: Order_Id });
+    // // console.log("isOrderExisted", isOrderExisted);
+    // if (isOrderExisted) {
+    //   console.log(
+    //     "Order Entry already created before this cron for Order_Id:",
+    //     Order_Id,
+    //     "with orderNo:",
+    //     isOrderExisted.orderNo
+    //   );
+    //   return; // EXIT WITHOUT GENERATING ORDER NUMBER
+    // }
+
+    // --- Save to DB ---
+    // new code start
+    // --- Generate order number ---
+
+    const isOrderExisted = await OrderEntry.findOne({ orderId: Order_Id });
+    if (isOrderExisted) {
+      console.log(
+        `order entry already created before this cron for Order_ID : ${Order_Id}`,
+      );
+
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          orderId: isOrderExisted._id,
+          OrderStatus: "Import_Success",
+          ErrorLog: "Order already exists - duplicate skipped",
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+      return isOrderExisted;
+    }
+
+    const orderNumber = await orderNumberGeneratorNew("ORD");
+
+    // --- Build Order Data ---
+    let orderData = {
+      orderNo: orderNumber,
+      orderId: Order_Id,
+      distributorId: distributorId,
+      salesmanName: salesmanName,
+      routeId: routeId,
+      retailerId: retailerId,
+      orderType: "Normal-Sale",
+      paymentMode: "Credit",
+      lineItems: lineItems,
+      totalLines: lineItems.length,
+      totalBasePoints: getTotalBasePoints(lineItems),
+      grossAmount: getTotalGrossAmount(lineItems),
+      schemeDiscount: 0,
+      distributorDiscount: 0,
+      cgst: getTotalCGST(lineItems),
+      sgst: getTotalSGST(lineItems),
+      igst: getTotalIGST(lineItems),
+      taxableAmount: getTotalTaxableAmount(lineItems),
+      invoiceAmount: getTotalInvoiceAmount(lineItems),
+      roundOffAmount: getTotalRoundOffAmount(lineItems),
+      cashDiscount: 0,
+      netAmount: getTotalRoundOffAmount(lineItems),
+      orderSource: "SFA",
+      isBillCreate: false,
+    };
+
+    // --- Sanitize all number fields in orderData ---
+    Object.keys(orderData).forEach((key) => {
+      if (typeof orderData[key] === "number" && isNaN(orderData[key])) {
+        orderData[key] = 0;
+      }
+    });
+
+    // console.log("Order Create Query Fire", Order_Id);
+    // const newOrderEntry = await OrderEntry.create(orderData);
+    // console.log(
+    //   "Order Entry created successfully for Order_Id:",
+    //   Order_Id,
+    //   "with orderNo:",
+    //   newOrderEntry.orderNo
+    // );
+
+    // // LOG
+    // const log = await SecondaryOrderEntryLog.findOneAndUpdate(
+    //   { Order_Id: Order_Id },
+    //   {
+    //     Order_Id: Order_Id,
+    //     OrderData: item,
+    //     searchKey: JSON.stringify(item),
+    //     orderId: newOrderEntry._id,
+    //     OrderStatus: "Import_Success",
+    //     ErrorLog: "",
+    //   },
+    //   {
+    //     upsert: true,
+    //     new: true,
+    //     setDefaultsOnInsert: true,
+    //   }
+    // );
+
+    // // update the log id to the order entry
+    // const createdOrderEntry = await OrderEntry.findById(newOrderEntry._id);
+    // console.log(`Order Entry ID: ${createdOrderEntry._id}`);
+
+    // createdOrderEntry.secondaryOrderEntryLogId = log._id;
+    // await createdOrderEntry.save();
+
+    // return newOrderEntry;
+
+    // WRAP IN TRY-CATCH TO HANDLE DUPLICATE KEY ERROR
+    try {
+      console.log("Order Create Query Fire", Order_Id);
+      const newOrderEntry = await OrderEntry.create(orderData);
+      console.log(
+        "Order Entry created successfully for Order_Id:",
+        Order_Id,
+        "with orderNo:",
+        newOrderEntry.orderNo,
+      );
+
+      // LOG
+      const log = await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: Order_Id },
+        {
+          Order_Id: Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          orderId: newOrderEntry._id,
+          OrderStatus: "Import_Success",
+          ErrorLog: "",
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+
+      // update the log id to the order entry
+      const createdOrderEntry = await OrderEntry.findById(newOrderEntry._id);
+      console.log(`Order Entry ID: ${createdOrderEntry._id}`);
+
+      createdOrderEntry.secondaryOrderEntryLogId = log._id;
+      await createdOrderEntry.save();
+
+      return newOrderEntry;
+    } catch (createError) {
+      // HANDLE DUPLICATE KEY ERROR GRACEFULLY
+      if (createError.code === 11000 && createError.keyPattern?.orderId) {
+        console.log(
+          `Duplicate key error caught for Order_Id: ${Order_Id}. Order already exists, returning existing order...`,
+        );
+
+        // Find the existing order
+        const existingOrder = await OrderEntry.findOne({ orderId: Order_Id });
+
+        // Update log to mark as success
+        await SecondaryOrderEntryLog.findOneAndUpdate(
+          { Order_Id: Order_Id },
+          {
+            Order_Id: Order_Id,
+            OrderData: item,
+            searchKey: JSON.stringify(item),
+            orderId: existingOrder._id,
+            OrderStatus: "Import_Success",
+            ErrorLog:
+              "Duplicate detected during creation - order already exists",
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true,
+          },
+        );
+
+        return existingOrder;
+      }
+
+      // If it's not a duplicate key error, throw it to outer catch
+      throw createError;
+    }
+  } catch (error) {
+    const SOL = await SecondaryOrderEntryLog.findOne({
+      Order_Id: item?.Order_Id,
+    });
+    console.error(
+      `Error processing Order_Id ${item?.Order_Id}:`,
+      error.message,
+    );
+    // console.error(
+    //   `Error SOL Order_Id ${item?.Order_Id}:`,
+    //   SOL
+    // );
+
+    try {
+      // ERROR LOGGING
+      await SecondaryOrderEntryLog.findOneAndUpdate(
+        { Order_Id: item?.Order_Id },
+        {
+          Order_Id: item?.Order_Id,
+          OrderData: item,
+          searchKey: JSON.stringify(item),
+          OrderStatus: "Import_Failed",
+          ErrorLog: error.message || "Unknown error",
+        },
+        {
+          upsert: true,
+          new: true,
+          setDefaultsOnInsert: true,
+        },
+      );
+    } catch (logError) {
+      console.error(
+        `Failed to log error for Order_Id ${item?.Order_Id}:`,
+        logError.message,
+      );
+    }
+
+    return null;
+  }
+};
+
+const fetchSapSecondaryOrderEntryData = asyncHandler(async (req, res) => {
+  try {
+    console.log("Fetching SAP Secondary Order Entry Data...");
+
+    // get current data (mm/dd/yyyy)
+    let currentDate = new Date();
+    currentDate = currentDate.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    // previous date should be 7 days before current date
+    let previousDate = new Date();
+    previousDate.setDate(previousDate.getDate() - 7);
+    previousDate = previousDate.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+
+    const transformDate = (dateString) => {
+      // getting date in dd/mm/yyyy format
+      // return date in mm/dd/yyyy format
+      const [day, month, year] = dateString.split("/");
+      return `${month}/${day}/${year}`;
+    };
+
+    let EmpList = "";
+
+    if (req?.query?.dbCode) {
+      const failedOrders = await SecondaryOrderEntryLog.find({
+        OrderStatus: "Import_Failed",
+      });
+
+      const distributor = await Distributor.findOne({
+        dbCode: req.query.dbCode.toString(),
+      });
+
+      const emp = await Employee.find({
+        distributorId: distributor?._id,
+      });
+
+      const employeeIds = emp.map((e) => e.employeeLabel).join(",");
+
+      console.log({
+        employeeIds,
+      });
+
+      EmpList = employeeIds;
+
+      if (!failedOrders || failedOrders.length === 0) {
+        // set the previous date to 7 days before current date
+        const current = new Date();
+        current.setDate(current.getDate() - 7);
+        previousDate = current.toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+      } else {
+        const failedOrderDates = failedOrders.map((order) => {
+          return transformDate(order.OrderData?.Order_Date); // mm/dd/yyyy format
+        });
+
+        const oldestDate = failedOrderDates.reduce((oldest, curr) => {
+          const oldestDate = new Date(oldest);
+          const currDate = new Date(curr);
+          return currDate < oldestDate ? curr : oldest;
+        });
+
+        previousDate = oldestDate;
+      }
+    }
+
+    // Testing (Override dates)
+    if (req?.query?.date) {
+      currentDate = transformDate(req?.query?.date);
+      previousDate = transformDate(req?.query?.date);
+    }
+
+    console.log({
+      currentDate,
+      previousDate,
+      dbCode: req?.query?.dbCode || "All",
+    });
+
+    // currentDate = "05/21/2025";
+    // previousDate = "05/21/2025";
+
+    // Step 1: Get auth token
+    const tokenResponse = await axios({
+      method: "post",
+      url: "https://api.massistcrm.com/token",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      data: qs.stringify({
+        username: RUPA_USERNAME,
+        grant_type: "password",
+        password: RUPA_PASSWORD,
+      }),
+    });
+
+    console.log("Token fetched successfully");
+
+    const token = tokenResponse.data.access_token;
+
+    console.log("calling the Order SKU Report API...");
+
+    // Step 2: Call the Order SKU Report API
+    const reportResponse = await axios({
+      method: "post",
+      url: "https://api.massistcrm.com/api/v2/Employee/GetAllOrderSKUData",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      data: {
+        EmpList: EmpList,
+        ClientList: "",
+        StartDate: previousDate,
+        // StartDate: "06/01/2025",
+        EndDate: currentDate,
+        // EndDate: "06/11/2025",
+        Category: "C1",
+        DataFor: "OrderSKUDateWise",
+        Division: "",
+        DataState: "",
+        filter: "order",
+        DataZone: "South,North East,East,North,Center,West,Other",
+        DataCity: "",
+        ClientType: "",
+        SubType: "",
+        DataFilter: "",
+        FromClientType: "",
+        FromSubType: "",
+        FromClientList: "",
+        ClientTypeGroup: "",
+        FromClientTypeGroup: "",
+        ExcelName: "OrderSKUDateWise",
+        ProductId: "",
+        VarientId: "",
+        Manufacturer: "__",
+        ProductScheme: "",
+        TotalOrderScheme: "",
+        IsActive: "",
+        IsDMS: "",
+      },
+    });
+
+    console.log("Order SKU Report API called successfully");
+
+    let data = reportResponse?.data?.AllData || [];
+
+    if (!data || data.length === 0) {
+      res.status(400);
+      throw new Error("No data found for the given date range.");
+    }
+
+    // filter the data for those order id is not there
+    data = data.filter((item) => !!item?.Order_Id);
+
+    const distributors = await Distributor.find({ status: true })
+      .select("dbCode")
+      .lean();
+    let neededDbCode = distributors.map((distributor) => distributor.dbCode);
+    if (req?.query?.dbCode) {
+      // If dbCode is provided in query, filter the distributors
+      neededDbCode = neededDbCode.filter(
+        (code) => code === req.query.dbCode.toString(),
+      );
+    }
+
+    // filter the data for those distributer code is not there
+    data = data.filter((item) => {
+      if (!item?.DistributerCode) {
+        return false;
+      }
+
+      if (
+        item.DistributerCode &&
+        !neededDbCode.includes(item.DistributerCode)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    const commonFields = [
+      "Order_Id",
+      "Order_Date",
+      "Label",
+      "DistributerCode",
+      "Client_Id",
+    ];
+
+    // 1. Group by Order_Id
+    const grouped = data.reduce((acc, item) => {
+      const orderId = item.Order_Id.toString();
+      if (!acc[orderId]) {
+        acc[orderId] = [];
+      }
+      acc[orderId].push(item);
+      return acc;
+    }, {});
+
+    // 2. Build the final array
+    let result = Object.entries(grouped).map(([orderId, orders]) => {
+      const firstOrder = orders[0];
+      const commonData = {};
+      commonFields.forEach((field) => {
+        commonData[field] = firstOrder[field];
+      });
+
+      const orderItems = orders.map((order) => {
+        return { ...order };
+      });
+
+      return {
+        orderId,
+        ...commonData,
+        orders: orderItems,
+      };
+    });
+
+    if (!result || result.length === 0) {
+      res.status(400);
+      throw new Error("No valid order entries found after processing.");
+    }
+
+    // ASYNC FILTER: Remove orders already imported successfully
+    const filteredResult = await Promise.all(
+      result.map(async (item) => {
+        const Order_Id = item.orderId;
+
+        const existingLog = await SecondaryOrderEntryLog.findOne({
+          Order_Id,
+          OrderStatus: "Import_Success",
+        });
+        if (existingLog) {
+          console.log(
+            `Order with Order_Id: ${Order_Id} already imported successfully. Skipping...`,
+          );
+          return null;
+        }
+
+        // Check if Order Entry with the same Order_Id already exists
+
+        const isOrderExisted = await OrderEntry.findOne({ orderId: Order_Id });
+        // console.log("isOrderExisted", isOrderExisted);
+        if (isOrderExisted) {
+          console.log(
+            "Order Entry already imported successfully before this cron for Order_Id:",
+            Order_Id,
+            "with orderNo:",
+            isOrderExisted.orderNo,
+            " Skipping...",
+          );
+          return null;
+        }
+
+        return item;
+      }),
+    );
+
+    result = filteredResult.filter((item) => item !== null);
+
+    console.log(`Total ${result.length} orders to be processed for import.`);
+
+    //-----------old code (parallel processing of orders which causes multiple orders creation with same Order_Id)-------------
+
+    // result.forEach((item) => {
+    //   processOrderEntryImport(item);
+    // });
+
+    // res.status(200).json({
+    //   status: 200,
+    //   message: "Order SKU Report data fetched successfully",
+    //   data: result,
+    // });
+
+    //-----------new code (sequential processing to avoid creating multiple orders with same Order_Id)-------------
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    // Track order imports per distributor for notifications
+    const distributorOrderCounts = new Map();
+
+    for (const item of result) {
+      try {
+        const orderResult = await processOrderEntryImport(item);
+        if (orderResult) {
+          successCount++;
+          // Track order count per distributor
+          const distId = orderResult.distributorId.toString();
+          distributorOrderCounts.set(
+            distId,
+            (distributorOrderCounts.get(distId) || 0) + 1
+          );
+        } else {
+          failureCount++;
+        }
+      } catch (error) {
+        console.error(
+          `Failed to process order ${item.Order_Id || item.orderId}:`,
+          error.message,
+        );
+        failureCount++;
+      }
+    }
+
+    console.log(
+      `Processing completed. Success: ${successCount}, Failed: ${failureCount}`,
+    );
+
+    // Send notifications to distributors about their sales order imports
+    for (const [distributorId, orderCount] of distributorOrderCounts.entries()) {
+      const message = `New order notification: ${orderCount} sales order(s) added to your account`;
+      
+      await notificationQueue.add("salesOrderImport", {
+        type: "SalesOrder",
+        data: {
+          message,
+          title: "New Sales Order",
+          orderCount,
+        },
+        userId: distributorId,
+        userType: "Distributor",
+      });
+    }
+
+    res.status(200).json({
+      status: 200,
+      message: "Order SKU Report data fetched successfully",
+      data: result,
+      summary: {
+        totalOrders: result.length,
+        successCount,
+        failureCount,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw error;
+  }
+});
+
+module.exports = { fetchSapSecondaryOrderEntryData };

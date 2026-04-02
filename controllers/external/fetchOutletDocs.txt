@@ -1,0 +1,411 @@
+FILE: fetchOutlet_steps.txt
+
+DATE: 29 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the “fetchOutlet” API function.
+
+FUNCTION NAME:
+fetchOutlet
+
+DESCRIPTION:
+
+This API fetches retailer (outlet) master data from Massist CRM within a specified date range (default: last 90 days).
+
+It retrieves outlet details using external REST APIs, validates necessary references (beats, employees, and states), filters duplicates, transforms outlet data for internal use, and bulk inserts new outlets into the local OutletApproved collection.
+
+The function ensures synchronization between external CRM data and the internal retailer master ecosystem by enforcing strict validation rules, field mappings, concurrency locks, and error handling.
+
+STEP 1: Acquire Lock to Prevent Concurrent Execution
+
+Lock Implementation:
+
+if (!(await acquireLock("syncOutletMaster"))) {
+  res.status(400);
+  throw new Error("Another sync is in progress. Please try again later.");
+}
+
+Purpose:
+
+
+- Prevents simultaneous synchronization operations that could lead to duplicate or inconsistent data.
+
+- Returns HTTP 400 if another sync is already running.
+
+Logging:
+console.log("✅ [syncOutletMaster] Lock acquired.");
+
+The lock is later released in the finally block to ensure cleanup in all situations.
+
+STEP 2: Determine Date Range (Default or Query-based)
+
+Default Logic (Last 90 Days):
+let EndDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" });
+
+let StartDate = new Date();
+StartDate.setDate(StartDate.getDate() - 90);
+StartDate = StartDate.toLocaleDateString("en-US", { year: "numeric", month: "2-digit", day: "2-digit" });
+
+- Default Query Window: Current date minus 90 days.
+
+- Dates formatted to mm/dd/yyyy as required by the remote API.
+
+Custom Range (from Query Params):
+if (req.query.startDate && req.query.endDate) {
+  const startDate = new Date(req.query.startDate);
+  const endDate = new Date(req.query.endDate);
+  // Validate
+  if (isNaN(startDate) || isNaN(endDate)) { return res.status(400).json({ message: "Invalid startDate or endDate format." }); }
+  if (startDate > endDate) { return res.status(400).json({ message: "startDate cannot be greater than endDate." }); }
+}
+
+Purpose:
+
+
+- Allows custom date range pulls for incremental synchronization.
+
+- Ensures provided dates are valid and chronologically correct.
+
+STEP 3: Authenticate with External CRM (Massist API)
+
+Authentication Request:
+const tokenResponse = await axios({
+  method: "post",
+  url: "https://api.massistcrm.com/token",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  data: qs.stringify({
+    username: RUPA_USERNAME,
+    grant_type: "password",
+    password: RUPA_PASSWORD,
+  }),
+});
+
+Access Token Retrieval:
+const token = tokenResponse.data.access_token;
+console.log("Token fetched successfully");
+
+Purpose:
+
+
+- Fetches a short-lived OAuth token used to authorize subsequent API requests.
+
+- Credentials are securely stored in configuration variables.
+
+STEP 4: Fetch Outlet Data from Massist CRM
+
+Request to CRM API:
+const reportResponse = await axios({
+  method: "post",
+  url: "https://api.massistcrm.com/api/v2/employee/GetCompanyRetailerMaster",
+  headers: {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  },
+  data: {
+    DataFilter: "Counting",
+    filter: 1,
+    StartDate: StartDate,
+    EndDate: EndDate,
+  },
+});
+
+Response Processing:
+const outlets = reportResponse?.data?.AllData || [];
+if (!outlets || outlets.length === 0) {
+  return res.status(404).json({
+    error: true,
+    message: "No outlets found for the given date range.",
+  });
+}
+console.log("Outlets fetched successfully");
+
+Purpose:
+
+
+- Fetches outlet master data from external CRM API (latest 90 days or provided range).
+
+- Handles empty results gracefully with a 404 response.
+
+STEP 5: Fetch Reference Data for Validation
+
+Retrieve Internal References:
+const beats = await Beat.find({ status: true });
+const employees = await Employee.find({ status: true });
+
+Create Reference Arrays:
+const beatIds = beats.flatMap((beat) => beat.beatIds || []);
+const empIds = employees.map((emp) => emp.empId);
+
+Purpose:
+
+- Enables validation of each outlet’s BeatId and Label (employee code) to ensure correct linkage.
+
+STEP 6: Initial Validation of Outlet Records
+
+Required Fields:
+const requiredFields = ["Client_Id", "Client_Name", "Label", "BeatId", "AddState"];
+
+Filter and Record Invalid Entries:
+validRows = outlets.filter((row) => {
+  if (!row.Client_Id || !row.Client_Name || !row.Label || !row.BeatId || !row.AddState) {
+    const missing = requiredFields.filter((f) => !row[f]);
+    skippedRows.push({ ...row, reason: `Missing fields: ${missing.join(", ")}` });
+    return false;
+  }
+  return true;
+});
+
+Purpose:
+
+
+- Ensures the presence of core identifiers required for database insertion.
+
+- Invalid rows are logged into skippedRows[].
+
+STEP 7: Secondary Validation Against Local References
+
+Beat & Employee Validation:
+validRows = validRows.filter((row) => {
+  if (!beatIds.includes(row.BeatId) || !empIds.includes(row.Label)) {
+    let reason = "";
+    if (!beatIds.includes(row.BeatId)) reason += `Invalid BeatId: ${row.BeatId}. `;
+    if (!empIds.includes(row.Label)) reason += `Invalid Employee Code: ${row.Label}.`;
+    skippedRows.push({ ...row, reason });
+    return false;
+  }
+  return true;
+});
+
+Purpose:
+
+
+- Verifies the outlet belongs to a valid active beat and employee.
+
+- Eliminates disassociated or stale outlet records.
+
+STEP 8: Filter Out Already Existing Outlets
+
+Check for Existing Outlets in DB:
+const existingOutlets = await OutletApproved.find({
+  $or: [
+    { outletUID: { $in: validRows.map((row) => row.Client_Id) } },
+    { outletCode: { $in: validRows.map((row) => row.Client_Id) } },
+  ],
+}).lean();
+
+Exclude Existing Ones:
+const outletCodes = existingOutlets.map((o) => o.outletUID.toString());
+validRows = validRows.filter((row) => {
+  if (outletCodes.includes(row.Client_Id.toString())) {
+    skippedRows.push({ ...row, reason: `Outlet already exists with code: ${row.Client_Id}` });
+    return false;
+  }
+  return true;
+});
+
+Purpose:
+
+- Prevents duplicate data.
+
+- Skips outlets already present in the OutletApproved collection.
+
+STEP 9: Fetch Mapping Data for Reference Entities
+
+Parallel Retrieval:
+const [statesData, employeesData, beatsData, brandsData] = await Promise.all([
+  State.find({ status: true }).select("name slug _id").lean(),
+  Employee.find({ status: true }).select("empId _id").lean(),
+  Beat.find({ status: true }).select("beatIds _id").lean(),
+  Brand.find({ status: true }).select("_id").lean(),
+]);
+
+Create Lookup Maps:
+const stateMap = new Map(statesData.map((s) => [s.name, s._id]));
+const employeeMap = new Map(employeesData.map((e) => [e.empId, e._id]));
+
+const beatMap = new Map();
+beatsData.forEach((beat) => {
+  if (beat.beatIds) beat.beatIds.forEach((id) => beatMap.set(id, beat._id));
+});
+
+Purpose:
+
+- Facilitates quick lookups for state, employee, and beat IDs during transformation.
+
+STEP 10: Transform and Validate Data Rows
+
+Transform Logic:
+Each valid outlet record is mapped to the internal schema:
+const outletDoc = {
+  outletCode: row.Client_Id.toString(),
+  outletUID: row.Client_Id.toString(),
+  outletName: row.Client_Name,
+  ownerName: row.Client_Name,
+  employeeId: employeeMap.get(row.Label),
+  beatId: beatMap.get(row.BeatId),
+  stateId: stateMap.get(row.AddState),
+  mobile1: row.Phone1 || "",
+  address1: row.FullAddress || "",
+  city: row.AddCity || "",
+  email: row.Email_Address || "",
+  enrolledStatus: "ENROLLED",
+  shipToAddress: row.FullAddress || "",
+  outletSource: "SFA",
+  sourceData: row,
+  status: true,
+};
+
+Validation During Transformation:
+
+
+- If required mapping (State, Beat, Employee) not found, record is skipped with a detailed reason.
+
+STEP 11: Insert Valid Outlets into Database
+
+Bulk Insert:
+if (validOutletsForDB.length > 0) {
+  insertedOutlets = await OutletApproved.insertMany(validOutletsForDB, {
+    ordered: false,
+  });
+}
+
+Error Handling:
+
+
+- Duplicate key errors handled gracefully.
+
+- ordered: false ensures partial insertion is allowed (successful items still inserted).
+
+STEP 12: Format Final Response Data
+
+
+Transform Data for Response:
+const transformedData = validRows.map((row) => ({
+  outletCode: row.Client_Id,
+  outletUid: row.Client_Id,
+  outletName: row.Client_Name,
+  ownerName: row.Client_Name,
+  employeeCode: row.Label,
+  beatCode: row.BeatId,
+  stateCode: row.AddState,
+  mobile1: row.Phone1 || "",
+  address1: row.FullAddress || "",
+  city: row.AddCity || "",
+  email: row.Email_Address || "",
+  enrolledStatus: "ENROLLED",
+  shipToAddress: row.FullAddress || "",
+  outletSource: "SFA",
+}));
+
+Send Response:
+res.status(200).json({
+  error: false,
+  message: `Outlets processed successfully. ${insertedOutlets.length} outlets inserted, ${skippedRows.length} skipped.`,
+  metadata: {
+    totalFetched: outlets.length,
+    totalProcessed: validRows.length,
+    totalInserted: insertedOutlets.length,
+    totalSkipped: skippedRows.length,
+    existingOutletCodes: outletCodes,
+  },
+  data: {
+    insertedOutlets: insertedOutlets.length,
+    transformedData: transformedData,
+    skippedRows: skippedRows,
+  },
+});
+
+Purpose:
+
+- Returns a detailed operational summary and output data payload with transformation integrity.
+
+STEP 13: Error Handling and Lock Release
+
+Global Error Handling:
+catch (error) {
+  res.status(400);
+  throw error;
+} finally {
+  await releaseLock("syncOutletMaster");
+  console.log("syncOutletMaster: Lock released, finished");
+}
+
+Purpose:
+
+- Ensures lock is always released to allow future sync operations.
+
+- All exceptions are propagated to Express error middleware with relevant HTTP status codes.
+
+
+FINAL OUTCOME
+
+When executed successfully:
+
+1. The function securely connects to the CRM API and downloads outlet data.
+
+2. Filters invalid or incomplete entries based on required fields and references.
+
+3. Verifies beat, employee, and state mappings.
+
+4. Removes existing outlets already in the local database.
+
+5. Converts outlet records into local data model format for insertion.
+
+6. Performs efficient bulk insertion of valid data.
+
+7. Returns a comprehensive summary with insert counts and skipped rows.
+
+
+SUMMARY OF LOGICAL FLOW
+
+1. Acquire lock to ensure single sync execution.
+
+2. Prepare date range for outlet data fetch.
+
+3. Authenticate via CRM token.
+
+4. Fetch outlet master data from external CRM.
+
+5. Validate data completeness and required fields.
+
+6. Verify relationships (Beat, Employee, State).
+
+7. Filter existing outlets in local database.
+
+8. Transform data to match internal schema.
+
+9. Bulk insert valid outlet records.
+
+10. Generate final response summarizing success/failure.
+
+11. Release lock post-processing.
+
+
+
+IMPORTANT BUSINESS RULES
+
+1. Only one operation runs at a time (controlled via named lock).
+
+2. Each outlet entry must contain Client_Id, Client_Name, Label, BeatId, and AddState.
+
+3. Outlets associated with invalid or inactive beats/employees are skipped.
+
+4. Duplicate outlets (existing UID or Code in DB) are ignored to prevent duplication.
+
+5. New outlets are tagged with outletSource: "SFA".
+
+6. Existing outlets remain unaffected.
+
+7. Default range pull is set to the last 90 days but supports dynamic custom date ranges.
+
+8. Each insertion preserves raw CRM data (sourceData: row) for traceability.
+
+9. In case of partial errors during insert, valid records still persist successfully.
+
+10. System always releases lock — even upon errors or terminations.
+
+
+---
+AUTHOR: Srijita
+DATE: 29 Oct 2025

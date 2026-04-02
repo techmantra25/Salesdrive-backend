@@ -1,0 +1,13 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /home/saas/temp-rupa-dms-backend
+
+hooks:
+  AfterInstall:
+    - location: hook_afterinstall.sh
+      runas: saas
+  AfterAllowTraffic:
+    - location: hook_afterinstall_cleanup.sh
+      runas: root

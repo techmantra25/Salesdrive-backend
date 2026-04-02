@@ -1,0 +1,439 @@
+FILE: syncProductMaster_steps.txt
+
+DATE: 30 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the “syncProductMaster” API function
+
+FUNCTION NAME:
+
+syncProductMaster
+
+DESCRIPTION:
+
+This API synchronizes product master data from the SAP product master service to the local database.
+
+It fetches the latest product details from the SAP system, transforms the data into the internal schema, validates reference data (categories, brands, suppliers, collections, sub-brands), and inserts or updates product records efficiently using batched operations.
+
+The synchronization ensures consistency between the SAP product catalog and the local product master system, maintaining up-to-date product information for pricing, SKU management, and inventory operations.
+
+The functionality includes:
+
+
+- Date-based fetching of product records from SAP
+
+- Duplicate filtering by product variant
+
+- Data transformation and GST/UOM/points standardization
+
+- Validation of mapping references (Category, Brand, Supplier, Collection, etc.)
+
+- Bulk insertion and update in local MongoDB for efficient processing
+
+- Controlled concurrency using lock management
+
+STEP 1: Acquire Lock to Prevent Concurrent Processing
+
+
+Lock Mechanism:
+
+if (!(await acquireLock("syncProductMaster"))) {
+  res.status(400);
+  throw new Error("Another sync is in progress. Please try again later.");
+}
+
+Purpose:
+
+
+- Prevents multiple simultaneous sync jobs that could lead to inconsistent or duplicated products.
+
+- Ensures only one instance of the synchronization runs at a time.
+
+Logging:
+
+console.log("syncProductMaster: Started");
+
+The lock is later released in the finally block to guarantee cleanup regardless of success or failure.
+
+STEP 2: Handle Date Range and Validate Input
+
+
+Default Date Configuration:
+
+let currentDate = new Date();
+currentDate = `${dd}.${mm}.${yyyy}`;
+let previousDate = new Date();
+previousDate = `${dd}.${mm}.${yyyy}`;
+
+Both dates default to the current date (same day sync), formatted as DD.MM.YYYY.
+
+Custom Range Allowed via Query Parameters:
+if (req.query.previousDate && req.query.currentDate) {
+  if (new Date(req.query.previousDate) > new Date(req.query.currentDate)) {
+    throw new Error("Previous date cannot be greater than current date");
+  } else {
+    currentDate = req.query.currentDate;
+    previousDate = req.query.previousDate;
+  }
+}
+
+Purpose:
+
+
+- Enables fetching data incrementally between defined SAP date ranges.
+
+- Enforces valid date intervals avoiding reversed ranges.
+
+Example:
+
+?previousDate=28.07.2025&currentDate=30.07.2025
+
+STEP 3: Fetch Product Data from SAP API
+
+
+SAP API Endpoint:
+
+const url =
+  "http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_DMS_PRODUCT_MASTER_SRV/headerSet";
+
+  GET Request Example:
+
+  const response = await axios.get(
+  `${url}?sap-client=100&$filter=fromDate eq '${previousDate}' and toDate eq '${currentDate}' and variant eq ''&$format=json`,
+  {
+    headers: { Cookie: "sap-usercontext=sap-client=100" },
+  }
+);
+
+Expected Data Example:
+
+{
+  "d": {
+    "results": [
+      {
+        "variant": "RUPA001BOX",
+        "description": "Classic Vest",
+        "manufacturer": "RUPA",
+        "size": "L",
+        "color": "White",
+        "cgst": "2.5",
+        "sgst": "2.5",
+        "igst": "",
+        "points": "10"
+      }
+    ]
+  }
+}
+
+Error Handling:
+
+
+- If no data found, response is 404 with message "No data found".
+
+STEP 4: Filter Unique Product Variants
+
+
+Since duplicate variants may exist, the API filters to keep only the latest record per variant:
+
+const uniqueVariants = new Set();
+data = data.filter((item) => {
+  const variant = item.variant || "";
+  if (uniqueVariants.has(variant)) return false;
+  uniqueVariants.add(variant);
+  return true;
+});
+
+Purpose:
+
+Ensures duplicate entries from SAP do not lead to redundant product insertions.
+
+STEP 5: Define Helper Functions for Data Transformation
+
+
+These internal methods normalize and standardize key attributes from raw SAP data.
+
+Unit of Measure (UOM):
+
+const getUOM = (item) => {
+  const su = item.sales_unit?.trim();
+  if (su === "BOX") return "box";
+  if (su === "DZ") return "dz";
+  if (["1PA", "2PA", "3PA", "PAA", "PAK"].includes(su)) return su;
+  return "pcs";
+};
+
+Pieces in Box:
+const getPcsInBox = (item) => {
+  const pcs = Number(item.sales_conv?.replace(/[^0-9.]/g, "")) || 1;
+  return pcs > 0 ? pcs.toString() : "1";
+};
+
+Base Points:
+const getBasePoints = (item) => {
+  const points = parseFloat(item.points?.replace(/[^0-9.]/g, "")) || 0;
+  return points.toString();
+};
+
+Tax handling (GST):
+const getGst = (item) => {
+  let cgst = Number(item.cgst) || 0;
+  let sgst = Number(item.sgst) || 0;
+  let igst = Number(item.igst) || 0;
+
+  if (igst && (!cgst || !sgst)) {
+    cgst = sgst = igst / 2;
+  } else if (!igst && (cgst || sgst)) {
+    igst = (cgst || sgst) * 2;
+  }
+
+  return { cgst: `${cgst}`, sgst: `${sgst}`, igst: `${igst}` };
+};
+
+Supplier Code:
+const getSupplierCode = (item) => {
+  if (item.manufacturer?.trim()) return item.manufacturer.trim();
+  if (item.plant?.trim()) return "C" + item.plant.trim();
+  return "";
+};
+
+STEP 6: Transform SAP Data into Application Schema
+
+
+Each record transformed into a normalized, full-fledged object aligning with the internal data model.
+
+const transformedData = data.map((item) => ({
+  "Product Code": item.variant || "",
+  "Product Name": item.description || "",
+  "SKU Group Code": item.base || "",
+  "SKU Group Name": item.base_desc || "",
+  "Product Size": item.size || "",
+  "Product Color": item.color || "",
+  "Supplier Code": getSupplierCode(item),
+  CGST: getGst(item).cgst,
+  SGST: getGst(item).sgst,
+  IGST: getGst(item).igst,
+  "Unit of Measure": getUOM(item),
+  "Pieces in a box": getPcsInBox(item),
+  "Base Points": getBasePoints(item),
+}));
+
+Purpose:
+
+Converts all SAP product data into a clean, unified structure that matches the local product schema.
+
+STEP 7: Extract Unique Master Codes
+
+
+Build Unique Reference Sets:
+
+const uniqueCodes = {
+  categories: new Set(),
+  collections: new Set(),
+  brands: new Set(),
+  subBrands: new Set(),
+  products: new Set(),
+};
+
+Extract From Data:
+transformedData.forEach((row) => {
+  if (row["Category Code"]?.trim())
+    uniqueCodes.categories.add(row["Category Code"].trim());
+  // above repeated for all entities
+});
+
+Purpose:
+
+Avoids repetitive DB calls by fetching relevant entities and suppliers only once per unique reference.
+
+STEP 8: Fetch Existing Collections and Products
+
+Query DB for References:
+
+const [
+  categories, collections, brands, subBrands, suppliers, existingProducts,
+] = await Promise.all([
+  Category.find({ code: { $in: Array.from(uniqueCodes.categories) } }),
+  Collection.find({ code: { $in: Array.from(uniqueCodes.collections) } }),
+  Brand.find({ code: { $in: Array.from(uniqueCodes.brands) } }),
+  SubBrand.find({ code: { $in: Array.from(uniqueCodes.subBrands) } }),
+  Supplier.find({ supplierCode: { $in: Array.from(uniqueSupplierCodes) } }),
+  Product.find({ product_code: { $in: Array.from(uniqueCodes.products) } })
+]);
+
+Purpose:
+
+- Preloads existing documents for relational validation.
+
+- Prevents failed inserts due to missing FK references.
+
+STEP 9: Batch Process and Validate Records
+
+Process Data in Groups:
+const BATCH_SIZE = 5000;
+for (let i = 0; i < transformedData.length; i += BATCH_SIZE) {
+  const batch = transformedData.slice(i, i + BATCH_SIZE);
+  // Process insertions, updates, and skips
+}
+
+Validation Before Insert/Update:
+
+For each product:
+
+
+- Required fields: Product Code, Name, SKU Group, Category, Brand, Supplier, Collection
+
+- References: Each must exist in DB (categoryMap, supplierMap, etc.)
+
+- If missing → added to skipped list with descriptive “reason”.
+
+STEP 10: Bulk Insert New Products
+
+
+New (non-existing) product insert:
+const result = await Product.insertMany(validProducts, { ordered: false });
+totalInserted += result.length;
+
+Error Handling:
+
+
+- If duplicate key or insert failure occurs → log record with “Database insertion failed” reason.
+
+STEP 11: Bulk Update Existing Products
+
+
+Batch Update Logic:
+
+Use optimized MongoDB bulkWrites:
+const result = await Product.bulkWrite(
+  updateBatch.map(({ filter, update }) => ({
+    updateOne: { filter, update, upsert: false },
+  })),
+  { ordered: false }
+);
+totalUpdated += result.modifiedCount;
+
+Purpose:
+
+Batch updates ensure schema consistency without creating duplicates.
+
+STEP 12: Track Batch Statistics and Skipped Rows
+
+After processing each batch:
+totalProcessed += batch.length;
+totalSkipped += batchSkipped.length;
+skippedRows.push(...batchSkipped);
+
+console.log(`Batch summary: processed=${batch.length}, inserted=${validProducts.length}, updated=${productsToUpdate.length}, skipped=${batchSkipped.length}`);
+
+STEP 13: Send Final Summary Response
+
+Response Format:
+return res.status(200).json({
+  success: true,
+  message: "Product master data synced successfully",
+  data: {
+    totalProcessed,
+    totalInserted,
+    totalUpdated,
+    totalSkipped,
+    skippedRows,
+  },
+});
+
+
+Example Response:
+{
+  "success": true,
+  "message": "Product master data synced successfully",
+  "data": {
+    "totalProcessed": 12000,
+    "totalInserted": 4800,
+    "totalUpdated": 7000,
+    "totalSkipped": 200,
+    "skippedRows": []
+  }
+}
+
+STEP 14: Error Handling and Lock Release
+
+
+Global error management with data integrity ensured:
+catch (error) {
+  console.log("syncProductMaster: Caught error", error);
+  res.status(400);
+  throw error;
+} finally {
+  await releaseLock("syncProductMaster");
+  console.log("syncProductMaster: Lock released, finished");
+}
+
+FINAL OUTCOME
+
+
+When executed successfully:
+
+
+1. Synchronizes product master data from SAP system to local DB.
+
+2. Ensures comprehensive transformation and validation for each record.
+
+3. Performs high-speed batch insertion and updates.
+
+4. Logs complete summary including processed, inserted, updated, and skipped counts.
+
+5. Maintains SAP-ERP parity with local system with zero duplication and minimal downtime.
+
+SUMMARY OF LOGICAL FLOW
+
+1. Acquire synchronization lock.
+
+2. Determine date range for data fetch.
+
+3. Fetch product data from SAP OData API.
+
+4. Filter duplicate variants.
+
+5. Transform data fields and normalize structure.
+
+6. Extract unique master codes for mapping.
+
+7. Preload DB references (categories, brands, suppliers, collections, etc.).
+
+8. Validate and group records in batches.
+
+9. Insert new products and update existing ones in sub-batches of 1000 records.
+
+10. Aggregate statistics across all batches.
+
+11. Return summary JSON response with detailed counts.
+
+12. Release lock regardless of success or failure.
+
+
+IMPORTANT BUSINESS RULES
+
+1. Single-job concurrency control: Only one product sync can be active at a time (syncProductMaster lock).
+
+2. Date filtering: Data pulled only for defined or default date range (DD.MM.YYYY).
+
+3. Unique variant enforcement: Duplicate product variants ignored.
+
+4. Reference validation required: Category, brand, supplier, and collection must exist.
+
+5. Tolerant inserts: Partial insert/update batches allowed (ordered: false).
+
+6. High scalability: Process handled in large 5000-record batches subdivided into 1000 DB writes.
+
+7. Comprehensive error tracking: Each skipped record logged with descriptive “reason.”
+
+8. Performance-oriented mapping: Uses hash maps for constant-time relation lookups.
+
+9. Consistent tax and UOM normalization across variants.
+
+10. Guaranteed cleanup: Lock always released, preventing deadlocks.
+
+
+---
+AUTHOR: Srijita
+DATE: 30 Oct 2025

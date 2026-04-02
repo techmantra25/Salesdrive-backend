@@ -1,0 +1,331 @@
+const asyncHandler = require("express-async-handler");
+const { releaseLock, acquireLock } = require("../../models/lock.model");
+const axios = require("axios");
+const Region = require("../../models/region.model");
+const path = require("path");
+const fs = require("fs");
+const FormData = require("form-data");
+const { SERVER_URL } = require("../../config/server.config");
+const generateToken = require("../../utils/generateToken");
+const User = require("../../models/user.model");
+
+const syncPriceMaster = asyncHandler(async (req, res) => {
+  if (!(await acquireLock("syncPriceMaster"))) {
+    res.status(400);
+    throw new Error("Another sync is in progress. Please try again later.");
+  }
+
+  try {
+    // build date strings in DD.MM.YYYY
+    const formatDate = (d) => {
+      const [y, m, day] = d.toISOString().split("T")[0].split("-");
+      return `${day}.${m}.${y}`;
+    };
+    let currentDate = formatDate(new Date());
+    let previousDate = formatDate(new Date());
+
+    if (req.query.previousDate && req.query.currentDate) {
+      if (new Date(req.query.previousDate) > new Date(req.query.currentDate)) {
+        res.status(400);
+        throw new Error("Previous date cannot be greater than current date");
+      }
+      previousDate = req.query.previousDate;
+      currentDate = req.query.currentDate;
+    }
+
+    const regions = await Region.find({}).populate("stateId", "");
+    if (!regions.length) {
+      res.status(404);
+      throw new Error("No regions found");
+    }
+
+    // normalize region objects
+    const normRegions = regions.map((r) => ({
+      code: r.code,
+      name: r.name,
+      state_code: r.stateId.code.padStart(2, "0"),
+      state_name: r.stateId.name,
+    }));
+
+    const getInternalRegion = (code) => {
+      return (
+        normRegions.find((r) => r.state_code === code) || { code: "", name: "" }
+      );
+    };
+
+    // fetch master list
+    const masterUrl =
+      `http://182.75.250.216:8000/sap/opu/odata/` +
+      `sap/ZRUPA_PSSPL_MAT_API1_SRV/HeaderSet(` +
+      `StartDate='${previousDate}',ToDate='${currentDate}')/` +
+      `HeaderItem?$format=json`;
+    const masterResp = await axios.get(masterUrl, {
+      headers: { Cookie: "sap-usercontext=sap-client=100" },
+    });
+    let data = masterResp.data?.d?.results || [];
+    if (!data.length) {
+      res.status(404);
+      throw new Error("No data found for the given date range");
+    }
+
+    // keep only first occurrence of each VSKU
+    const seen = new Set();
+    data = data.filter((i) => {
+      if (seen.has(i.VSKU)) return false;
+      seen.add(i.VSKU);
+      return true;
+    });
+
+    const getPcsInBox = (item) => {
+      const raw = String(item.ProductExntension1 || "").trim();
+      const num = parseFloat(raw.replace(/[^0-9.]/g, "")) || 1;
+      return num > 0 ? num : 1;
+    };
+
+    const getMRP = (item) => {
+      const MRP = Number(parseFloat(item.SalePrice || "0.00")).toFixed(2);
+      return isNaN(MRP) || MRP < 0 ? "0.00" : MRP;
+    };
+
+    const getDLP = (item) => {
+      const UnitPrice = Number(parseFloat(item.UnitPrice || "0.00")).toFixed(2);
+      const pcsInBox = getPcsInBox(item);
+      const DLP = Number(UnitPrice / pcsInBox).toFixed(2);
+      return isNaN(DLP) || DLP < 0 ? "0.00" : DLP;
+    };
+
+    let priceData = await Promise.all(
+      data.map(async (item) => {
+        const product_code = item.VSKU || "";
+        const mrp = getMRP(item);
+        const dlp = getDLP(item);
+        const pcsInBox = getPcsInBox(item);
+
+        const url = `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_MASSIST_MAT_REG_PR1_SRV/HeaderSet(RegionCode='',Material='${product_code}',FromDate='01.01.2019',ToDate='31.12.9999')/HeaderItem?$format=json`;
+
+        try {
+          const resp = await axios.get(url, {
+            headers: { Cookie: "sap-usercontext=sap-client=100" },
+          });
+
+          // 200 ms delay
+          await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+          });
+
+          let regionPrices = resp.data?.d?.results || [];
+          regionPrices = regionPrices.map((r) => {
+            const totalPrice = r?.Kbetr || "0.00";
+            let price = Number(Number(totalPrice) / pcsInBox).toFixed(2);
+            if (isNaN(price) || price < 0) {
+              price = 0;
+            }
+
+            return {
+              region_code_external: r?.Regio,
+              region_name_external: r?.Bezei,
+              region_code_internal: getInternalRegion(r.Regio)?.code,
+              region_name_internal: getInternalRegion(r.Regio)?.name,
+              price: price,
+            };
+          });
+
+          // if more than one price is there for a region, take the last one
+          const regionMap = new Map();
+          regionPrices.forEach((r) => {
+            const key = `${r.region_code_external}-${r.region_code_internal}`;
+            if (!regionMap.has(key)) {
+              regionMap.set(key, r);
+            } else {
+              // update the price if it is greater than the existing one
+              const existing = regionMap.get(key);
+              if (Number(r.price) > Number(existing.price)) {
+                regionMap.set(key, r);
+              }
+            }
+          });
+
+          regionPrices = Array.from(regionMap.values());
+
+          return {
+            product_code,
+            MRP: mrp,
+            DLP: dlp,
+            regionPrices,
+          };
+        } catch (error) {
+          return {
+            product_code,
+            MRP: mrp,
+            DLP: dlp,
+            regionPrices: [],
+          };
+        }
+      })
+    );
+
+    let finalPrices = [];
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const effectiveDate = tomorrow
+      .toLocaleDateString("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      })
+      .split("/")
+      .join("-");
+
+    for (const item of priceData) {
+      if (item.regionPrices.length > 0) {
+        // entry national price
+        finalPrices.push({
+          "Region Code": "",
+          "Region Name": "",
+          "Distributor Code": "",
+          "Distributor Name": "",
+          "Product Code": item.product_code,
+          MRP: item.MRP,
+          DLP: item.DLP,
+          RLP: item.DLP,
+          "Effective Date": effectiveDate,
+        });
+
+        // entry regional price
+        for (const region of item.regionPrices) {
+          finalPrices.push({
+            "Region Code": region.region_code_internal,
+            "Region Name": region.region_name_internal,
+            "Distributor Code": "",
+            "Distributor Name": "",
+            "Product Code": item.product_code,
+            MRP: item.MRP,
+            DLP: region.price,
+            RLP: region.price,
+            "Effective Date": effectiveDate,
+          });
+        }
+      } else {
+        // entry nation price
+        finalPrices.push({
+          "Region Code": "",
+          "Region Name": "",
+          "Distributor Code": "",
+          "Distributor Name": "",
+          "Product Code": item.product_code,
+          MRP: item.MRP,
+          DLP: item.DLP,
+          RLP: item.DLP,
+          "Effective Date": effectiveDate,
+        });
+      }
+    }
+
+    // filter out prices that have no DLP or DLP is 0
+    finalPrices = finalPrices.filter(
+      (item) => item.DLP && parseFloat(item.DLP) > 0
+    );
+
+    console.log(`Final prices count after 0 dlp filter: ${finalPrices.length}`);
+
+    // create a csv
+    const csvHeader = [
+      "Region Code",
+      "Region Name",
+      "Distributor Code",
+      "Distributor Name",
+      "Product Code",
+      "MRP",
+      "DLP",
+      "RLP",
+      "Effective Date",
+    ];
+
+    const csvRows = finalPrices.map((row) =>
+      csvHeader.map((field) => `"${row[field] || ""}"`).join(",")
+    );
+
+    csvRows.unshift(csvHeader.map((field) => `"${field}"`).join(","));
+    const csvContent = csvRows.join("\n");
+
+    // Ensure uploads directory exists
+    const uploadsDir = path.join(__dirname, "../../uploads");
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    const csvFileName = `price_master_${currentDate}.csv`;
+    const csvFilePath = path.join(uploadsDir, csvFileName);
+    fs.writeFileSync(csvFilePath, csvContent);
+
+    // Upload to cloudinary (or your upload endpoint)
+    const formData = new FormData();
+    formData.append("my_file", fs.createReadStream(csvFilePath));
+    formData.append("fileName", csvFileName);
+
+    const result = await axios.post(
+      `${SERVER_URL}/api/v1/cloudinary/upload`,
+      formData,
+      { headers: formData.getHeaders() }
+    );
+
+    const urlData = result.data;
+
+    // Cleanup the file
+    try {
+      fs.unlinkSync(csvFilePath);
+    } catch (cleanupErr) {
+      // Log but don't fail the request
+      console.error("Failed to delete local CSV file:", cleanupErr.message);
+    }
+
+    const adminUser = await User.findOne({ role: "admin" });
+
+    if (!adminUser) {
+      res.status(404);
+      throw new Error("Admin user not found");
+    }
+
+    const token = generateToken(adminUser._id);
+
+    const bulkAddResponse = await axios.post(
+      `${SERVER_URL}/api/v1/bulk/save/Price`,
+      {
+        file: urlData?.secure_url,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    const bulkAddData = bulkAddResponse.data;
+
+    // bulk price status update api
+    await axios.put(
+      `${SERVER_URL}/api/v1/price/bulk-update-status`,
+      {},
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.status(200).json({
+      message: "Price master data synced and uploaded successfully",
+      data: { urlData, bulkAddData, priceData },
+    });
+  } catch (err) {
+    res.status(res.statusCode === 200 ? 500 : res.statusCode);
+    throw err;
+  } finally {
+    await releaseLock("syncPriceMaster");
+  }
+});
+
+module.exports = { syncPriceMaster };

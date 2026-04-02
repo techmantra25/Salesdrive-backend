@@ -1,0 +1,236 @@
+const bulkApproveRejectOutletTemplate = asyncHandler(async (req, res) => {
+  try {
+    let { zoneId, stateId, regionId, outletStatus, fromDate, toDate } =
+      req.query;
+    let selectedOutletIds = req.body.selectedOutletIds;
+
+    console.log("selectedOutletIds", selectedOutletIds);
+
+    // Build the filter object
+    const filter = {};
+    if (outletStatus !== undefined) filter.outletStatus = outletStatus;
+    if (selectedOutletIds && selectedOutletIds.length > 0) {
+      // Convert selectedOutletIds to ObjectId type
+      selectedOutletIds = selectedOutletIds.map(
+        (id) => new mongoose.Types.ObjectId(id)
+      );
+      filter._id = { $in: selectedOutletIds };
+    }
+
+    // Add date range filtering
+    if (fromDate && toDate) {
+      filter.createdAt = {};
+      if (fromDate) {
+        const startOfDay = new Date(fromDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        filter.createdAt.$gte = startOfDay;
+      }
+      if (toDate) {
+        const endOfDay = new Date(toDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        filter.createdAt.$lte = endOfDay;
+      }
+    }
+
+    const pipeline = [
+      { $match: filter },
+      {
+        $lookup: {
+          from: "employees",
+          localField: "employeeId",
+          foreignField: "_id",
+          as: "employee",
+        },
+      },
+      { $unwind: { path: "$employee", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "regions",
+          localField: "employee.regionId",
+          foreignField: "_id",
+          as: "region",
+        },
+      },
+      { $unwind: { path: "$region", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "zones",
+          localField: "employee.zoneId",
+          foreignField: "_id",
+          as: "zone",
+        },
+      },
+      { $unwind: { path: "$zone", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "states",
+          localField: "region.stateId",
+          foreignField: "_id",
+          as: "state",
+        },
+      },
+      { $unwind: { path: "$state", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "distributors",
+          localField: "distributorId",
+          foreignField: "_id",
+          as: "distributor",
+        },
+      },
+      { $unwind: { path: "$distributor", preserveNullAndEmptyArrays: true } },
+    ];
+
+    const { ObjectId } = mongoose.Types;
+
+    // Apply filters for zone, state, and region
+    if (zoneId) {
+      pipeline.push({ $match: { "zone._id": new ObjectId(zoneId) } });
+    }
+    if (stateId) {
+      pipeline.push({ $match: { "state._id": new ObjectId(stateId) } });
+    }
+    if (regionId) {
+      pipeline.push({ $match: { "region._id": new ObjectId(regionId) } });
+    }
+
+    // Pagination and sorting
+    pipeline.push({ $sort: { _id: -1 } });
+
+    // Execute the aggregation pipeline
+    const outlets = await Outlet.aggregate(pipeline);
+
+    // Prepare the data with custom formatting
+    const csvData = await Promise.all(
+      outlets.map(async (outlet) => {
+        return {
+          leadId: outlet?.leadId,
+          zoneName: outlet?.zone?.name,
+          regionName: outlet?.region?.name,
+          stateName: outlet?.state?.name,
+          empId: outlet?.employee?.empId,
+          empName: outlet?.employee?.name,
+          dbCode: outlet?.distributor?.dbCode,
+          dbName: outlet?.distributor?.name,
+          beatCode: outlet?.beatId?.code,
+          beatName: outlet?.beatId?.name,
+          zsm: outlet?.zsm?.name,
+          rsm: outlet?.rsm?.name,
+          asm: outlet?.asm?.name,
+          createdAt: formatDate(outlet?.createdAt),
+          updatedAt: formatDate(outlet?.updatedAt),
+          outletStatus: mapStatus(outlet?.outletStatus),
+          approvedDate: formatDate(outlet?.approvedDate),
+          outletCode: outlet?.outletCode,
+          outletUID: outlet?.outletUID,
+          outletName: outlet?.outletName,
+          ownerName: outlet?.ownerName,
+          address1: outlet?.address1,
+          address2: outlet?.address2,
+          landmark: outlet?.landmark,
+          marketCenter: outlet?.marketCenter,
+          city: outlet?.city,
+          pinCode: outlet?.pinCode,
+          district: outlet?.district,
+          mobileNo: outlet?.mobile1,
+          alternateMobileNo: outlet?.mobile2,
+          teleCallingSlot: outlet?.teleCallingSlot,
+          poiFrontImage: outlet?.poiFrontImage,
+          poiBackImage: outlet?.poiBackImage,
+          outletImage: outlet?.outletImage,
+          poaFrontImage: outlet?.poaFrontImage,
+          poaBackImage: outlet?.poaBackImage,
+          enrollmentForm: outlet?.enrollmentForm,
+          outletSegment: outlet?.OutletSegments,
+          outletCategory: outlet?.outletCategory,
+          productCategory: outlet?.productCategory,
+          sellingBrands: outlet?.sellingBrands
+            ?.map((brand) => brand.name)
+            ?.join("; "),
+          competitorBrands: outlet?.competitorBrands?.join("; "),
+          existingRetailer: outlet?.existingRetailer ? "Yes" : "No",
+          outletSource: outlet?.outletSource,
+          remarks: outlet?.remarks,
+        };
+      })
+    );
+
+    // Define CSV headers
+    const fields = [
+      { label: "Lead Id", value: "leadId" },
+      { label: "Zone", value: "zoneName" },
+      { label: "Region", value: "regionName" },
+      { label: "State", value: "stateName" },
+      { label: "Employee Code", value: "empId" },
+      { label: "Employee Name", value: "empName" },
+      { label: "DB Code", value: "dbCode" },
+      { label: "DB Name", value: "dbName" },
+      { label: "Beat Code", value: "beatCode" },
+      { label: "Beat Name", value: "beatName" },
+      { label: "ZSM Name", value: "zsm" },
+      { label: "RSM Name", value: "rsm" },
+      { label: "ASM Name", value: "asm" },
+      { label: "Lead Record Date", value: "createdAt" },
+      { label: "Lead Modified Date", value: "updatedAt" },
+      { label: "Approval Status", value: "outletStatus" },
+      { label: "Approved Date", value: "approvedDate" },
+      { label: "Outlet Code", value: "outletCode" },
+      { label: "Outlet UID", value: "outletUID" },
+      { label: "Outlet Name", value: "outletName" },
+      { label: "Owner Name", value: "ownerName" },
+      { label: "Address 1", value: "address1" },
+      { label: "Address 2", value: "address2" },
+      { label: "Landmark", value: "landmark" },
+      { label: "Market Center", value: "marketCenter" },
+      { label: "City/Village", value: "city" },
+      { label: "Pin Code", value: "pinCode" },
+      { label: "District", value: "district" },
+      { label: "Mobile No", value: "mobileNo" },
+      { label: "Alternate Mobile No", value: "alternateMobileNo" },
+      { label: "Tele Calling Slot", value: "teleCallingSlot" },
+      { label: "POI Front Image", value: "poiFrontImage" },
+      { label: "POI Back Image", value: "poiBackImage" },
+      { label: "Outlet Image", value: "outletImage" },
+      { label: "POA Front Image", value: "poaFrontImage" },
+      { label: "POA Back Image", value: "poaBackImage" },
+      { label: "Enrollment Form", value: "enrollmentForm" },
+      { label: "Outlet Segment", value: "outletSegment" },
+      { label: "Category Of Outlet", value: "outletCategory" },
+      { label: "Product Category", value: "productCategory" },
+      { label: "Selling Brands", value: "sellingBrands" },
+      { label: "Competitor Brands", value: "competitorBrands" },
+      { label: "Existing Retailer", value: "existingRetailer" },
+      { label: "OutletSource", value: "outletSource" },
+      { label: "Remarks", value: "remarks" },
+    ];
+
+    const json2csvParser = new Parser({ fields });
+    const csv = json2csvParser.parse(csvData);
+
+    // Save CSV file to the server temporarily
+    const filePath = path.join(__dirname, "outlets.csv");
+    fs.writeFileSync(filePath, csv);
+
+    // Upload CSV file to Cloudinary
+    const result = await cloudinary.uploader.upload(filePath, {
+      resource_type: "raw",
+      public_id: `outlets-${Date.now()}`,
+      folder: "lux-dms",
+    });
+
+    // Remove the temporary file
+    fs.unlinkSync(filePath);
+
+    return res.status(200).json({
+      status: 200,
+      message: "All outlets list",
+      data: {
+        csvLink: result.secure_url,
+        count: outlets.length,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});

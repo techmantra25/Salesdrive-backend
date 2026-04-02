@@ -1,0 +1,68 @@
+              // // Check for distributor-specific price first
+                // let priceEntry = await Price.findOne({
+                //   productId: product._id,
+                //   distributorId: req.user?._id,
+                //   status: true,
+                // }).sort({ effective_date: -1 });
+
+                // if (!priceEntry) {
+                //   // If no distributor price found, fall back to regional price
+                //   const distributor = await Distributor.findOne({
+                //     _id: req.user?._id,
+                //   });
+                //   const region = await Region.findOne({
+                //     _id: distributor.regionId,
+                //   });
+
+                //   if (!region) {
+                //     throw new Error(
+                //       `Region with ID ${distributor.regionId} not found`
+                //     );
+                //   }
+
+                //   priceEntry = await Price.findOne({
+                //     productId: product._id,
+                //     regionId: region._id,
+                //     status: true,
+                //     price_type: "regional",
+                //   }).sort({ effective_date: -1 });
+
+                //   if (!priceEntry) {
+                //     throw new Error(
+                //       `No price entry found for Product ID ${
+                //         product._id
+                //       } at row ${index + 1}`
+                //     );
+                //   }
+                // }
+
+                // Validate price effective and expiration date
+                // const nowDateTime = moment().tz("Asia/Kolkata").toDate();
+                // const effectiveDate = moment(priceEntry?.effective_date)
+                //   .tz("Asia/Kolkata")
+                //   .startOf("day")
+                //   .toDate();
+                // const expiresAt = priceEntry.expiresAt
+                //   ? moment(priceEntry.expiresAt)
+                //       .tz("Asia/Kolkata")
+                //       .endOf("day")
+                //       .toDate()
+                //   : null;
+
+                // console.log(
+                //   moment(effectiveDate).isAfter(nowDateTime) ||
+                //     (expiresAt && moment(expiresAt).isBefore(nowDateTime))
+                // );
+
+                // if (
+                //   moment(effectiveDate).isAfter(nowDateTime) ||
+                //   (expiresAt && moment(expiresAt).isBefore(nowDateTime))
+                // ) {
+                //   throw new Error(
+                //     `Price for Product ID ${productCode} is not valid on ${nowDateTime}`
+                //   );
+                // }
+
+                // console.log(
+                //   `Price for Product ${productCode}: RLP - ${priceEntry.rlp_price}, DLP - ${priceEntry.dlp_price}`
+                // );

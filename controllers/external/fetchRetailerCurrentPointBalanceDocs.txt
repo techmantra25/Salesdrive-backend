@@ -1,0 +1,386 @@
+FILE: fetchRetailerCurrentPointBalance_steps.txt
+
+DATE: 29 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the fetchRetailerCurrentPointBalance API function
+
+FUNCTION NAME:
+fetchRetailerCurrentPointBalance
+
+DESCRIPTION:
+
+This API synchronizes the current RBP (Reward Bonus Point) balances of all active retailers (outlets) from an external RBP system API into the local database.
+
+It retrieves live point balance data for each retailer, compares it against the local record (OutletApproved.currentPointBalance), and bulk updates any differences.
+
+The function is engineered for performance, scalability, and data integrity with:
+
+
+- Lock-based concurrency control
+
+- Batch processing for large datasets
+
+- Precision-based difference detection to prevent redundant writes
+
+- Detailed logs and progress summaries
+
+This ensures that each outlet’s reward point balance on the local server mirrors the latest data from the external RBP API.
+
+STEP 1: Acquire Lock to Prevent Concurrent Execution
+
+Lock Definition:
+const lockKey = "updateOutletBalances";
+
+if (!(await acquireLock(lockKey))) {
+  res.status(400);
+  throw new Error("Another sync is in progress. Please try again later.");
+}
+
+Purpose:
+
+
+- Prevents multiple simultaneous executions of balance sync jobs.
+
+- Ensures atomicity and eliminates race conditions when writing to the same collection.
+
+Logging Example:
+console.log("🚀 Starting outlet balance update process...");
+
+Lock Cleanup:
+
+Always released in the finally block to guarantee that it doesn’t block future runs:
+
+STEP 2: Call External API to Fetch Retailer Balances
+
+API Request:
+
+Expected Response Structure:
+{
+  "data": [
+    {
+      "retailer_id": "653fb5bcd192fa70cddee222",
+      "wallet_balance": "442.50"
+    },
+    ...
+  ]
+}
+
+Extract Result:
+const balanceData = response?.data?.data || [];
+if (!balanceData || balanceData.length === 0) {
+  return res.status(404).json({
+    error: true,
+    message: "No balance data received from API",
+  });
+}
+
+Purpose:
+
+- Fetches all current wallet balances for retailers from the external RBP system.
+
+- Validates and ensures non-empty data before proceeding.
+
+STEP 3: Build Retailer Balance Lookup Map
+
+Create an In-Memory Balance Map:
+
+const balanceMap = new Map();
+balanceData.forEach((item) => {
+  if (item.retailer_id && item.wallet_balance !== undefined) {
+    balanceMap.set(
+      item.retailer_id.toString(),
+      parseFloat(item.wallet_balance) || 0
+    );
+  }
+});
+
+Purpose:
+
+- Converts the fetched array into a quick-access map for constant-time lookups.
+
+- Maps each retailer’s unique _id to their up-to-date point balance.
+
+Logging Example:
+console.log(`📋 Created balance map with ${balanceMap.size} entries`);
+
+STEP 4: Set Up Batch Processing Parameters
+
+
+Large outlet data sets are processed in chunks to optimize memory and performance.
+
+Batch Configuration:
+const BATCH_SIZE = 2000; // 2000 outlets per batch
+let totalProcessed = 0;
+let totalUpdated = 0;
+let totalSkipped = 0;
+let skip = 0;
+let batchNumber = 1;
+
+Purpose:
+
+
+- Enables incremental database fetching and writing.
+
+- Prevents high memory usage by limiting each processing loop to 2,000 records.
+
+STEP 5: Process Outlets Batch-by-Batch
+
+Batch Loop:
+while (true) {
+  console.log(`🔄 Processing batch ${batchNumber} (${skip} to ${skip + BATCH_SIZE})`);
+
+  const outlets = await OutletApproved.find({ status: true })
+    .select("_id currentPointBalance")
+    .skip(skip)
+    .limit(BATCH_SIZE)
+    .lean();
+
+  if (outlets.length === 0) {
+    console.log("✅ All batches processed");
+    break;
+  }
+
+  // Processing logic below...
+}
+
+Purpose:
+
+- Fetches outlets in paginated manner.
+
+- Ensures that inactive outlets (status: false) are excluded.
+
+STEP 6: Compare and Prepare Bulk Operations
+
+For each outlet, check if the new balance differs from the one stored locally:
+const bulkOperations = [];
+outlets.forEach((outlet) => {
+  totalProcessed++;
+  
+  const outletId = outlet._id.toString();
+  const newBalance = balanceMap.get(outletId);
+  
+  // Skip if external balance not found
+  if (!balanceMap.has(outletId)) {
+    totalSkipped++;
+    return;
+  }
+
+  const currentBalance = outlet.currentPointBalance || 0;
+
+  // Compare with precision tolerance to prevent unnecessary updates
+  if (Math.abs(newBalance - currentBalance) > 0.0001) {
+    bulkOperations.push({
+      updateOne: {
+        filter: { _id: outlet._id },
+        update: { $set: { currentPointBalance: newBalance } },
+      },
+    });
+  } else {
+    totalSkipped++;
+  }
+});
+
+Purpose:
+
+
+- Minimizes redundant writes to maintain performance and reduce load.
+
+- Accurately tracks updated vs. skipped records.
+
+Precision Check:
+
+Balances are compared up to 4 decimal places using a tolerance of 0.0001.
+
+STEP 7: Execute Bulk Update Using MongoDB bulkWrite()
+
+Perform Bulk Update:
+if (bulkOperations.length > 0) {
+  try {
+    const bulkResult = await OutletApproved.bulkWrite(bulkOperations, { ordered: false });
+    totalUpdated += bulkResult.modifiedCount;
+    console.log(
+      `✅ Batch ${batchNumber} completed - Updated: ${bulkResult.modifiedCount} outlets`
+    );
+  } catch (error) {
+    console.error(`❌ Bulk write failed for batch ${batchNumber}:`, error.message);
+  }
+} else {
+  console.log(`⏭️ Batch ${batchNumber} - No updates needed`);
+}
+
+Purpose:
+
+
+- Executes high-performance, batched writes to MongoDB in unsequenced (“unordered”) mode for efficiency.
+
+- All successful updates within the batch are committed even if some fail.
+
+STEP 8: Advance Batch and Introduce Controlled Delay
+
+After each batch:
+skip += BATCH_SIZE;
+batchNumber++;
+await new Promise((resolve) => setTimeout(resolve, 200)); // Delay 200ms
+
+Purpose:
+
+
+- Prevents potential deadlocks or overloads on MongoDB from continuous bulk operations.
+
+- Introduces a small throttling delay (200ms) between batches for system stability.
+
+STEP 9: Aggregate Final Statistics and Log Summary
+
+When all batches finish:
+const totalTime = Date.now() - startTime;
+console.log("\n" + "=".repeat(50));
+console.log("📊 BALANCE UPDATE SUMMARY");
+console.log("=".repeat(50));
+console.log(`⏱️  Total Time: ${(totalTime / 1000).toFixed(2)}s`);
+console.log(`📋 Total Processed: ${totalProcessed}`);
+console.log(`✅ Total Updated: ${totalUpdated}`);
+console.log(`⏭️  Total Skipped: ${totalSkipped}`);
+console.log(
+  `📈 Success Rate: ${
+    totalProcessed > 0 ? ((totalUpdated / totalProcessed) * 100).toFixed(2) : 0
+  }%`
+);
+console.log("=".repeat(50) + "\n");
+
+Purpose:
+
+
+- Provides a complete runtime summary including:
+	- Execution time in seconds
+	- Total records processed
+	- Update/skip ratios
+	- Success percentage
+
+STEP 10: Return Final API Response
+
+Response:
+
+res.status(200).json({
+  error: false,
+  message: "Outlet balance update completed successfully",
+  data: {
+    totalProcessed,
+    totalUpdated,
+    totalSkipped,
+    executionTime: totalTime,
+    successRate:
+      totalProcessed > 0
+        ? ((totalUpdated / totalProcessed) * 100).toFixed(2)
+        : 0,
+    balanceRecordsReceived: balanceData.length,
+    balanceEntriesMapped: balanceMap.size,
+  },
+});
+
+Sample Output:
+{
+  "error": false,
+  "message": "Outlet balance update completed successfully",
+  "data": {
+    "totalProcessed": 32000,
+    "totalUpdated": 4500,
+    "totalSkipped": 27500,
+    "executionTime": 42500,
+    "successRate": "14.06",
+    "balanceRecordsReceived": 32000,
+    "balanceEntriesMapped": 31998
+  }
+}
+
+Purpose:
+
+- Returns a clear operational summary to the client/application with all key metrics.
+
+- Helps in monitoring and verifying synchronization success rate.
+
+STEP 11: Error Handling & Cleanup
+
+Error Handling:
+catch (error) {
+  console.error("❌ Balance update failed:", error.message);
+  res.status(400);
+  throw error;
+}
+
+Finally Block:
+finally {
+  await releaseLock(lockKey);
+  console.log("🔓 Balance update lock released");
+}
+
+Purpose:
+
+
+- Ensures lock release even if API fails or exceptions occur mid-process.
+
+- Maintains system integrity and future availability of the synchronization task.
+
+FINAL OUTCOME
+
+
+When executed successfully:
+
+
+1. Retrieves the latest RBP balances for all retailers from the external system.
+
+2. Updates each retailer’s currentPointBalance if the local value differs.
+
+3. Executes updates in optimized batched operations.
+
+4. Provides a detailed performance summary.
+
+5. Ensures only one synchronization job runs at a time to maintain consistency.
+
+SUMMARY OF LOGICAL FLOW
+
+1. Acquire lock: Prevent concurrent balance update jobs.
+
+2. Fetch RBP balances from the external API.
+
+3. Validate response and ensure usable data.
+
+4. Map balances to retailer IDs for fast lookup.
+
+5. Batch process outlets in chunks of 2000 records.
+
+6. Compare balances and create bulk update operations for mismatches.
+
+7. Execute bulk writes to MongoDB.
+
+8. Aggregate results for processed, updated, and skipped items.
+
+9. Return summary report with metrics and execution time.
+
+10. Release lock post-execution (always).
+
+IMPORTANT BUSINESS RULES
+
+1. Single-thread protection: Only one balance update job runs concurrently (updateOutletBalances lock).
+
+2. Data source: Real-time RBP balances fetched from external configuration endpoint (ALL_RETAILER_CURRENT_RBP_POINT_BALANCE).
+
+3. Precision comparison: Updates performed only for changes > ±0.0001 points.
+
+4. Scalability: Processes retail data in controlled batches of 2000 for optimal efficiency.
+
+5. Fault tolerance: Partial failures (e.g., network or write errors) are logged without stopping the global process.
+
+6. Speed limiting: Introduces a 200ms delay between batches to prevent database overload.
+
+7. Status tracking: Returns detailed metrics for monitoring system performance.
+
+8. Consistency: Each valid outlet’s point balance remains synchronized with RBP service.
+
+9. Safety guarantee: Lock is released no matter the outcome, ensuring future jobs always proceed safely.
+
+10. Monitoring support: Logs contain batch progress, timing, and success rates for transparent job auditing.
+
+AUTHOR: Srijita
+DATE: 29 Oct 2025

@@ -1,0 +1,159 @@
+// const asyncHandler = require("express-async-handler");
+// const Invoice = require("../../models/invoice.model");
+// const Transaction = require("../../models/transaction.model");
+// const Inventory = require("../../models/inventory.model");
+// const Product = require("../../models/product.model");
+// const Price = require("../../models/price.model");
+// const Distributor = require("../../models/distributor.model");
+// const Region = require("../../models/region.model");
+// const moment = require("moment-timezone");
+// const { generateCode, transactionCode } = require("../../utils/codeGenerator");
+
+// const updateInvoice = asyncHandler(async (req, res) => {
+//   try {
+//     const { inId } = req.params;
+
+//     // Update the invoice
+//     const updatedInvoice = await Invoice.findByIdAndUpdate(inId, req.body, {
+//       new: true,
+//     });
+
+//     if (!updatedInvoice) {
+//       return res.status(404).json({ message: "Invoice not found" });
+//     }
+
+//     // If the status is "Confirmed", update the Inventory and create Transactions
+//     if (updatedInvoice?.status === "Confirmed") {
+//       // Loop through line items and update Inventory and Transaction
+//       const stockId = await transactionCode("LXSTA");
+//       for (const item of updatedInvoice.lineItems) {
+//         const { product, qty = 0, damageQty = 0, shortageQty = 0 } = item;
+
+//         // Fetch the product details
+//         const productData = await Product.findOne({
+//           _id: product,
+//         });
+//         if (!productData) {
+//           throw new Error(`Product with ID ${product} not found`);
+//         }
+
+//         // Check for distributor-specific price
+//         let priceEntry = await Price.findOne({
+//           productId: productData?._id,
+//           distributorId: req.user?._id, // Assuming req.user contains the distributor ID
+//           status: true,
+//         }).sort({ effective_date: -1 });
+
+//         if (!priceEntry) {
+//           // If no distributor price, fall back to regional price
+//           const distributor = await Distributor.findById(req.user.id);
+//           const region = await Region.findById(distributor.regionId);
+
+//           if (!region) {
+//             throw new Error(`Region with ID ${distributor.regionId} not found`);
+//           }
+
+//           priceEntry = await Price.findOne({
+//             productId: productData._id,
+//             regionId: region._id,
+//             status: true,
+//             price_type: "regional",
+//           }).sort({ effective_date: -1 });
+
+//           if (!priceEntry) {
+//             throw new Error(
+//               `No price entry found for Product ID ${productData._id}`
+//             );
+//           }
+//         }
+
+//         // Validate price effective and expiration date
+//         const nowDateTime = moment().tz("Asia/Kolkata").toDate();
+//         const effectiveDate = moment(priceEntry.effective_date)
+//           .tz("Asia/Kolkata")
+//           .startOf("day")
+//           .toDate();
+//         const expiresAt = priceEntry.expiresAt
+//           ? moment(priceEntry.expiresAt)
+//               .tz("Asia/Kolkata")
+//               .endOf("day")
+//               .toDate()
+//           : null;
+
+//         if (
+//           moment(effectiveDate).isAfter(nowDateTime) ||
+//           (expiresAt && moment(expiresAt).isBefore(nowDateTime))
+//         ) {
+//           throw new Error(
+//             `Price for Product ID ${productData._id} is not valid on ${nowDateTime}`
+//           );
+//         }
+
+//         // Calculate RLP and DLP price per piece or box
+//         let rlpbyPcs = 0;
+//         let dlpbyPcs = 0;
+//         if (productData.uom === "box") {
+//           const piecesPerBox = productData.no_of_pieces_in_a_box || 1;
+//           rlpbyPcs = priceEntry.rlp_price / piecesPerBox;
+//           dlpbyPcs = priceEntry.dlp_price / piecesPerBox;
+//         } else {
+//           rlpbyPcs = priceEntry.rlp_price || 0;
+//           dlpbyPcs = priceEntry.dlp_price || 0;
+//         }
+
+//         // Update Inventory
+//         const inventory = await Inventory.findOne({
+//           $and: [
+//             { productId: product },
+//             { distributorId: updatedInvoice.distributorId },
+//             { godownType: "main" },
+//           ],
+//         });
+
+//         if (inventory) {
+//           // Update inventory quantity and stock amounts
+//           inventory.availableQty += qty;
+//           inventory.damagedQty += damageQty;
+
+//           // Update the total stock amount for DLP and RLP
+//           inventory.totalStockamtDlp += dlpbyPcs * qty;
+//           inventory.totalStockamtRlp += rlpbyPcs * qty;
+
+//           // Save the updated inventory
+//           await inventory.save();
+//         } else {
+//           return res
+//             .status(404)
+//             .json({ message: "Inventory not found for product" });
+//         }
+
+//         // Create a new Transaction
+//         const transaction = new Transaction({
+//           distributorId: updatedInvoice.distributorId,
+//           productId: product,
+//           invItemId: inventory._id,
+//           transactionId: stockId,
+//           qty: qty,
+//           date: new Date(),
+//           type: "In", // Inward transaction since stock is being received
+//           balanceCount: inventory.availableQty, // Updated balance count
+//           description: `Invoice ${updatedInvoice.invoiceNo} - Stock received`,
+//         });
+
+//         // Save the transaction
+//         await transaction.save();
+//       }
+//     }
+
+//     return res.status(200).json({
+//       status: 200,
+//       message: "Invoice detail",
+//       data: updatedInvoice,
+//     });
+//   } catch (error) {
+//     res.status(400);
+//     throw new Error(error?.message || "Something went wrong");
+//   }
+// });
+
+// module.exports = { updateInvoice };

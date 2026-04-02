@@ -1,0 +1,270 @@
+FILE: multipleBillCreate_steps.txt
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Step-by-step documentation of the "multipleBillCreate" API.
+
+------------------------------------------------------------
+FUNCTION NAME:
+multipleBillCreate
+
+DESCRIPTION:
+This API endpoint is used to create multiple bills in bulk for multiple orders
+in a single request. It performs data validation, ensures inventory availability,
+and updates related orders and inventory records after each successful bill creation.
+
+It also generates unique bill numbers, prints the final bills, and records any
+failed or skipped entries for reporting.
+
+------------------------------------------------------------
+STEP 1: Extract Request Data and Validate Input
+------------------------------------------------------------
+- Extracts `distributorId` from req.user._id (logged-in distributor)
+- Extracts `data` array from request body:
+  Example:
+  [
+    {
+      orderId: "652ff1...",
+      orderNo: "ORD001",
+      salesmanName: "John Doe",
+      routeId: "abc123",
+      retailerId: "ret001",
+      lineItems: [...],
+      totalLines: 10,
+      grossAmount: 10000,
+      ...
+    }
+  ]
+
+- Validation:
+  - If `data` is missing or not an array, respond with:
+    HTTP 400 Bad Request
+    Message: "Data is required and must be an array"
+
+------------------------------------------------------------
+STEP 2: Initialize Variables
+------------------------------------------------------------
+- Initialize arrays:
+  - `bills` → stores all successfully created bills
+  - `skippedRows` → stores details of any bills that could not be created
+
+------------------------------------------------------------
+STEP 3: Process Each Row (One Row = One Bill)
+------------------------------------------------------------
+The function iterates through each `data` row using a for loop.
+
+For each `row`:
+
+  Variables extracted include:
+  - orderId, orderNo, salesmanName, routeId, retailerId,
+    lineItems, totalLines, totalBasePoints, grossAmount,
+    schemeDiscount, distributorDiscount, taxableAmount,
+    cgst, sgst, igst, invoiceAmount, roundOffAmount,
+    cashDiscount, netAmount, billedType
+
+------------------------------------------------------------
+STEP 4: Validate Line Items and Numerical Data
+------------------------------------------------------------
+- Validate `lineItems` array:
+  - Must exist and have at least one entry
+  - If missing, throw error "At least one line item is required"
+
+- Validate numeric fields (such as totals, taxes, discounts):
+  - Uses a helper function `isInvalidNumber(value)` to check if a number
+    is `NaN`, `null`, or `undefined`
+  - If invalid, throw error:
+    "Invalid data in the bill: One or more fields contain invalid numbers."
+
+------------------------------------------------------------
+STEP 5: Verify Related Entities
+------------------------------------------------------------
+1. **Order Validation**
+   - Ensures the order exists: `OrderEntry.findById(orderId)`
+   - If not found → throw "Order not found"
+   - If order.status is one of:
+     ["Completed_Billed", "Partially_Billed", "Cancelled"]
+     → throw: "Order {orderNo} has already been billed or cancelled or partially billed."
+
+2. **Retailer Validation**
+   - Checks retailer existence: `OutletApproved.findById(retailerId)`
+   - If not found → throw "Retailer not found"
+
+------------------------------------------------------------
+STEP 6: Validate Each Line Item (Product, Price, Inventory)
+------------------------------------------------------------
+- For each `item` inside `lineItems`, the system performs multiple checks:
+
+  1. **Product Validation**
+     - Finds product by ID using `Product.findById(item.product)`
+     - Throws error if product not found
+
+  2. **Price Validation**
+     - Finds price by ID using `Price.findById(item.price)`
+     - Throws error if price not found
+
+  3. **Inventory Validation**
+     - If `inventoryId` exists, verify it using `Inventory.findById(item.inventoryId._id)`
+     - If inventory not found → throw error
+     - If `inventory.availableQty < item.oderQty`
+       → throw error: "Insufficient stock for product ..."
+
+- If any line item fails, details (product_code, error) are recorded in `failedLineItems` array.
+
+- If one or more line items fail:
+  - The entire bill is skipped.
+  - The row is added to `skippedRows` with all relevant error details.
+
+------------------------------------------------------------
+STEP 7: Generate Bill Number and Create Bill
+------------------------------------------------------------
+- If all validations pass:
+  - Generate bill number using:
+    `const billNo = await generateBillNo("INV", distributorId)`
+  - Modify each line item to include:
+    `billQty = item.oderQty`
+
+- Construct a new Bill document:
+  new Bill({
+    distributorId,
+    billNo,
+    orderId,
+    orderNo,
+    salesmanName,
+    routeId,
+    retailerId,
+    lineItems: modifiedLineItems,
+    totalLines,
+    totalBasePoints,
+    grossAmount,
+    schemeDiscount,
+    distributorDiscount,
+    taxableAmount,
+    cgst, sgst, igst,
+    invoiceAmount,
+    roundOffAmount,
+    cashDiscount,
+    netAmount,
+    billedType: billedType ?? "Bulk",
+    status: "Pending"
+  })
+
+- Save the bill to the database:
+  `const savedBill = await newBill.save()`
+- Add it to `bills` array.
+
+------------------------------------------------------------
+STEP 8: Update Related Order
+------------------------------------------------------------
+- After bill creation, the API updates the corresponding order:
+  `await OrderEntry.findByIdAndUpdate(orderId, {
+     $push: { billIds: savedBill._id },
+     status: "Completed_Billed"
+  })`
+
+- This links the new bill to the related order and updates its billing status.
+
+------------------------------------------------------------
+STEP 9: Update Inventory Quantities
+------------------------------------------------------------
+- For each line item in the saved bill:
+  - If it has a valid inventoryId and a billQty > 0:
+    - Fetch inventory document
+    - Deduct ordered quantity from availableQty
+    - Add ordered quantity to reservedQty
+
+    ```
+    updatedAvailableQty = inventory.availableQty - item.oderQty
+    reservedQty = inventory.reservedQty + item.oderQty
+    ```
+
+    - Save updated values using:
+      `Inventory.findOneAndUpdate({ _id: item.inventoryId }, { availableQty, reservedQty })`
+
+This ensures the stock held for billing is reserved and deducted from the main inventory pool.
+
+------------------------------------------------------------
+STEP 10: Handle Failed Bills
+------------------------------------------------------------
+- If an error occurs for a row:
+  - The catch block captures the error.
+  - Pushes the row details into `skippedRows` array with:
+    { rowIndex, orderId, orderNo, error, failedLineItems }
+
+------------------------------------------------------------
+STEP 11: Print Successfully Created Bills
+------------------------------------------------------------
+- Once all rows are processed:
+  - Get IDs of successfully created bills:
+    `const successBillIds = bills.map(bill => bill._id)`
+  - Call:
+    `billPrintUtil(successBillIds)`
+  - This triggers generation or printing of the final bills.
+
+------------------------------------------------------------
+STEP 12: Send Final Response
+------------------------------------------------------------
+- Responds with HTTP 201 Created
+- Returns both processed and skipped summary
+
+Example Response:
+{
+  "message": "Bills processed successfully",
+  "processedCount": 3,
+  "skippedCount": 1,
+  "skippedRows": [
+    {
+      "rowIndex": 4,
+      "orderId": "652ff1...",
+      "error": "Insufficient stock for product P001"
+    }
+  ],
+  "bills": [ ... list of created bills ... ]
+}
+
+------------------------------------------------------------
+STEP 13: Error Handling (Global)
+------------------------------------------------------------
+- If any unexpected error occurs at the root level:
+  → Respond with HTTP 500 Internal Server Error
+  → Return the error message
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+When the API executes successfully:
+1. Multiple bills are validated and created in a single request.
+2. Each new bill gets a unique sequential bill number.
+3. Order records are linked and updated as "Completed_Billed".
+4. Inventory is adjusted per product (available and reserved updated).
+5. Successfully created bills are printed automatically.
+6. Failed bills/rows are reported clearly back to the user.
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Validate request body
+2. Initialize tracking arrays (bills, skippedRows)
+3. Iterate through each set of bill data
+4. Verify order, retailer, and line item details
+5. Validate product, price, and inventory availability
+6. Generate unique bill number
+7. Create and save bill to the database
+8. Update linked order entry
+9. Adjust related inventory quantities
+10. Collect failed items in skippedRows
+11. Print successful bills
+12. Respond with complete summary
+
+------------------------------------------------------------
+IMPORTANT BUSINESS RULES
+------------------------------------------------------------
+1. Each order can only create bills if not already fully or partially billed.
+2. A bill cannot be created if inventory stock is insufficient.
+3. The order status is automatically updated to “Completed_Billed”.
+4. Inventory availability and reservation levels are maintained correctly.
+5. Each bill gets an auto-generated unique bill number.
+6. Failed rows are ignored but logged with detailed reason.
+7. Successfully created bills are auto-printed.
+
+------------------------------------------------------------
+AUTHOR: Srijita
+DATE: 27 Oct 2025

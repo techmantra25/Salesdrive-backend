@@ -1,0 +1,713 @@
+const asyncHandler = require("express-async-handler");
+const axios = require("axios");
+const Category = require("../../models/category.model");
+const Brand = require("../../models/brand.model");
+const Collection = require("../../models/collection.model");
+const Product = require("../../models/product.model");
+const SubBrand = require("../../models/subBrand.model");
+const Supplier = require("../../models/supplier.model");
+const { acquireLock, releaseLock } = require("../../models/lock.model");
+const { getGSTByHSN } = require("./util/getGSTByHSN");
+const fs = require("fs");
+const path = require("path");
+
+const syncProductMaster = asyncHandler(async (req, res) => {
+  if (!(await acquireLock("syncProductMaster"))) {
+    res.status(400);
+    throw new Error("Another sync is in progress. Please try again later.");
+  }
+
+  try {
+    let currentDate = new Date();
+    currentDate = currentDate.toISOString().split("T")[0];
+    currentDate = currentDate.split("-");
+    currentDate = `${currentDate[2]}.${currentDate[1]}.${currentDate[0]}`;
+
+    let previousDate = new Date();
+    // Set previousDate to one month ago
+    previousDate.setMonth(previousDate.getMonth() - 1);
+    previousDate = previousDate.toISOString().split("T")[0];
+    previousDate = previousDate.split("-");
+    previousDate = `${previousDate[2]}.${previousDate[1]}.${previousDate[0]}`;
+
+    if (req.query.previousDate && req.query.currentDate) {
+      // previous date should be lt or eq to the current date
+      if (new Date(req.query.previousDate) > new Date(req.query.currentDate)) {
+        res.status(400);
+        throw new Error("Previous date cannot be greater than current date");
+      } else {
+        currentDate = req.query.currentDate;
+        previousDate = req.query.previousDate;
+      }
+    }
+
+    console.log({
+      currentDate,
+      previousDate,
+      url: `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_PSSPL_MAT_API1_SRV/HeaderSet(StartDate='${previousDate}',ToDate='${currentDate}')/HeaderItem?$format=json`,
+    });
+
+    // const response = await axios.get(
+    //   `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_PSSPL_MAT_API1_SRV/HeaderSet(StartDate='${previousDate}',ToDate='${currentDate}')/HeaderItem?$format=json`,
+    //   {
+    //     headers: {
+    //       Cookie: "sap-usercontext=sap-client=100",
+    //     },
+    //   }
+    // );
+    // let data = response?.data?.d?.results || [];
+
+    let data = [];
+    try {
+      // Update the path as per your actual file location
+      const filePath = path.join(
+        __dirname,
+        "./data/unique_products_2025-07-17T11-26-32-889Z.json"
+      );
+      console.log("Attempting to read file:", filePath);
+      const fileContent = fs.readFileSync(filePath, "utf8");
+      data = JSON.parse(fileContent);
+    } catch (err) {
+      console.error("File read/parse error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to read or parse the file.json",
+        error: err.message,
+        stack: err.stack,
+      });
+    }
+
+    if (!data || data.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No product master data found",
+        data: [],
+      });
+    }
+
+    console.log(`Fetched ${data.length} records from SAP API`);
+
+    // filter the data for unique VSKU | keep the latest record means top most record
+    const uniqueVSKU = new Set();
+    data = data.filter((item) => {
+      const VSKU = item.VSKU || "";
+      if (uniqueVSKU.has(VSKU)) {
+        return false; // Skip duplicates
+      } else {
+        uniqueVSKU.add(VSKU);
+        return true; // Keep unique items
+      }
+    });
+
+    console.log(`Filtered to ${data.length} unique VSKU records`);
+
+    // Helper functions
+    const getSkuGroupCode = (item) => {
+      const VSKU = item.VSKU || "";
+      return VSKU.substring(0, 10);
+    };
+
+    const getSkuGroupName = (item) => {
+      const productName = item.ProductName || "";
+      return productName ? productName.split(",")[0].trim() : "";
+    };
+
+    const getPcsInBox = (item) => {
+      let pcsInBox = item.ProductExntension1 || "";
+      pcsInBox = pcsInBox.trim();
+      pcsInBox = parseFloat(pcsInBox.replace(/[^0-9.]/g, ""));
+      return isNaN(pcsInBox) ? 1 : pcsInBox > 0 ? pcsInBox : 1;
+    };
+
+    const getBasePoints = (item) => {
+      let basePoints = item.ProductExntension2 || "";
+      basePoints = basePoints.trim();
+      basePoints = parseFloat(basePoints.replace(/[^0-9.]/g, ""));
+      return isNaN(basePoints) ? 0 : basePoints;
+    };
+
+    const getUOM = (item) => {
+      let UOM = "pcs";
+
+      if (item?.VTSummary && item?.VTSummary?.trim() !== "") {
+        if (item.VTSummary.trim() === "BOX") {
+          UOM = "box";
+        } else if (item.VTSummary.trim() === "DZ") {
+          UOM = "dz";
+        } else if (item.VTSummary.trim() === "1PA") {
+          UOM = "1PA";
+        } else if (item.VTSummary.trim() === "2PA") {
+          UOM = "2PA";
+        } else if (item.VTSummary.trim() === "3PA") {
+          UOM = "3PA";
+        } else if (item.VTSummary.trim() === "PAA") {
+          UOM = "PAA";
+        } else if (item.VTSummary.trim() === "PAK") {
+          UOM = "PAK";
+        }
+      }
+
+      return UOM;
+    };
+
+    const getGst = (item) => {
+      const UnitPrice = item.UnitPrice || "0.00";
+      const HSN_CODE = item.ProductCode || "";
+      const qty_in_box = getPcsInBox(item);
+      const per_pcs_price = parseFloat(UnitPrice) / parseFloat(qty_in_box);
+
+      const rate = getGSTByHSN(HSN_CODE);
+
+      const gst = {
+        cgst: "0",
+        sgst: "0",
+        igst: "0",
+      };
+
+      if (!rate || rate === 0) {
+        return gst;
+      } else if (rate == 5) {
+        if (per_pcs_price >= 1000) {
+          gst.cgst = "6";
+          gst.sgst = "6";
+          gst.igst = "12";
+        } else {
+          gst.cgst = "2.5";
+          gst.sgst = "2.5";
+          gst.igst = "5";
+        }
+      } else if (rate == 12) {
+        gst.cgst = "6";
+        gst.sgst = "6";
+        gst.igst = "12";
+      } else if (rate == 18) {
+        gst.cgst = "9";
+        gst.sgst = "9";
+        gst.igst = "18";
+      } else if (rate == 28) {
+        gst.cgst = "14";
+        gst.sgst = "14";
+        gst.igst = "28";
+      } else {
+        return gst;
+      }
+
+      // console.log({
+      //   product_code: item.VSKU,
+      //   hsn_code: HSN_CODE,
+      //   per_pcs_price: per_pcs_price,
+      //   gst_rate_from_hsn: rate,
+      //   cgst: gst.cgst,
+      //   sgst: gst.sgst,
+      //   igst: gst.igst,
+      // });
+
+      // PRODUCT_CODE_WITH_GST.push({
+      //   product_code: item.VSKU,
+      //   hsn_code: HSN_CODE,
+      //   per_pcs_price: per_pcs_price,
+      //   gst_rate_from_hsn: rate,
+      //   cgst: gst.cgst,
+      //   sgst: gst.sgst,
+      //   igst: gst.igst,
+      // });
+
+      return gst;
+    };
+
+    // Transform the data
+    const transformedData = data.map((item) => ({
+      "Product Code": item.VSKU,
+      "Product Name": item.ProductName,
+      "Image Path": "",
+      "Supplier Code": item.Manufacture,
+      "Supplier Name": item.Manufacture,
+      "Brand Code": item.Info3,
+      "Brand Name": item.Info3,
+      "Sub Brand Code": item.ProductDivision,
+      "Sub Brand Name": item.ProductDivision,
+      "Collection Code": item.Category,
+      "Collection Name": item.Category,
+      "Category Code": item.Category,
+      "Category Name": item.Category,
+      "SKU Group Code": getSkuGroupCode(item),
+      "SKU Group Name": getSkuGroupName(item),
+      "Product Type": "inner_wear",
+      "Product Size": item.Extension2 || "",
+      "Product Color": item?.color || item?.Color || "",
+      "Pieces in a box": getPcsInBox(item),
+      "Product HSN Code": item.ProductCode || "",
+      CGST: getGst(item)?.cgst,
+      SGST: getGst(item)?.sgst,
+      IGST: getGst(item)?.igst,
+      SBU: "",
+      "Base Points": getBasePoints(item),
+      "Unit of Measure": getUOM(item),
+    }));
+
+    console.log(
+      "Processing Product Master with",
+      transformedData.length,
+      "records"
+    );
+
+    // --- CSV Writing Section Start ---
+
+    // const fs = require("fs");
+    // const path = require("path");
+    // const csvWriter = require("csv-writer").createObjectCsvWriter;
+
+    // const csvFilePath = path.join(
+    //   __dirname,
+    //   "../../downloads",
+    //   "product_code_with_gst.csv"
+    // );
+
+    // // remove duplicate products from PRODUCT_CODE_WITH_GST
+    // const uniqueProductCodes = new Set();
+    // PRODUCT_CODE_WITH_GST = PRODUCT_CODE_WITH_GST.filter((item) => {
+    //   if (uniqueProductCodes.has(item.product_code)) {
+    //     return false; // Skip duplicates
+    //   }
+    //   uniqueProductCodes.add(item.product_code);
+    //   return true; // Keep unique items
+    // });
+
+    // const writer = csvWriter({
+    //   path: csvFilePath,
+    //   header: [
+    //     { id: "product_code", title: "product_code" },
+    //     { id: "hsn_code", title: "hsn_code" },
+    //     { id: "per_pcs_price", title: "per_pcs_price" },
+    //     { id: "gst_rate_from_hsn", title: "gst_rate_from_hsn" },
+    //     { id: "cgst", title: "cgst" },
+    //     { id: "sgst", title: "sgst" },
+    //     { id: "igst", title: "igst" },
+    //   ],
+    // });
+
+    // // Call this function after all GST calculations are done
+    // function downloadProductCodeWithGstCsv() {
+    //   // Ensure the downloads directory exists
+    //   const dir = path.dirname(csvFilePath);
+    //   if (!fs.existsSync(dir)) {
+    //     fs.mkdirSync(dir, { recursive: true });
+    //   }
+
+    //   writer
+    //     .writeRecords(PRODUCT_CODE_WITH_GST)
+    //     .then(() => {
+    //       console.log("CSV file was written successfully to", csvFilePath);
+    //     })
+    //     .catch((err) => {
+    //       console.error("Error writing CSV file:", err);
+    //     });
+    // }
+
+    // // Example usage (after processing all items):
+    // downloadProductCodeWithGstCsv();
+
+    // --- CSV Writing Section Ends---
+
+    // Batch sizes
+    const BATCH_SIZE = 5000;
+    const DB_BATCH_SIZE = 1000;
+
+    let totalProcessed = 0;
+    let totalInserted = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    let skippedRows = [];
+
+    try {
+      // Step 1: Extract unique codes efficiently
+      console.log("Extracting unique codes from API data...");
+      const uniqueCodes = {
+        categories: new Set(),
+        collections: new Set(),
+        brands: new Set(),
+        subBrands: new Set(),
+        products: new Set(),
+      };
+
+      transformedData.forEach((row) => {
+        if (row["Category Code"]?.trim())
+          uniqueCodes.categories.add(row["Category Code"].trim());
+        if (row["Collection Code"]?.trim())
+          uniqueCodes.collections.add(row["Collection Code"].trim());
+        if (row["Brand Code"]?.trim())
+          uniqueCodes.brands.add(row["Brand Code"].trim());
+        if (row["Sub Brand Code"]?.trim())
+          uniqueCodes.subBrands.add(row["Sub Brand Code"].trim());
+        if (row["Product Code"]?.trim())
+          uniqueCodes.products.add(row["Product Code"].trim());
+      });
+
+      console.log(
+        `Found unique codes - Categories: ${uniqueCodes.categories.size}, Collections: ${uniqueCodes.collections.size}, Brands: ${uniqueCodes.brands.size}, SubBrands: ${uniqueCodes.subBrands.size}, Products: ${uniqueCodes.products.size}`
+      );
+
+      // Step 2: Extract unique supplier codes
+      const uniqueSupplierCodes = new Set();
+      transformedData.forEach((row) => {
+        if (row["Supplier Code"]?.trim()) {
+          uniqueSupplierCodes.add(row["Supplier Code"].trim());
+        }
+      });
+
+      console.log(`Found unique supplier codes: ${uniqueSupplierCodes.size}`);
+
+      // Step 3: Batch fetch related entities with proper indexing using codes
+      const [
+        categories,
+        collections,
+        brands,
+        subBrands,
+        suppliers,
+        existingProducts,
+      ] = await Promise.all([
+        Category.find({ code: { $in: Array.from(uniqueCodes.categories) } })
+          .select("code _id")
+          .lean(),
+        Collection.find({
+          code: { $in: Array.from(uniqueCodes.collections) },
+        })
+          .select("code _id cat_id")
+          .lean(),
+        Brand.find({ code: { $in: Array.from(uniqueCodes.brands) } })
+          .select("code _id")
+          .lean(),
+        SubBrand.find({ code: { $in: Array.from(uniqueCodes.subBrands) } })
+          .select("code _id")
+          .lean(),
+        Supplier.find({
+          supplierCode: { $in: Array.from(uniqueSupplierCodes) },
+        })
+          .select("supplierCode _id")
+          .lean(),
+        Product.find({
+          product_code: { $in: Array.from(uniqueCodes.products) },
+        })
+          .select("product_code")
+          .lean(),
+      ]);
+
+      // Create lookup maps for quick access using codes
+      const categoryMap = new Map(categories.map((c) => [c.code, c._id]));
+      const collectionMap = new Map(collections.map((c) => [c.code, c._id]));
+      const brandMap = new Map(brands.map((b) => [b.code, b._id]));
+      const subBrandMap = new Map(subBrands.map((sb) => [sb.code, sb._id]));
+      const supplierMap = new Map(
+        suppliers.map((s) => [s.supplierCode, s._id])
+      );
+      const existingProductCodes = new Set(
+        existingProducts.map((p) => p.product_code)
+      );
+
+      console.log(
+        `Found existing entities - Categories: ${categories.length}, Collections: ${collections.length}, Brands: ${brands.length}, SubBrands: ${subBrands.length}, Suppliers: ${suppliers.length}, Products: ${existingProducts.length}`
+      );
+
+      // Step 3: Process in batches
+      for (let i = 0; i < transformedData.length; i += BATCH_SIZE) {
+        const batch = transformedData.slice(i, i + BATCH_SIZE);
+        console.log(
+          `Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(
+            transformedData.length / BATCH_SIZE
+          )} (${batch.length} items)`
+        );
+
+        const validProducts = [];
+        const productsToUpdate = [];
+        const batchSkipped = [];
+
+        for (const [index, row] of batch.entries()) {
+          const rowIndex = i + index + 1;
+          row.index = rowIndex;
+
+          try {
+            // Validate all required fields with specific error messages
+            const missingFields = [];
+            if (!row["Product Code"]?.trim()) {
+              missingFields.push("Product Code");
+            }
+            if (!row["Product Name"]?.trim()) {
+              missingFields.push("Product Name");
+            }
+            if (!row["SKU Group Code"]?.trim()) {
+              missingFields.push("SKU Group Code");
+            }
+            if (!row["SKU Group Name"]?.trim()) {
+              missingFields.push("SKU Group Name");
+            }
+            if (!row["Category Code"]?.trim()) {
+              missingFields.push("Category Code");
+            }
+            if (!row["Collection Code"]?.trim()) {
+              missingFields.push("Collection Code");
+            }
+            if (!row["Brand Code"]?.trim()) {
+              missingFields.push("Brand Code");
+            }
+            if (!row["Supplier Code"]?.trim()) {
+              missingFields.push("Supplier Code");
+            }
+
+            if (missingFields.length > 0) {
+              batchSkipped.push({
+                ...row,
+                index: rowIndex,
+                reason: `Missing required field(s): ${missingFields.join(
+                  ", "
+                )}`,
+              });
+              continue;
+            }
+
+            const productCode = row["Product Code"].trim();
+            const isExistingProduct = existingProductCodes.has(productCode);
+
+            // Get references with specific error messages using codes
+            const categoryId = categoryMap.get(row["Category Code"]?.trim());
+            const collectionId = collectionMap.get(
+              row["Collection Code"]?.trim()
+            );
+            const brandId = brandMap.get(row["Brand Code"]?.trim());
+            const subBrandId = subBrandMap.get(row["Sub Brand Code"]?.trim());
+            const supplierId = supplierMap.get(row["Supplier Code"]?.trim());
+
+            const missingReferences = [];
+            if (!categoryId) {
+              missingReferences.push(
+                `Category not found with code: ${
+                  row["Category Code"]?.trim() || "N/A"
+                }`
+              );
+            }
+            if (!collectionId) {
+              missingReferences.push(
+                `Collection not found with code: ${
+                  row["Collection Code"]?.trim() || "N/A"
+                }`
+              );
+            }
+            if (!brandId) {
+              missingReferences.push(
+                `Brand not found with code: ${
+                  row["Brand Code"]?.trim() || "N/A"
+                }`
+              );
+            }
+            if (!supplierId) {
+              missingReferences.push(
+                `Supplier not found with code: ${
+                  row["Supplier Code"]?.trim() || "N/A"
+                }`
+              );
+            }
+
+            if (missingReferences.length > 0) {
+              batchSkipped.push({
+                ...row,
+                index: rowIndex,
+                reason: missingReferences.join("; "),
+              });
+              console.log(
+                `Row ${rowIndex} skipped: ${missingReferences.join("; ")}`
+              );
+              continue;
+            }
+
+            // Handle subBrand - if not found, log a warning but continue processing
+            if (!subBrandId && row["Sub Brand Code"]?.trim()) {
+              console.log(
+                `Row ${rowIndex}: SubBrand not found with code: ${row[
+                  "Sub Brand Code"
+                ]?.trim()}, will be set to null`
+              );
+            }
+
+            const productData = {
+              product_code: productCode,
+              name: row["Product Name"].trim(),
+              sku_group_id: row["SKU Group Code"].trim(),
+              sku_group__name: row["SKU Group Name"].trim(),
+              img_path: row["Image Path"] || "",
+              cat_id: categoryId,
+              collection_id: collectionId,
+              brand: brandId,
+              subBrand: subBrandId,
+              supplier: supplierId,
+              size: row["Product Size"]?.trim() || "",
+              color: row["Product Color"]?.trim() || "",
+              no_of_pieces_in_a_box: row["Pieces in a box"]?.toString() || "1",
+              product_type: row["Product Type"]?.trim() || "inner_wear",
+              product_hsn_code: row["Product HSN Code"]?.trim() || "",
+              cgst: row["CGST"]?.toString() || "2.5",
+              sgst: row["SGST"]?.toString() || "2.5",
+              igst: row["IGST"]?.toString() || "5",
+              sbu: row["SBU"]?.trim() || "",
+              base_point: row["Base Points"]?.toString() || "0",
+              uom: row["Unit of Measure"]?.trim() || "pcs",
+              status: true,
+            };
+
+            if (isExistingProduct) {
+              // For existing products, prepare update data
+              productsToUpdate.push({
+                filter: { product_code: productCode },
+                update: {
+                  $set: {
+                    name: productData.name,
+                    supplier: productData.supplier,
+                    brand: productData.brand,
+                    cat_id: productData.cat_id,
+                    collection_id: productData.collection_id,
+                    product_hsn_code: productData.product_hsn_code,
+                    sku_group_id: productData.sku_group_id,
+                    sku_group__name: productData.sku_group__name,
+                    size: productData.size,
+                    color: productData.color,
+                    no_of_pieces_in_a_box: productData.no_of_pieces_in_a_box,
+                    cgst: productData.cgst,
+                    sgst: productData.sgst,
+                    igst: productData.igst,
+                    base_point: productData.base_point,
+                    uom: productData.uom,
+                  },
+                },
+              });
+            } else {
+              // For new products, add to insert array
+              validProducts.push(productData);
+              // Add to existing products set to avoid duplicates in subsequent batches
+              existingProductCodes.add(productCode);
+            }
+          } catch (error) {
+            console.error(`Error processing row ${rowIndex}:`, error);
+            batchSkipped.push({
+              ...row,
+              index: rowIndex,
+              reason: `Processing error: ${error.message}`,
+            });
+          }
+        }
+
+        // if (validProducts.length > 0) {
+        //   console.log(`Sample validProduct for insert:`, validProducts[0]);
+        // }
+
+        // if (productsToUpdate.length > 0) {
+        //   console.log(`Sample product for update:`, productsToUpdate[0]);
+        // }
+
+        // Insert valid products in smaller batches
+        if (validProducts.length > 0) {
+          for (let j = 0; j < validProducts.length; j += DB_BATCH_SIZE) {
+            const dbBatch = validProducts.slice(j, j + DB_BATCH_SIZE);
+            try {
+              const result = await Product.insertMany(dbBatch, {
+                ordered: false,
+              });
+              totalInserted += result.length;
+              console.log(
+                `Inserted ${result.length} products (batch ${
+                  Math.floor(j / DB_BATCH_SIZE) + 1
+                })`
+              );
+            } catch (error) {
+              console.error(`Error inserting product batch:`, error);
+              // Add failed products to skipped with specific error details
+              dbBatch.forEach((product, idx) => {
+                batchSkipped.push({
+                  "Product Code": product.product_code,
+                  "Product Name": product.name,
+                  "Supplier Code": product.supplier,
+                  "Product Color": product.color || "",
+                  index: i + j + idx + 1,
+                  reason: `Database insertion failed: ${error.message}`,
+                });
+              });
+            }
+          }
+        }
+
+        // Update existing products in smaller batches
+        if (productsToUpdate.length > 0) {
+          for (let j = 0; j < productsToUpdate.length; j += DB_BATCH_SIZE) {
+            const updateBatch = productsToUpdate.slice(j, j + DB_BATCH_SIZE);
+            try {
+              const bulkOps = updateBatch.map(({ filter, update }) => ({
+                updateOne: {
+                  filter,
+                  update,
+                  upsert: false,
+                },
+              }));
+
+              const result = await Product.bulkWrite(bulkOps, {
+                ordered: false,
+              });
+              totalUpdated += result.modifiedCount;
+              console.log(
+                `Updated ${result.modifiedCount} products (batch ${
+                  Math.floor(j / DB_BATCH_SIZE) + 1
+                })`
+              );
+            } catch (error) {
+              console.error(`Error updating product batch:`, error);
+              // Add failed updates to skipped with specific error details
+              updateBatch.forEach((updateOp, idx) => {
+                batchSkipped.push({
+                  "Product Code": updateOp.filter.product_code,
+                  index: i + j + idx + 1,
+                  reason: `Database update failed: ${error.message}`,
+                });
+              });
+            }
+          }
+        }
+
+        totalProcessed += batch.length;
+        totalSkipped += batchSkipped.length;
+        skippedRows.push(...batchSkipped);
+
+        console.log(
+          `Batch ${Math.floor(i / BATCH_SIZE) + 1} completed: ${
+            validProducts.length
+          } inserted, ${productsToUpdate.length} updated, ${
+            batchSkipped.length
+          } skipped`
+        );
+      }
+    } catch (error) {
+      console.error("Error during product master sync processing:", error);
+      throw new Error(`Product processing failed: ${error.message}`);
+    }
+
+    console.log(`Product Master Sync completed:`);
+    console.log(`- Total rows processed: ${totalProcessed}`);
+    console.log(`- Successfully inserted: ${totalInserted}`);
+    console.log(`- Successfully updated: ${totalUpdated}`);
+    console.log(`- Skipped rows: ${totalSkipped}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Product master data synced successfully",
+      data: {
+        totalProcessed,
+        totalInserted,
+        totalUpdated,
+        totalSkipped,
+        skippedRows,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw error;
+  } finally {
+    await releaseLock("syncProductMaster");
+  }
+});
+
+module.exports = { syncProductMaster };

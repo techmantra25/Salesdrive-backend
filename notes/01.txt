@@ -1,0 +1,43 @@
+
+// const addPrice = asyncHandler(async (req, res) => {
+//   try {
+//     const userId = req.user._id;
+//     const PriceCode = await generateCode("PR-LX");
+//     let {
+//       productId,
+//       price_type,
+//       regionId,
+//       mrp_price,
+//       dlp_price,
+//       rlp_price,
+//       effective_date,
+//       distributorId = null,
+//     } = req.body;
+
+//     // Create a new price entry
+//     const price = new Price({
+//       code: PriceCode,
+//       productId,
+//       price_type,
+//       regionId,
+//       mrp_price,
+//       dlp_price,
+//       rlp_price,
+//       distributorId,
+//       effective_date,
+//       createdBy: userId, // Set the createdBy field to the authenticated user's ID
+//     });
+
+//     // Save the price entry to the database
+//     const savedPrice = await price.save();
+
+//     return res.status(201).json({
+//       status: 201,
+//       message: "Price added successfully",
+//       data: savedPrice, // Return the stored price in the response
+//     });
+//   } catch (error) {
+//     res.status(400);
+//     throw new Error(error?.message || "Something went wrong");
+//   }
+// });

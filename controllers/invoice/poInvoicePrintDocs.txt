@@ -1,0 +1,123 @@
+FILE: poInvoicePrint_steps.txt
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Complete step-by-step documentation of the "poInvoicePrint" API
+
+------------------------------------------------------------
+FUNCTION NAME:
+poInvoicePrint
+
+DESCRIPTION:
+This API is responsible for generating a **printable HTML version of a Purchase Order Invoice (PO Invoice)**.
+It retrieves the target invoice and all of its related data (distributor, products, purchase returns, and 
+bank details), and then formats the results into a printable HTML document using a utility layout generator.
+
+The output is **browser-printable HTML**, not a physical PDF file.
+The page automatically opens the print dialog when viewed, allowing users to
+either print the invoice or save it as a PDF.
+
+It ensures complete invoice rendering with branding, rates, tax details, totals, and payment information.
+
+------------------------------------------------------------
+STEP 1: Extract and Validate Request Parameters
+------------------------------------------------------------
+1.1 Input Parameter:
+    - `inId` → Extracted from the URL path parameters (`req.params`)
+
+    Endpoint Example:
+      GET /api/v1/invoice/print/:inId
+
+1.2 Validation:
+    - If `inId` is missing → return:
+      HTTP 400 Bad Request with error message:
+      “Invoice ID is required”
+
+Purpose:
+Ensures each call targets a specific invoice record before proceeding.
+
+------------------------------------------------------------
+STEP 2: Fetch Invoice Data from Database
+------------------------------------------------------------
+2.1 Database Query:
+    The API retrieves the invoice by ID along with all related references
+    to build a complete, detailed invoice object.
+
+```js
+const invoice = await Invoice.findById(inId)
+  .populate({
+    path: "distributorId",
+    select: "",
+    populate: [
+      { path: "stateId", select: "" },
+      { path: "brandId", select: "" },
+    ],
+  })
+  .populate({
+    path: "lineItems.product",
+    select: "",
+    populate: {
+      path: "brand",
+      select: "",
+    },
+  })
+  .populate({
+    path: "purchaseReturnIds",
+    select: "",
+    populate: [
+      { path: "invoiceId", select: "" },
+      { path: "distributorId", select: "" },
+      {
+        path: "lineItems.product",
+        select: "",
+        populate: { path: "brand", select: "" },
+      },
+    ],
+  })
+  .populate({
+    path: "lineItems.plant",
+    select: "",
+  });
+
+  2.2 Populated Associations:
+
+- distributorId → Includes full distributor details and nested state and brand data
+
+- lineItems.product → Includes product details and linked brand
+
+- purchaseReturnIds → Includes linked purchase returns, with nested products and distributors
+
+- lineItems.plant → Plant information linked to product line items
+
+2.3 Validation:
+- If no invoice is found for the supplied ID, return:
+HTTP 404 Not Found
+Message: "Invoice not found"
+Purpose: Ensures the invoice exists and preloads all related data to generate a complete print view.
+
+STEP 3: Fetch Distributor’s Bank Data
+
+
+3.1 Retrieve Distributor ID:
+
+- Extract the distributor ID from the populated invoice:
+
+const distributorId = invoice?.distributorId?._id;
+
+3.2 Query and Populate:
+
+- Fetch the distributor’s bank record:
+
+DbBank.findOne({ distributorId }).populate("distributorId")
+
+3.3 Inject Bank Data:
+
+- Add the retrieved bank record to the invoice object:
+
+invoice.bankData = bankData
+
+Purpose: Adds financial account and IFSC details to the printable document.
+
+rest of the api code is same as billPrint code
+
+AUTHOR: Srijita
+DATE: 27 Oct 2025

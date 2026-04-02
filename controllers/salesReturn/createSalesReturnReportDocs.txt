@@ -1,0 +1,547 @@
+FILE: createSalesReturn_steps.txt
+
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Step-by-step documentation of the "createSalesReturn" API function.
+
+FUNCTION NAME:
+
+createSalesReturn
+
+DESCRIPTION:
+
+This API endpoint creates a sales return record for goods returned by retailers. It validates all related entities, checks bill creation date constraints, manages RBP (Reward Bonus Points) validations, updates inventory levels, creates credit notes or replacements based on return type, processes point transactions, and maintains complete audit trails across multiple models.
+
+The function ensures data consistency between SalesReturn, Bill, Inventory, CreditNote, Replacement, Transaction, Ledger, DistributorTransaction, and RetailerMultiplierTransaction models.
+
+STEP 1: Extract and Validate Required Fields
+
+Extract the following required fields from req.body:
+{
+  billId,
+  salesmanName,
+  routeId,
+  retailerId,
+  goodsType,
+  collectionStatus,
+  remarks,
+  lineItems,
+  totalBasePoints,
+  grossAmount,
+  schemeDiscount,
+  distributorDiscount,
+  taxableAmount,
+  cgst,
+  sgst,
+  igst,
+  invoiceAmount,
+  roundOffAmount,
+  cashDiscount,
+  netAmount
+}
+
+Field Validation:
+
+- Check for missing required fields: billId, salesmanName, routeId, retailerId, goodsType
+
+- If any missing → HTTP 400 Bad Request
+
+→ Error: "Missing required fields: [field names]"
+
+STEP 2: Validate Related Entities Existence
+
+
+Perform parallel validation using Promise.all():
+
+
+1. 
+Bill Validation:
+
+
+	- Bill.findById(billId)
+
+	- If not found → HTTP 404 with message "Bill not found"
+
+
+2. 
+Salesman Validation:
+
+
+	- Employee.findById(salesmanName)
+
+	- If not found → HTTP 404 with message "Salesman not found"
+
+
+3. 
+Beat Validation:
+
+
+	- Beat.findById(routeId)
+
+	- If not found → HTTP 404 with message "Beat not found"
+
+
+4. 
+Retailer Validation:
+
+
+	- OutletApproved.findById(retailerId)
+
+	- If not found → HTTP 404 with message "Retailer not found"
+
+
+5. 
+Distributor Validation:
+
+
+	- Distributor.findById(req.user._id).lean()
+
+	- If not found → HTTP 404 with message "Distributor not found"
+
+    STEP 3: Generate Sales Return Number and Validate Bill Date
+
+1. 
+
+
+Generate Sales Return Number:
+
+
+	- const salesReturnNo = await generateCode("SR")
+
+
+2. 
+Bill Date Validation:
+
+	- Extract bill creation date using moment.tz(bill.createdAt, "Asia/Kolkata")
+
+	- Calculate difference with current date: currentDate.diff(billCreationDate, "days")
+
+	- If difference > 90 days → HTTP 400 Bad Request
+
+→ Error: "Bill Creation date should be within 90 days from today"
+
+STEP 4: RBP Scheme Validation and Point Balance Check
+
+1. 
+
+
+Initialize Store Points:
+
+
+	- let storePoints = 0
+
+
+2. 
+Point Balance Check (Conditional):
+
+	- Condition: totalBasePoints > 0 AND distributor.RBPSchemeMapped === "yes"
+
+	- Fetch retailer's current point balance:
+
+const res = await axios.get(`${RBP_POINT_BALANCE_CHECK_RETAILER}?id=${retailerId}`);
+storePoints = Number(res.data?.balance) || 0;
+
+If API call fails → HTTP 400 with message "Error fetching store points balance"
+
+Calculate Multiplier Points to Deduct:
+
+- Condition: Only if distributor.RBPSchemeMapped === "yes"
+
+- Call helper function: getMultiplierPointsToDeduct(bill, totalBasePoints)
+
+- Extract totalMultiplierPointsToDeduct from result
+
+1. 
+
+Total Points Validation:
+
+
+	- Condition: RBP scheme mapped AND totalBasePoints > 0
+
+	- Required points = totalBasePoints + totalMultiplierPointsToDeduct
+
+	- If storePoints < requiredPoints → HTTP 400 Bad Request
+
+→ Error: "Insufficient store points. Available: X, Required: Y"
+
+STEP 5: Create Sales Return Record
+
+- 
+
+
+Create new sales return document:
+const salesReturn = await SalesReturnModel.create({
+  distributorId: req.user._id,
+  salesReturnNo,
+  billId,
+  salesmanName,
+  routeId,
+  retailerId,
+  goodsType,
+  collectionStatus,
+  remarks,
+  lineItems,
+  totalBasePoints,
+  grossAmount,
+  schemeDiscount,
+  distributorDiscount,
+  taxableAmount,
+  cgst,
+  sgst,
+  igst,
+  invoiceAmount,
+  roundOffAmount,
+  cashDiscount,
+  netAmount
+});
+
+Link Sales Return to Bill:
+bill.salesReturnId.push(salesReturn._id);
+await bill.save();
+
+STEP 6: Process Line Items and Update Inventory
+Initialize Arrays:
+let transactions = [];
+let creditNoteItems = [];
+let replacementItems = [];
+For Each Line Item:
+
+1. 
+Inventory Validation:
+
+
+	- Inventory.findById(item.inventoryId)
+
+	- If not found → HTTP 404 with message "Inventory item not found: ${inventoryId}"
+
+
+2. 
+Product and Price Retrieval:
+
+
+	- Product.findById(item.product)
+
+	- Price.findById(item.price)
+
+	- Calculate pieces per box and unit prices
+
+
+3. 
+Inventory Updates Based on Goods Type:
+
+
+For Salable Goods:
+
+inventory.availableQty += Number(item.returnQty);
+inventory.totalStockamtDlp += Math.round(dlpbyPcs * Number(item.returnQty));
+inventory.totalStockamtRlp += Math.round(rlpbyPcs * Number(item.returnQty));
+
+For Unsalable Goods:
+inventory.unsalableQty += Number(item.returnQty);
+inventory.totalUnsalableamtDlp += Math.round(dlpbyPcs * Number(item.returnQty));
+inventory.totalUnsalableStockamtRlp += Math.round(rlpbyPcs * Number(item.returnQty));
+
+Update Total Quantity:
+inventory.totalQty = (inventory.availableQty || 0) + (inventory.unsalableQty || 0);
+await inventory.save();
+
+Create Transaction Record:
+const transaction = await Transaction.create({
+  distributorId: req.user._id,
+  transactionId: stockId,
+  invItemId: item.inventoryId,
+  productId: inventory.productId,
+  qty: item.returnQty,
+  date: new Date(),
+  type: "In",
+  description: `Sales Return for ${salesReturnNo}`,
+  balanceCount: goodsType === "Salable" ? inventory.availableQty : inventory.unsalableQty,
+  transactionType: "salesreturn",
+  stockType: goodsType === "Salable" ? "salable" : "unsalable"
+});
+
+Categorize Items by Return Type:
+
+
+
+- If item.salesReturnType === "Credit Note" → Add to creditNoteItems
+
+- If item.salesReturnType === "Replacement" → Add to replacementItems
+
+STEP 7: Create Credit Note (If Applicable)
+
+
+Condition: If creditNoteItems.length > 0
+
+
+1. 
+Calculate Total Amount:
+const totalAmount = creditNoteItems.reduce(
+  (sum, item) => sum + (Number(item.netAmt) || 0), 0
+);
+
+Generate Credit Note Number:
+const creditNoteNo = await generateCode("CN");
+
+Create Credit Note:
+const creditNote = await CreditNoteModel.create({
+  distributorId: req.user._id,
+  outletId: salesReturn.retailerId,
+  salesReturnId: salesReturn._id,
+  billId: bill._id,
+  lineItems: creditNoteItems,
+  creditNoteNo,
+  amount: Math.round(totalAmount),
+  creditNoteCreationDate: new Date(),
+  creditNoteStatus: "Pending",
+  creditNoteRemark: salesReturn.remarks,
+  creditNoteType: "With Reference"
+});
+
+Update Bill with Credit Note ID:
+await Bill.findByIdAndUpdate(
+  { _id: bill._id },
+  { $push: { creditNoteId: creditNote._id } },
+  { new: true }
+);
+
+Create Ledger Debit Transaction:
+
+
+
+- Fetch latest ledger balance
+
+- Generate transaction ID: ledgerTransactionCode("LEDG", req.user._id)
+
+- Create ledger entry with debit transaction for credit note amount
+
+STEP 8: Create Replacement (If Applicable)
+
+
+Condition: If replacementItems.length > 0
+
+
+1. 
+Generate Replacement Number:
+const replacementNo = await generateCode("RPL");
+
+Create Replacement Record:
+const replacement = await Replacement.create({
+  distributorId: req.user._id,
+  outletId: salesReturn.retailerId,
+  salesReturnId: salesReturn._id,
+  billId: bill._id,
+  lineItems: replacementItems,
+  replacementNo,
+  replacementDate: new Date(),
+  status: "Pending",
+  remark: salesReturn.remarks,
+  replacementType: "With Reference"
+});
+
+Update Bill with Replacement ID:
+await Bill.findByIdAndUpdate(
+  { _id: bill._id },
+  { $push: { replacementId: replacement._id } },
+  { new: true }
+);
+
+STEP 9: Process RBP Base Points Transaction
+
+
+Condition: totalBasePoints > 0 AND distributor.RBPSchemeMapped === "yes"
+
+1. 
+Get Current Distributor Balance:
+const latestTransaction = await DistributorTransaction.findOne({
+  distributorId: req.user._id
+}).sort({ createdAt: -1 });
+
+Prepare Transaction Data:
+const data = {
+  distributorId: req.user._id,
+  transactionType: "credit",
+  transactionFor: "Sales Return",
+  point: Number(totalBasePoints),
+  balance: Number(latestBalance) + Number(totalBasePoints),
+  salesReturnId: salesReturn._id,
+  retailerId: bill.retailerId,
+  status: "pending",
+  remark: `Points deducted for Sales Return no ${salesReturnNo}...`
+};
+
+External API Call for Point Debit:
+const body = {
+  outlet_id: retailer.outletUID,
+  amount: totalBasePoints,
+  remarks: `Points deducted for Sales Return...`,
+  type: "Sales Return"
+};
+
+const earnPointsResponse = await axios.post(RBP_POINT_DEBIT_API, body);
+
+Update Transaction Status:
+
+
+
+- If API success → data.status = "Success"
+
+- If API fails → data.status = "Failed" and store error response
+
+await new DistributorTransaction(data).save();
+
+STEP 10: Process RBP Multiplier Points Transaction
+
+
+Condition: totalMultiplierPointsToDeduct > 0 AND totalBasePoints > 0 AND distributor.RBPSchemeMapped === "yes"
+
+
+1. 
+Extract Bill Delivery Date Info:
+const billDeliveredDate = moment.tz(bill?.dates?.deliveryDate, "Asia/Kolkata");
+const billDeliveredMonthInNumber = billDeliveredDate.month() + 1;
+const billDeliveredYear = billDeliveredDate.year();
+
+2. Prepare Multiplier Transaction Data:
+const data = {
+  retailerId: salesReturn.retailerId,
+  transactionType: "debit",
+  transactionFor: "Sales Return",
+  slabPercentage: totalMultiplierPointsMetrics?.percentage || 0,
+  point: totalMultiplierPointsToDeduct,
+  month: billDeliveredMonthInNumber,
+  year: billDeliveredYear,
+  status: "Pending",
+  remark: `Multiplier Points deducted for Sales Return...`
+};
+
+3.External API Call:
+const body = {
+  outlet_id: retailer.outletUID,
+  amount: totalMultiplierPointsToDeduct,
+  remarks: `Multiplier Points deducted...`,
+  type: "Sales Multiplier"
+};
+
+const earnPointsResponse = await axios.post(RBP_POINT_DEBIT_API, body);
+
+await new RetailerMultiplierTransaction(data).save();
+
+STEP 11: Helper Function - getMultiplierPointsToDeduct
+
+
+Purpose: Calculate multiplier points to deduct based on historical multiplier transactions
+
+Logic:
+
+
+1. Check Current Month: If bill is from current month → no deduction
+
+2. Scan Previous 3 Months: Find highest multiplier percentage earned
+
+3. Calculate Points: Math.round((totalBasePoints * highestPercentage) / 100)
+
+Return: Object with pointsToDeduct and percentage properties
+
+STEP 12: Send Final Response
+
+
+After successful completion of all steps:
+
+HTTP 201 Created
+{
+  "status": 201,
+  "message": "Sales return created successfully",
+  "data": { ...salesReturnData }
+}
+
+STEP 13: Error Handling
+
+- Entire logic wrapped in try-catch block
+
+- On error → HTTP 500 Internal Server Error
+
+- Error thrown to Express middleware for handling
+
+
+FINAL OUTCOME
+
+When executed successfully:
+
+1. Sales return record created and linked to bill
+
+2. Inventory quantities updated based on goods type (salable/unsalable)
+
+3. Stock transactions recorded for audit trail
+
+4. Credit notes created and linked for applicable items
+
+5. Replacement records created for replacement items
+
+6. Ledger updated with credit note debit entries
+
+7. RBP base points credited to distributor (if scheme mapped)
+
+8. RBP multiplier points debited from retailer (if applicable)
+
+9. External RBP API calls made for point adjustments
+
+10. Complete audit trail maintained across all models
+
+
+---
+
+SUMMARY OF LOGICAL FLOW
+
+1. Validate required fields and related entities
+
+2. Check bill creation date constraints (90-day limit)
+
+3. Validate RBP scheme mapping and point balances
+
+4. Create sales return record and link to bill
+
+5. Process each line item: update inventory and create transactions
+
+6. Create credit notes for applicable return items
+
+7. Create replacements for applicable return items
+
+8. Update ledger with credit note transactions
+
+9. Process RBP base points through external API
+
+10. Process RBP multiplier points through external API
+
+11. Return success response with sales return data
+
+
+---
+
+IMPORTANT BUSINESS RULES
+
+1. Sales returns can only be created within 90 days of bill creation
+
+2. All related entities (bill, salesman, beat, retailer) must exist
+
+3. RBP point validations apply only when scheme is mapped
+
+4. Inventory updates differ based on goods type (salable vs unsalable)
+
+5. Credit notes and replacements are created based on return type
+
+6. Point transactions involve external API calls with status tracking
+
+7. Multiplier point calculations consider historical multiplier earnings
+
+8. Complete audit trail maintained through transaction records
+
+9. Ledger balance updated for credit note amounts
+
+10. System maintains referential integrity across all linked models
+
+
+---
+AUTHOR: Srijita
+
+DATE: 27 Oct 2025

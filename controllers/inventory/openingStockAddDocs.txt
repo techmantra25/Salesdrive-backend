@@ -1,0 +1,679 @@
+FILE: bulkOpeningStock_steps.txt
+
+DATE: 28 Oct 2025
+
+
+PURPOSE: Step-by-step documentation of the "bulkOpeningStock" API function.
+
+
+---
+FUNCTION NAME:
+
+bulkOpeningStock
+
+DESCRIPTION:
+
+This API endpoint processes bulk opening stock uploads via CSV files for distributors. It downloads and parses CSV files, validates data integrity, checks for duplicates and existing inventory, fetches pricing information, creates inventory records across multiple godowns, generates stock transactions, and calculates RBP (Reward Bonus Points) for opening stock. The function includes advanced features like concurrent upload prevention, memory optimization, rate limiting, and comprehensive error handling.
+
+The function ensures data consistency between Inventory, Product, Transaction, DistributorTransaction, and Distributor models while maintaining system performance and reliability.
+
+---
+
+STEP 1: Extract Request Parameters and Initial Validation
+
+
+Extract Parameters:
+
+const { secure_url, url } = req.body;
+const distributorId = req.user?._id;
+const csvUrl = secure_url || url || req.body.csvUrl;
+
+Validation:
+
+
+- If csvUrl is missing → HTTP 400 Bad Request
+
+→ Error: "CSV URL is required (secure_url, url, or csvUrl)"
+
+STEP 2: Implement Concurrent Upload Prevention (Critical)
+
+
+Locking Mechanism:
+const lockKey = `bulk_opening_stock_${distributorId}`;
+if (!(await acquireLock(lockKey))) {
+  return res.status(409).json({
+    message: "Another bulk upload is already in progress. Please wait and try again.",
+    error: "UPLOAD_IN_PROGRESS"
+  });
+}
+
+Purpose:
+
+
+- Prevents multiple simultaneous uploads by the same distributor
+
+- Avoids database inconsistencies and duplicate processing
+
+- Returns HTTP 409 Conflict if lock cannot be acquired
+
+
+---
+
+STEP 3: Download and Validate CSV File
+
+
+File Download:
+const response = await axios.get(csvUrl, {
+  responseType: "stream",
+  timeout: 60000,
+  maxContentLength: 100 * 1024 * 1024, // 100MB limit
+});
+
+File Storage:
+
+
+- Generate unique filename using uuidv4()
+
+- Stream download to temporary file path
+
+- Implement timeout protection (60 seconds)
+
+- Enforce file size limit (100MB maximum)
+
+Error Handling:
+
+
+- Download timeout → reject with "File download timeout"
+
+- File size exceeded → automatic rejection
+
+- Network errors → propagated to main error handler
+
+---
+
+STEP 4: Parse CSV with Advanced Error Handling
+
+Expected CSV Structure:
+Product code, Product Name, Qty In Pcs, Stock Type 
+
+Parsing Features:
+
+1. 
+Custom CSV Line Parser:
+
+const parseCSVLine = (line) => {
+  // Handles quoted fields and embedded commas
+  // Returns array of parsed values
+}
+
+1. 
+Memory Optimization:
+
+	- Maximum 5000 rows allowed
+
+	- Stream processing to avoid memory overload
+
+	- Automatic termination if limit exceeded
+
+2. 
+Parsing Timeout:
+
+	- 120-second timeout for large files
+
+	- Graceful stream destruction on timeout
+
+3. 
+Data Cleaning:
+
+	- Trim whitespace from all fields
+
+	- Remove quotes from product names
+
+	- Handle malformed CSV lines
+
+---
+
+STEP 5: Duplicate Detection and Validation
+Duplicate Detection Algorithm:
+const freq = {};
+results.forEach((row, index) => {
+  const code = (row["Product code"] || "").trim();
+  if (code) {
+    if (!freq[code]) freq[code] = [];
+    freq[code].push(index + 1);
+  }
+});
+Validation Rules:
+
+
+1. 
+Required Fields:
+
+	- Product code must not be empty
+
+	- Quantity must be valid integer ≥ 0
+
+	- Stock type must be: "salable", "unsalable", or "offer"
+
+2. 
+Duplicate Handling:
+
+	- Track all occurrences of each product code
+
+	- Skip all rows with duplicate product codes
+
+	- Report specific row numbers in error message
+
+3. 
+Data Type Validation:
+const qty = parseInt(qtyStr, 10);
+if (isNaN(qty) || qty < 0) {
+  // Invalid quantity handling
+}
+
+STEP 6: Distributor and Product Validation
+
+Distributor Validation:
+const distributor = await Distributor.findById(distributorId).lean();
+if (!distributor) {
+  throw new Error("Distributor not found");
+}
+const { goDown = ["main"] } = distributor;
+
+Product Lookup:
+const products = await Product.find({
+  product_code: { $in: Array.from(productCodes) }
+}).lean();
+
+Product Mapping:
+
+- Create efficient Map for O(1) product lookups
+
+- Track products not found in database
+
+- Report missing products in skipped rows
+
+STEP 7: Existing Inventory Check (Critical)
+
+
+Purpose: Prevent duplicate opening stock entries
+
+Implementation:
+const existingInventory = await Inventory.find({
+  productId: { $in: productIds },
+  distributorId
+}).lean();
+
+const existingInventorySet = new Set();
+existingInventory.forEach((inv) => {
+  existingInventorySet.add(inv.productId.toString());
+});
+
+Validation Logic:
+
+
+- Check if opening stock already exists for each product
+
+- Skip products with existing inventory records
+
+- Report conflicts in skipped rows
+
+STEP 8: Optimized Pricing Data Fetch
+
+
+Chunked Processing:
+const productChunks = chunkArray(products, 50); // 50 products per chunk
+
+Retry Mechanism:
+const fetchPricingWithRetry = async (productId, distributorId, retries = 2) => {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await axios.get(pricingEndpoint, {
+        timeout: 15000,
+        headers: {
+          Connection: "keep-alive",
+          "Keep-Alive": "timeout=5, max=1000"
+        }
+      });
+      return { success: true, data: response.data };
+    } catch (error) {
+      if (attempt === retries) {
+        return { success: false, error: error.message, productId };
+      }
+      await delay(attempt * 500); // Exponential backoff
+    }
+  }
+};
+
+Rate Limiting:
+
+
+- 300ms delay between individual requests
+
+- 1000ms delay between chunks
+
+- Sequential processing to avoid API overload
+
+- Connection pooling for efficiency
+
+Error Handling:
+
+
+- Failed pricing requests logged but don't halt process
+
+- Products without pricing marked as skipped
+
+- Detailed error tracking per product
+
+
+---
+
+STEP 9: Final Data Validation and Filtering
+
+
+Multi-Stage Validation:
+
+
+1. 
+Product Existence:
+if (!product) {
+  row.reason = `No product found with code ${productCode}`;
+  skippedRows.push(row);
+  continue;
+}
+
+Existing Inventory Check:
+if (existingInventorySet.has(product._id.toString())) {
+  row.reason = `Opening stock already exists for product code ${productCode}`;
+  skippedRows.push(row);
+  continue;
+}
+
+Pricing Validation:
+if (!priceEntry) {
+  row.reason = `No price entry found for ${productCode}`;
+  skippedRows.push(row);
+  continue;
+}
+
+STEP 10: Chunked Data Processing and Inventory Creation
+
+Processing Strategy:
+const rowChunks = chunkArray(finalValidRows, 50); // Process in batches 
+
+For Each Chunk:
+
+
+1. 
+Batch Transaction ID Generation:
+const txnIds = {};
+for (const row of chunk) {
+  if (!txnIds[row.product._id]) {
+    txnIds[row.product._id] = await transactionCode("LXSTA");
+  }
+}
+
+Price Calculation:
+let rlpbyPcs, dlpbyPcs;
+if (product.uom === "box") {
+  const ppk = product.no_of_pieces_in_a_box || 1;
+  rlpbyPcs = (priceEntry.rlp_price || 0) / ppk;
+  dlpbyPcs = (priceEntry.dlp_price || 0) / ppk;
+} else {
+  rlpbyPcs = priceEntry.rlp_price || 0;
+  dlpbyPcs = priceEntry.dlp_price || 0;
+}
+
+Points Calculation (New Feature):
+
+if (row.stockType === "salable") {
+  const basePoint = Number(product.base_point) || 0;
+  if (basePoint > 0) {
+    chunkPoints += basePoint * Number(row.qty);
+  }
+}
+
+Multi-Godown Inventory Creation:
+for (const godownType of goDown) {
+  const inventoryDoc = {
+    productId: product._id,
+    distributorId,
+    invitemId: await generateCode("INVT"),
+    godownType,
+    availableQty: row.stockType === "salable" ? row.qty : 0,
+    unsalableQty: row.stockType === "unsalable" ? row.qty : 0,
+    offerQty: row.stockType === "offer" ? row.qty : 0,
+    totalQty: row.qty,
+    totalStockamtDlp: dlpbyPcs * (row.stockType === "salable" ? row.qty : 0),
+    totalStockamtRlp: rlpbyPcs * (row.stockType === "salable" ? row.qty : 0),
+    totalUnsalableamtDlp: dlpbyPcs * (row.stockType === "unsalable" ? row.qty : 0),
+    totalUnsalableStockamtRlp: rlpbyPcs * (row.stockType === "unsalable" ? row.qty : 0),
+    openingStock: true, // Critical flag
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+}
+
+STEP 11: Batch Database Operations
+
+Inventory Batch Insert:
+const insertedInventories = await Inventory.insertMany(
+  inventoriesToInsert,
+  { ordered: false }
+);
+
+Transaction Record Creation:
+const createTransaction = (qty, stockType) => {
+  if (qty > 0) {
+    transactionsToInsert.push({
+      distributorId,
+      transactionId: txnId,
+      invItemId: null, // Updated after inventory insertion
+      productId: product._id,
+      qty,
+      date: new Date(),
+      type: "In",
+      description: `Opening stock for ${product.product_code}`,
+      balanceCount: qty,
+      transactionType: "openingstock",
+      stockType,
+      godownType,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+  }
+};
+
+Transaction Batch Insert:
+await Transaction.insertMany(transactionsToInsert, { ordered: false });
+
+Performance Optimizations:
+
+
+- Use ordered: false for faster bulk inserts
+
+- Update existing inventory set to prevent duplicates in subsequent chunks
+
+- Map inventory IDs to transaction records after insertion
+
+- Memory cleanup with global.gc() if available
+
+
+---
+
+STEP 12: RBP Points Transaction (New Feature)
+
+
+RBP Scheme Validation:
+if (distributor.RBPSchemeMapped !== "yes") {
+  console.log(`Skipping distributor transaction - RBP scheme not mapped`);
+} else {
+  // Process points transaction
+}
+
+Points Calculation Logic:
+
+
+- Only salable items contribute to points
+
+- Points = base_point × quantity for each product
+
+- Accumulate total points across all processed chunks
+
+Distributor Transaction Creation:
+
+const latestTransaction = await DistributorTransaction.findOne({
+  distributorId: distributorId
+}).sort({ createdAt: -1 });
+
+const currentBalance = latestTransaction ? Number(latestTransaction.balance) : 0;
+const newBalance = currentBalance + Math.round(totalOpeningStockPoints);
+
+const distributorTransaction = new DistributorTransaction({
+  distributorId: distributorId,
+  transactionType: "credit",
+  transactionFor: "Opening Points",
+  point: Math.round(totalOpeningStockPoints),
+  balance: newBalance,
+  status: "Success",
+  remark: `Opening stock points for ${processedData.length} products uploaded via bulk CSV`
+});
+
+STEP 13: Helper Functions
+
+
+1. CSV Line Parser:
+const parseCSVLine = (line) => {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+};
+
+2. Array Chunking:
+const chunkArray = (array, size) => {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+};
+
+3. Delay Function:
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+STEP 14: Comprehensive Error Handling
+
+
+Error Categories:
+
+
+1. 
+Validation Errors:
+
+
+	- Missing required fields
+
+	- Invalid data types
+
+	- Duplicate entries
+
+	- Missing products/pricing
+
+
+2. 
+System Errors:
+
+
+	- File download failures
+
+	- Database connection issues
+
+	- Memory limitations
+
+	- API timeout errors
+
+
+3. 
+Business Logic Errors:
+
+
+	- Existing inventory conflicts
+
+	- Pricing calculation failures
+
+	- Points calculation errors
+
+
+Error Response Structure:
+res.status(500).json({
+  message: err.message || "Internal server error",
+  error: process.env.NODE_ENV === "development" ? err.stack : undefined,
+  skippedRows: skippedRows.length > 0 ? skippedRows : undefined
+});
+
+STEP 15: Resource Cleanup and Lock Release
+
+
+Critical Cleanup (Always Executed):
+finally {
+  // File cleanup
+  if (fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (cleanupError) {
+      console.error("Error cleaning up file:", cleanupError);
+    }
+  }
+
+  // Release lock
+  await releaseLock(lockKey);
+  console.log(`🔓 [${lockKey}] Lock released.`);
+}
+
+Purpose:
+
+
+- Prevent disk space accumulation from temporary files
+
+- Ensure lock is always released, even on errors
+
+- Allow subsequent uploads to proceed
+
+STEP 16: Success Response Structure
+
+res.status(201).json({
+  message: `Successfully processed ${processedData.length} records`,
+  data: processedData.map((row) => ({
+    productCode: row["Product code"],
+    qty: row.qty,
+    stockType: row.stockType,
+    rowNum: row.rowNum
+  })),
+  skippedRows,
+  summary: {
+    totalRows: results.length,
+    validRows: validRows.length,
+    processedRows: processedData.length,
+    skippedRows: skippedRows.length,
+    pricingFetched: pricingMap.size,
+    productsFound: products.length,
+    existingInventoryFound: existingInventory.length,
+    totalOpeningStockPoints: totalOpeningStockPoints
+  }
+});
+
+FINAL OUTCOME
+
+When executed successfully:
+
+1. CSV file downloaded and parsed with advanced error handling
+
+2. Data validated against business rules and database constraints
+
+3. Duplicate entries detected and rejected
+
+4. Pricing information fetched with retry logic and rate limiting
+
+5. Inventory records created across all distributor godowns
+
+6. Stock transactions generated for complete audit trail
+
+7. RBP points calculated and credited (if scheme mapped)
+
+8. Comprehensive summary provided with processing statistics
+
+9. Failed records documented with specific error reasons
+
+10. System resources properly cleaned up and locks released
+
+
+---
+
+SUMMARY OF LOGICAL FLOW
+
+1. Validate request parameters and acquire processing lock
+
+2. Download and stream-parse CSV file with size/timeout limits
+
+3. Perform advanced duplicate detection and data validation
+
+4. Validate distributor, products, and existing inventory
+
+5. Fetch pricing data with chunked, rate-limited API calls
+
+6. Filter and prepare final dataset for processing
+
+7. Process data in chunks with batch database operations
+
+8. Create inventory records across multiple godowns
+
+9. Generate corresponding stock transaction records
+
+10. Calculate and credit RBP points for opening stock
+
+11. Compile comprehensive results and error reports
+
+12. Clean up resources and release processing lock
+
+
+---
+
+IMPORTANT BUSINESS RULES
+
+1. Concurrency Control: Only one bulk upload per distributor at a time
+
+2. File Limitations: Maximum 5000 rows and 100MB file size
+
+3. Data Integrity: No duplicate opening stock allowed per product
+
+4. Multi-Godown Support: Inventory created for all distributor godowns
+
+5. Stock Types: Support for salable, unsalable, and offer stock
+
+6. RBP Integration: Points credited only if scheme is mapped
+
+7. Rate Limiting: API calls throttled to prevent system overload
+
+8. Error Tolerance: Individual failures don't halt entire process
+
+9. Audit Trail: Complete transaction history maintained
+
+10. Resource Management: Automatic cleanup prevents system resource leaks
+
+---
+
+PERFORMANCE OPTIMIZATIONS
+
+1. Memory Management: Stream processing and chunked operations
+
+2. Database Efficiency: Batch inserts with ordered: false
+
+3. API Rate Limiting: Sequential requests with exponential backoff
+
+4. Lock Mechanism: Prevents concurrent processing overhead
+
+5. Connection Pooling: Keep-alive headers for API requests
+
+6. Garbage Collection: Manual GC trigger between chunks
+
+7. Early Validation: Fail fast on invalid data
+
+8. Efficient Lookups: Map-based product and inventory lookups
+
+---
+AUTHOR: Srijita
+DATE: 28 Oct 2025
+

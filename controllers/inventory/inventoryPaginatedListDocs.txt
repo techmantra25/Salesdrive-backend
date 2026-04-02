@@ -1,0 +1,504 @@
+Inventory Paginated List API Documentation
+
+
+FILE: inventoryPaginatedList_documentation.txt
+
+DATE: 30 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Complete documentation of the inventoryPaginatedList API function
+
+FUNCTION NAME:
+
+
+inventoryPaginatedList
+
+DESCRIPTION:
+
+
+This API retrieves a paginated list of inventory items for a distributor with comprehensive filtering, searching, and stock calculation capabilities. It provides detailed inventory information including product details, stock quantities, in-transit quantities, closing stock calculations, and optional RBP (Reward-Based Program) points calculation for distributors enrolled in the RBP scheme.
+
+The function is designed for performance and scalability with:
+
+
+- MongoDB aggregation pipelines for efficient data retrieval
+
+- Flexible filtering options for products and stock types
+
+- Pagination support for large datasets
+
+- Real-time stock calculations including in-transit quantities
+
+- Historical closing stock calculations based on transaction history
+
+- RBP points calculation for eligible distributors
+
+STEP-BY-STEP PROCESSING
+
+STEP 1: Extract and Validate Query Parameters
+
+const {
+  page = 1,
+  limit = 10,
+  productId,
+  searchTerm,
+  brandId,
+  categoryId,
+  collectionId,
+  godownType,
+  closingStockDate,
+  stockType,
+  showZeroStock,
+} = req.query;
+
+const distributorId = req.user._id;
+const pageNum = parseInt(page);
+const limitNum = parseInt(limit);
+
+Purpose:
+
+
+- Extracts all query parameters with default values
+
+- Converts page and limit to integers for pagination calculations
+
+- Retrieves authenticated distributor ID from request user object
+
+STEP 2: Build Initial Inventory Match Stage
+
+const matchStage = {
+  distributorId: distributorId,
+};
+
+if (godownType) {
+  matchStage.godownType = godownType;
+}
+
+Purpose:
+
+
+- Creates base filter to match inventory items for the authenticated distributor
+
+- Adds optional godown type filter if specified
+
+STEP 3: Apply Stock Type and Zero Stock Filters
+
+if (showZeroStock !== undefined || showZeroStock !== null) {
+  if (!showZeroStock === "true" || !showZeroStock === true) {
+    if (stockType && stockType === "salable") {
+      matchStage.$or = [
+        { availableQty: { $gt: 0 } },
+        { reservedQty: { $gt: 0 } },
+      ];
+    }
+    // Similar logic for unsalable and offer stock types
+  }
+}
+
+Purpose:
+
+
+- Conditionally filters out zero stock items based on showZeroStock parameter
+
+- Applies specific quantity filters based on stock type (salable, unsalable, offer)
+
+- Uses MongoDB $or operator to include items with any positive quantity in relevant fields
+
+STEP 4: Create MongoDB Aggregation Pipeline
+
+const pipeline = [];
+
+if (Object.keys(matchStage).length > 0) {
+  pipeline.push({ $match: matchStage });
+}
+
+pipeline.push({
+  $lookup: {
+    from: "products",
+    localField: "productId",
+    foreignField: "_id",
+    as: "product",
+  },
+});
+
+pipeline.push({
+  $unwind: "$product",
+});
+
+Purpose:
+
+
+- Initializes MongoDB aggregation pipeline
+
+- Adds inventory match stage if filters exist
+
+- Performs lookup join with products collection to get product details
+
+- Unwinds product array to flatten the joined data
+
+STEP 5: Apply Product-Specific Filters
+const productMatchStage = {};
+
+if (productId) {
+  productMatchStage["product._id"] = new mongoose.Types.ObjectId(productId);
+}
+
+if (searchTerm) {
+  productMatchStage["$or"] = [
+    { "product.product_code": { $regex: searchTerm, $options: "i" } },
+    { "product.name": { $regex: searchTerm, $options: "i" } },
+  ];
+}
+
+if (brandId) {
+  productMatchStage["product.brand"] = new mongoose.Types.ObjectId(brandId);
+}
+// Similar for categoryId and collectionId
+
+Purpose:
+
+
+- Builds product-specific filters after the lookup operation
+
+- Implements case-insensitive search across product code and name
+
+- Converts string IDs to MongoDB ObjectId format for proper matching
+
+STEP 6: Add Distributor Lookup and Sorting
+pipeline.push({
+  $lookup: {
+    from: "distributors",
+    localField: "distributorId",
+    foreignField: "_id",
+    as: "distributor",
+  },
+});
+
+pipeline.push({ $sort: { _id: -1 } });
+
+Purpose:
+
+
+- Joins with distributors collection to get distributor details
+
+- Sorts results by creation date (descending) using _id field
+
+STEP 7: Execute Parallel Aggregation Queries
+
+STEP 7: Execute Parallel Aggregation Queries
+
+const paginatedPipeline = [...pipeline];
+paginatedPipeline.push({ $skip: (pageNum - 1) * limitNum });
+paginatedPipeline.push({ $limit: limitNum });
+
+const totalCountPipeline = [
+  { $match: { distributorId: distributorId } },
+  { $count: "totalItems" },
+];
+
+const filteredCountPipeline = [
+  ...pipeline,
+  { $count: "totalFilteredItems" },
+];
+
+let [inventories, totalCountResult, filteredCountResult] = await Promise.all([
+  Inventory.aggregate(paginatedPipeline),
+  Inventory.aggregate(totalCountPipeline),
+  Inventory.aggregate(filteredCountPipeline),
+]);
+
+Purpose:
+
+
+- Creates three separate pipelines: paginated results, total count, filtered count
+
+- Executes all queries in parallel using Promise.all for optimal performance
+
+- Calculates pagination metadata for response
+
+STEP 8: Calculate Closing Stock (if requested)
+
+if (closingStockDate && stockType) {
+  let endDate = new Date(closingStockDate);
+  endDate.setHours(23, 59, 59, 999);
+
+  inventories = await Promise.all(
+    inventories.map(async (invItem) => {
+      const transactions = await Transaction.find({
+        $and: [
+          { distributorId: distributorId },
+          { productId: invItem.productId },
+          { createdAt: { $lt: endDate } },
+          { stockType: stockType },
+        ],
+      }).sort({ createdAt: -1 });
+
+      if (transactions.length > 0) {
+        const lastTransaction = transactions[0];
+        return {
+          ...invItem,
+          closingStockCount: lastTransaction?.balanceCount,
+        };
+      } else {
+        return {
+          ...invItem,
+          closingStockCount: null,
+        };
+      }
+    })
+  );
+}
+
+Purpose:
+
+
+- Calculates historical closing stock for a specific date if requested
+
+- Sets end date to end of day (23:59:59.999) for accurate date comparison
+
+- Finds the last transaction before the closing date for each product
+
+- Uses the balance count from the last transaction as closing stock
+
+STEP 9: Calculate In-Transit Quantities
+
+const inTransitInvoices = await Invoice.find({
+  distributorId: distributorId,
+  status: "In-Transit",
+}).populate("lineItems.product");
+
+let resultInventories = [...inventories];
+
+resultInventories = resultInventories.map((invItem) => {
+  const intransitQty = getInTransitQty(inTransitInvoices, invItem?.productId);
+  return {
+    ...invItem,
+    intransitQty: intransitQty,
+  };
+});
+
+Purpose:
+
+
+- Retrieves all in-transit invoices for the distributor
+
+- Calculates in-transit quantity for each product using utility function
+
+- Adds in-transit quantity to each inventory item
+
+STEP 10: Calculate RBP Points (for eligible distributors)
+
+const distributor = await Distributor.findById(distributorId).select("RBPSchemeMapped");
+
+let currentStockTotalPoints = null;
+
+if (distributor?.RBPSchemeMapped === "yes" && stockType === "salable") {
+  const pointsCalculationPipeline = [
+    {
+      $match: {
+        distributorId: distributorId,
+        $or: [{ availableQty: { $gt: 0 } }, { reservedQty: { $gt: 0 } }],
+      },
+    },
+    {
+      $lookup: {
+        from: "products",
+        localField: "productId",
+        foreignField: "_id",
+        as: "product",
+      },
+    },
+    { $unwind: "$product" },
+  ];
+
+  const allInventoriesForPoints = await Inventory.aggregate(pointsCalculationPipeline);
+
+  currentStockTotalPoints = allInventoriesForPoints.reduce((totalPoints, invItem) => {
+    const basePoint = parseFloat(invItem.product?.base_point) || 0;
+    const availableQty = Number(invItem.availableQty) || 0;
+    const reservedQty = Number(invItem.reservedQty) || 0;
+    const totalQty = availableQty + reservedQty;
+    const productPoints = basePoint * totalQty;
+    return totalPoints + productPoints;
+  }, 0);
+}
+
+Purpose:
+
+
+- Checks if distributor is enrolled in RBP scheme
+
+- Calculates total points for salable stock only
+
+- Multiplies base points per product by total available quantities
+
+- Includes points calculation in pagination response
+
+STEP 11: Build Final Response
+
+const totalItems = totalCountResult.length > 0 ? totalCountResult[0].totalItems : 0;
+const totalFilteredItems = filteredCountResult.length > 0 ? filteredCountResult[0].totalFilteredItems : 0;
+const totalPages = Math.ceil(totalFilteredItems / limitNum);
+
+const pagination = {
+  currentPage: pageNum,
+  limit: limitNum,
+  totalPages,
+  totalCount: totalItems,
+  filteredCount: totalFilteredItems,
+};
+
+if (distributor?.RBPSchemeMapped === "yes" && currentStockTotalPoints !== null) {
+  pagination.currentStockTotalPoints = currentStockTotalPoints;
+}
+
+return res.status(200).json({
+  status: 200,
+  message: "Inventories fetched successfully",
+  data: resultInventories,
+  pagination,
+});
+
+Purpose:
+
+
+- Constructs comprehensive pagination metadata
+
+- Includes RBP points total for eligible distributors
+
+- Returns standardized API response format
+
+RESPONSE FORMAT
+
+Success Response (200):
+
+{
+  "status": 200,
+  "message": "Inventories fetched successfully",
+  "data": [
+    {
+      "_id": "inventory_id",
+      "productId": "product_id",
+      "distributorId": "distributor_id",
+      "availableQty": 100,
+      "reservedQty": 20,
+      "unsalableQty": 5,
+      "offerQty": 10,
+      "godownType": "main",
+      "intransitQty": 15,
+      "closingStockCount": 150,
+      "product": {
+        "_id": "product_id",
+        "name": "Product Name",
+        "product_code": "PRD001",
+        "brand": "brand_id",
+        "cat_id": "category_id",
+        "collection_id": "collection_id",
+        "base_point": 2.5
+      },
+      "distributor": [
+        {
+          "_id": "distributor_id",
+          "name": "Distributor Name",
+          "RBPSchemeMapped": "yes"
+        }
+      ]
+    }
+  ],
+  "pagination": {
+    "currentPage": 1,
+    "limit": 10,
+    "totalPages": 25,
+    "totalCount": 1000,
+    "filteredCount": 250,
+    "currentStockTotalPoints": 1250.75
+  }
+}
+
+Error Response (400):
+{
+  "error": true,
+  "status": 400,
+  "message": "Error message describing what went wrong"
+}
+
+DATA MODELS INVOLVED
+
+Collections Used:
+
+1. Inventory - Main inventory records
+
+2. Products - Product master data
+
+3. Distributors - Distributor information
+
+4. Transactions - Stock transaction history
+
+5. Invoices - Invoice data for in-transit calculations
+
+Key Fields:
+
+- Inventory: availableQty, reservedQty, unsalableQty, offerQty, godownType
+
+- Products: name, product_code, brand, cat_id, collection_id, base_point
+
+- Distributors: RBPSchemeMapped
+
+- Transactions: balanceCount, stockType, createdAt
+
+- Invoices: status, lineItems
+
+BUSINESS RULES
+
+1. Authentication: Only authenticated distributors can access their own inventory
+
+2. Stock Types: Three types supported - salable, unsalable, offer
+
+3. Zero Stock: Can be included or excluded based on showZeroStock parameter
+
+4. RBP Points: Only calculated for distributors with RBPSchemeMapped = "yes"
+
+5. Closing Stock: Calculated from transaction history up to specified date
+
+6. In-Transit: Calculated from invoices with "In-Transit" status
+
+7. Search: Case-insensitive search across product code and name
+
+8. Pagination: Default 10 items per page, maximum controlled by limit parameter
+
+PERFORMANCE CONSIDERATIONS
+
+1. Aggregation Pipeline: Uses efficient MongoDB aggregation for joining collections
+
+2. Parallel Execution: Runs multiple queries simultaneously using Promise.all
+
+3. Indexed Queries: Relies on proper indexing of distributorId, productId, and status fields
+
+4. Selective Fields: Uses .select() and .lean() for better performance
+
+5. Batch Processing: Handles large datasets through pagination
+
+ERROR HANDLING
+
+1. Try-Catch: Wrapped in asyncHandler for consistent error handling
+
+2. Validation: Checks for required fields and proper data types
+
+3. Fallbacks: Provides default values for optional parameters
+
+4. Error Response: Returns standardized error format with status codes
+
+DEPENDENCIES
+
+1. express-async-handler: For async error handling
+
+2. mongoose: For MongoDB operations and ObjectId conversions
+
+3. Models: Inventory, Transaction, Invoice, Distributor models
+
+4. Utils: getInTransitQty utility function
+
+AUTHOR: Srijita
+
+DATE: 30 Oct 2025

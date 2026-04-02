@@ -1,0 +1,24 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      # Generate .env file dynamically
+      - echo "PORT=$PORT" >> .env
+      - echo "NODE_ENV=$NODE_ENV" >> .env
+      - echo "JWT_SECRET=$JWT_SECRET" >> .env
+      - echo "MONGODB_URI=$MONGODB_URI" >> .env
+      - echo "CLIENT_URL=$CLIENT_URL" >> .env
+      - echo "SERVER_URL=$SERVER_URL" >> .env
+      - echo "API_URL=$API_URL" >> .env
+      - echo "EMAIL_HOST=$EMAIL_HOST" >> .env
+      - echo "EMAIL_PORT=$EMAIL_PORT" >> .env
+      - echo "EMAIL_USERNAME=$EMAIL_USERNAME" >> .env
+      - echo "EMAIL_PASSWORD=$EMAIL_PASSWORD" >> .env
+      - echo "BUCKET_URL=$BUCKET_URL" >> .env
+      - echo "RUPA_USERNAME=$RUPA_USERNAME" >> .env
+      - echo "RUPA_PASSWORD=$RUPA_PASSWORD" >> .env
+artifacts:
+  files:
+    - .env
+    - '**/*'

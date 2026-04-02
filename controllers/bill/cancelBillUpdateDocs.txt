@@ -1,0 +1,203 @@
+FILE: cancelBillUpdate_steps.txt
+DATE: 27 Oct 2025
+AUTHOR: Srijita
+PURPOSE: Step-by-step documentation of the "cancelBillUpdate" API function.
+
+------------------------------------------------------------
+FUNCTION NAME:
+cancelBillUpdate
+
+DESCRIPTION:
+This API endpoint is used to cancel one or more existing bills.
+When bills are cancelled:
+1. The status of each bill is changed to "Cancelled".
+2. A cancellation remark and date are recorded.
+3. Inventory quantities are restored (returned to available stock).
+4. The related order status is updated ('Pending', 'Partially_Billed', or 'Completed_Billed')
+   based on how many bills are cancelled and the quantities billed vs ordered.
+
+------------------------------------------------------------
+STEP 1: Receive Request and Validate Input
+------------------------------------------------------------
+- The API expects an array called "billIds" in the request body.
+  Format example:
+  [
+    { "bid": "652ff1bfcc77c2aebd130a55", "remark": "Customer returned goods" },
+    { "bid": "652ff1bfcc77c2aebd130b63", "remark": "Incorrect billing" }
+  ]
+
+- Each array element must have:
+    - bid   : Bill ID
+    - remark: Cancellation reason or note
+
+- Validation:
+  - If billIds is not an array or is empty, the API responds with:
+    HTTP 400 Bad Request
+    Message: "Invalid or empty billIds array"
+
+------------------------------------------------------------
+STEP 2: Prepare Bill IDs and Update Operations
+------------------------------------------------------------
+- The function extracts:
+  - A list of objects with { bid, remark }
+  - An array of bill IDs only (billIdArray)
+
+- It then maps over the list to create update operations that:
+  - Change bill "status" to "Cancelled"
+  - Add "dates.cancelledDate" as the current date/time
+  - Add "billRemark" with the provided remark text
+
+Example of update operation for each bill:
+  Bill.updateOne(
+    { _id: bid },
+    {
+      status: "Cancelled",
+      dates: { cancelledDate: new Date() },
+      billRemark: remark
+    }
+  )
+
+------------------------------------------------------------
+STEP 3: Execute Bulk Bill Updates
+------------------------------------------------------------
+- All update operations are executed in parallel using Promise.all().
+- The result (billStatus) contains details of how many documents were updated.
+
+- After execution:
+  - If no matching bills were found to cancel,
+    the API responds with:
+    HTTP 404 Not Found
+    Message: "No bills found to cancel"
+
+------------------------------------------------------------
+STEP 4: Retrieve Cancelled Bills
+------------------------------------------------------------
+- After updating statuses, the system fetches the latest cancelled
+  bills using:
+  Bill.find({ _id: { $in: billIdArray } });
+
+- These `bills` are used to update inventory and orders.
+
+------------------------------------------------------------
+STEP 5: Inventory Restoration After Cancellation
+------------------------------------------------------------
+- An empty array "updatedInventories" is initialized to track
+  which inventories were modified.
+
+- For each cancelled bill:
+  - Skip if the bill has no line items.
+  - For each line item:
+    1. Check if inventoryId exists.
+       If missing, skip the item.
+    2. Fetch the corresponding inventory document using:
+       Inventory.findById(item.inventoryId._id)
+    3. If not found, skip to next item.
+
+- Once the inventory is found:
+  - The billed quantity (billQty) is read from the line item.
+  - Inventory quantities are adjusted as follows:
+      availableQty = availableQty + billQty
+      reservedQty  = reservedQty - billQty
+  - The updated inventory is saved.
+  - The inventory ID is pushed into updatedInventories[] list.
+
+------------------------------------------------------------
+STEP 6: Update Related Order Status
+------------------------------------------------------------
+- After cancelling bills, the system also updates the related order’s status.
+
+  For each cancelled bill:
+  1. Extract orderId from the bill.
+  2. Fetch the corresponding order using:
+     OrderEntry.findById(orderId).populate([...])
+     (This populates distributor, salesman, retailer, route,
+      and lineItems for detailed status checks.)
+
+  3. Retrieve:
+     - orderLineItems = order.lineItems
+     - billList = order.billIds (list of all related bill documents)
+
+  4. Find all bills that are NOT cancelled:
+     notCanceledBillList = billList.filter(bill => bill.status !== "Cancelled")
+
+  ------------------------------------------------------------
+  CASE 1: All bills cancelled
+  ------------------------------------------------------------
+  - If notCanceledBillList.length === 0:
+    - The system updates the order’s status to "Pending" using:
+      OrderEntry.findByIdAndUpdate(orderId, { status: "Pending" })
+
+  ------------------------------------------------------------
+  CASE 2: Some bills cancelled
+  ------------------------------------------------------------
+  - For each product item in the order:
+    - Get orderQty = item.orderQty
+    - Get productId = item.product._id
+    - Calculate total billed quantity (billQty) across
+      all *non-cancelled bills* for that product.
+
+    Example:
+    billQty = Sum of all bill.lineItem.billQty where bill.status !== "Cancelled"
+
+  - Compare orderQty and billQty values:
+      a) If orderQty > billQty:
+         -> Update order status to "Partially_Billed"
+      b) If orderQty < billQty:
+         -> Update order status to "Completed_Billed"
+      c) If orderQty == billQty:
+         -> Update order status to "Completed_Billed"
+
+------------------------------------------------------------
+STEP 7: Send Success Response
+------------------------------------------------------------
+- After processing all bills and inventories, the API responds with:
+
+  HTTP 200 OK
+  JSON Response:
+  {
+    "message": "Bills cancelled and inventory updated successfully",
+    "updatedInventories": [ (list of updated inventory IDs) ]
+  }
+
+------------------------------------------------------------
+STEP 8: Error Handling
+------------------------------------------------------------
+- All database operations are wrapped in a try-catch block.
+- If any unexpected error occurs:
+  - The system sets HTTP status to 500
+  - Throws the error message for standard error middleware to handle.
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+After the API completes:
+1. The selected bills are marked as "Cancelled".
+2. The cancellation date and remark are stored.
+3. Inventory quantities are properly restored to available stock.
+4. Related orders reflect updated statuses ("Pending", "Partially_Billed", or "Completed_Billed").
+5. A summary list of all updated inventory IDs is returned to the client.
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Validate request input (billIds array)
+2. Extract bill IDs and remarks
+3. Update each bill’s status to "Cancelled"
+4. Fetch cancelled bills
+5. Restore associated inventory quantities
+6. Update related order statuses
+7. Return success response
+8. Handle errors (500 Internal Server Error if failed)
+
+------------------------------------------------------------
+IMPORTANT BUSINESS RULES
+------------------------------------------------------------
+1. Only bills with valid IDs are processed.
+2. Each cancellation restores product quantities back to inventory.
+3. Order status is dynamically recalculated based on remaining, non-cancelled bills.
+4. If all bills are cancelled, the order resets to "Pending".
+5. Data consistency is maintained across Bill, Inventory, and Order collections.
+
+------------------------------------------------------------
+AUTHOR: Srijita
+DATE: 27 Oct 2025

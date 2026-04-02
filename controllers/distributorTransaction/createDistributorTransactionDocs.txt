@@ -1,0 +1,131 @@
+FILE: createDistributorTransaction_steps.txt
+DATE: 27 Oct 2025
+PURPOSE: Explain how the distributor transaction creation API works
+
+------------------------------------------------------------
+FUNCTION NAME:
+createDistributorTransaction
+
+DESCRIPTION:
+This function handles the creation of credit or debit point transactions
+for distributors. It validates inputs, checks business rules, performs
+balance calculations, saves a new record, and returns a success response.
+------------------------------------------------------------
+
+STEP 1: Extract Input Data
+------------------------------------------------------------
+- The API extracts the following fields from the request body:
+  distributorId, point, transactionFor, transactionType, Remarks
+- These values come from req.body (sent as JSON in a POST request).
+
+STEP 2: Validate Required Fields
+------------------------------------------------------------
+- A list of required fields is defined.
+- It checks if any required field is missing.
+- If one or more fields are missing, the API stops and returns
+  HTTP 400 Bad Request with an error message listing the missing fields.
+
+STEP 3: Verify Distributor Exists
+------------------------------------------------------------
+- The code checks if the distributor with the provided ID exists
+  in the Distributor collection using findById().
+- If not found, the API returns HTTP 404 Not Found
+  with the message "Distributor not found".
+
+STEP 4: Check RBP Scheme Mapping
+------------------------------------------------------------
+- Each distributor must be mapped to an RBP scheme before creating a transaction.
+- The system checks distributor.RBPSchemeMapped.
+- If the value is not "yes", the API denies the request and returns
+  HTTP 400 with an error stating that RBP mapping is missing.
+
+STEP 5: Validate Point Value
+------------------------------------------------------------
+- The 'point' value is converted to a float.
+- It checks if the point is a valid number and greater than zero.
+- If invalid, the API returns HTTP 400 with the message:
+  "Point must be a valid number and greater than 0".
+
+STEP 6: Validate TransactionFor and TransactionType Fields
+------------------------------------------------------------
+- The API checks if transactionFor has a value from this list:
+  "Opening Points", "Manual Stock Point", "Adjustment Point"
+- The API checks if transactionType is either "credit" or "debit".
+- If either value is invalid, a 400 error is sent with a clear message.
+
+STEP 7: Get Latest Balance
+------------------------------------------------------------
+- The latest transaction for the distributor is fetched from
+  the DistributorTransaction collection.
+- The code sorts transactions in descending order by creation date.
+- If no previous transaction exists, the current balance is assumed to be 0.
+
+STEP 8: Calculate New Balance
+------------------------------------------------------------
+- The system determines the new balance based on the transaction type.
+  If credit => balance + point
+  If debit => balance - point
+- The point value is rounded using Math.round().
+
+STEP 9: Prevent Negative Balance
+------------------------------------------------------------
+- For debit transactions, if newBalance is less than 0, the API stops
+  the process and throws "Insufficient balance for debit transaction".
+- This ensures the distributor cannot go below zero balance.
+
+STEP 10: Enhance Remark
+------------------------------------------------------------
+- The remark text from the request is enhanced by appending the
+  distributor’s dbCode to the end of the remark for better tracking.
+- Example:
+  Original remark: "Manual adjustment"
+  Enhanced remark: "Manual adjustment for DB Code DB123"
+
+STEP 11: Save Transaction in Database
+------------------------------------------------------------
+- A new record is created in the DistributorTransaction collection.
+- The new object includes:
+    distributorId
+    transactionType
+    transactionFor
+    point
+    balance
+    remark (enhanced)
+    status ("Success")
+- This data is saved using Mongoose create() method.
+
+STEP 12: Send Response to Client
+------------------------------------------------------------
+- After successful creation of the transaction, the API sends:
+  HTTP 201 (Created)
+  JSON response containing:
+    message: "Distributor transaction created successfully"
+    transaction: (newly created transaction object)
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+1. Distributor’s previous balance is fetched.
+2. A new transaction entry is created.
+3. New balance is calculated and stored.
+4. Response is returned to confirm success.
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Input extraction
+2. Field validation
+3. Distributor existence check
+4. RBP scheme verification
+5. Point value validation
+6. Transaction type and purpose validation
+7. Fetch previous balance
+8. Calculate new balance
+9. Prevent negative balances
+10. Add enhanced remark
+11. Save new transaction in DB
+12. Return success response
+
+------------------------------------------------------------
+AUTHOR: Srijita
+Date: 27 Oct 2025

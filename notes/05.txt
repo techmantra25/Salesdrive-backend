@@ -1,0 +1,96 @@
+// const outletApprovedBulk = asyncHandler(async (req, res) => {
+//   try {
+//     const { csvUrl } = req.body;
+
+//     if (!csvUrl) {
+//       return res.status(400).json({ message: "CSV URL is required" });
+//     }
+
+//     const results = [];
+//     fs.createReadStream(csvUrl)
+//       .pipe(csv())
+//       .on("data", (data) => results.push(data))
+//       .on("end", async () => {
+//         const outlets = await Promise.all(
+//           results.map(async (row) => {
+//             // Find distributor by DB Code
+//             const distributor = await Distributor.findOne({
+//               dbCode: row["DB Code"],
+//             }).select("zoneId regionId");
+
+//             // Find beat by Beat Code
+//             const beat = await Beat.findOne({
+//               code: row["Beat Code"],
+//             }).select("_id");
+
+//             // Find region by regionId from distributor
+//             const region = await Region.findOne({
+//               _id: distributor.regionId,
+//             });
+
+//             // Map Selling Brands to an array of ObjectId
+//             const sellingBrands = await Brand.find({
+//               code: { $in: row["Selling Brand"].split(",") },
+//             }).select("_id");
+
+//             if (!distributor) {
+//               throw new Error(
+//                 `Distributor with DB Code ${row["DB Code"]} not found`
+//               );
+//             }
+
+//             return {
+//               createdBy: req.user._id,
+//               createdBy_type: "User",
+//               zoneId: region?.zoneId, // Use zoneId from distributor
+//               stateId: distributor?.stateId, // Use stateId from distributor
+//               regionId: distributor?.regionId, // Use regionId from distributor
+//               distributorId: distributor?._id,
+//               outletCode: row["Outlet Code"],
+//               outletUID: row["Outlet UID"],
+//               outletName: row["Outlet Name"],
+//               ownerName: row["Owner Name"],
+//               pin: row["Pin Code"],
+//               district: row["District"],
+//               mobile1: row["Mobile No"],
+//               mobile2: row["Alternate Mobile No"],
+//               whatsappNumber: row["WhatsApp No"],
+//               teleCallingSlot: row["Tele Calling Slot"],
+//               preferredLanguage: row["Preferred Language"],
+//               teleCallDay: row["Tele Call Day"],
+//               beatId: beat?._id,
+//               address1: row["Address 1"],
+//               address2: row["Address 2"],
+//               marketCenter: row["Market Center"],
+//               city: row["City"],
+//               aadharNumber: row["Aadhar Number"],
+//               panNumber: row["PAN Number"],
+//               gstin: row["GST Number"],
+//               poiFrontImage: row["POI Front Image"],
+//               poiBackImage: row["POI Back Image"],
+//               outletImage: row["Outlet Image"],
+//               poaFrontImage: row["POA Front Image"],
+//               poaBackImage: row["POA Back Image"],
+//               enrollmentForm: row["Enrollment Form"],
+//               location: row["Location"],
+//               OutletSegments: row["Outlet Segment"],
+//               categoryOfOutlet: row["Category Of Outlet"],
+//               productCategory: row["Product Category"],
+//               sellingBrands: sellingBrands.map((brand) => brand._id), // Array of ObjectIds
+//               competitorBrands: row["Competitor Brands"],
+//               existingRetailer: row["Existing Retailer"],
+//               status: true,
+//               outletSource: "Admin",
+//             };
+//           })
+//         );
+
+//         // Insert or update the outlets in bulk
+//         await OutletApproved.insertMany(outlets, { ordered: false });
+
+//         res.status(201).json({ message: "Outlets uploaded successfully" });
+//       });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// });

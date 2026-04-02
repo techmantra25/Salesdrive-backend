@@ -1,0 +1,423 @@
+FILE: bulkAdjustment_steps.txt
+
+DATE: 29 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Step-by-step documentation of the “bulkAdjustment” API function.
+
+---
+FUNCTION NAME:
+
+bulkAdjustment
+
+---
+DESCRIPTION:
+
+This API endpoint is designed for quickly performing bulk stock adjustments for a distributor.
+It allows adjustments (either “Add” or “Reduce”) to the distributor’s product stock quantities in inventory — categorized by stock type (salable, unsalable, or offer).
+The endpoint also recalculates and maintains Reward Bonus Points (RBP) for the distributor based on quantity changes.
+
+The function ensures data consistency between:
+
+
+- Inventory – updates product stock quantities.
+
+- Product – fetches product metadata and base points.
+
+- Transaction – adds “stock adjustment” transaction entries.
+
+- Distributor – validates distributor existence and RBP scheme status.
+
+- DistributorTransaction – records points credit/debit adjustments.
+
+STEP 1: Extract Request and Validate Basic Input
+
+Extract:
+
+const { data } = req.body;
+const distributorId = req.user.id;
+
+Validation:
+
+if (!data || !Array.isArray(data)) {
+  return res.status(400).json({
+    message: "Test data is required and must be an array"
+  });
+}
+
+- Returns: HTTP 400 Bad Request
+
+- Error if data is missing or not an array.
+
+STEP 2: Initialize Variables and Transaction Setup
+
+Initialization:
+
+const transactions = [];
+const skippedRows = [];
+const stockId = await transactionCode("LXSTA");
+let totalAdjustmentPoints = 0;
+const processedProducts = [];
+
+Purpose:
+
+
+- transactions — collection of new stock transaction entries.
+
+- skippedRows — keeps invalid or failed records (for reporting).
+
+- stockId — generated batch transaction identifier (group tag).
+
+- totalAdjustmentPoints — will accumulate total points added or deducted.
+
+- processedProducts — used for tracking product-wise point calculations.
+
+STEP 3: Loop Through and Validate Each Row
+
+
+Each row in data represents one stock adjustment operation.
+
+For each row:
+const productCode = row.product_code.trim();
+const qty = parseInt(row.qty, 10);
+const adjustmentType = row.adjustment.trim().toLowerCase();
+const stockType = row.stockType.trim().toLowerCase();
+
+(a) Validate Quantity:
+if (isNaN(qty) || qty <= 0)
+
+→ Invalid quantities are skipped with reason:
+
+"Invalid quantity for Product code"
+
+(b) Validate Adjustment Type:
+if (!["add", "reduce"].includes(adjustmentType))
+
+→ Must be add or reduce.
+
+If invalid, skip with reason:
+
+"Invalid adjustment type... Must be 'Add' or 'Reduce'"
+
+(c) Validate Product Existence:
+const product = await Product.findOne({ product_code: productCode });
+
+→ If not found, skip with:
+
+"Product with code {productCode} not found"
+
+STEP 4: Price Retrieval and Validation
+
+Fetch pricing details:
+const priceResponse = await axios.get(
+  `${SERVER_URL}/api/v1/price/product-pricing/${product._id}?distributorId=${distributorId}`
+);
+
+Check if a price entry exists:
+const priceEntry = priceResponse?.data?.data[0];
+if (!priceEntry) {
+  row.reason = `No price entry found for Product ID ${productCode}`;
+}
+
+Compute per-piece pricing:
+
+if (product.uom === "box") {
+  const piecesPerBox = product.no_of_pieces_in_a_box || 1;
+  rlpbyPcs = priceEntry.rlp_price / piecesPerBox;
+  dlpbyPcs = priceEntry.dlp_price / piecesPerBox;
+} else {
+  rlpbyPcs = priceEntry.rlp_price;
+  dlpbyPcs = priceEntry.dlp_price;
+}
+
+If prices cannot be calculated properly, the row is skipped.
+
+STEP 5: Fetch and Validate Inventory Record
+
+
+Each adjustment applies to existing inventory for that distributor.
+
+let inventory = await Inventory.findOne({
+  productId: product._id,
+  distributorId,
+});
+
+If inventory is not found →
+
+"No existing inventory found for Product ID {code}" → skip row.
+
+STEP 6: Calculate Adjustment Points (RBP Points)
+
+Points Calculation Logic:
+const basePoint = Number(product.base_point) || 0;
+if (basePoint > 0) {
+  let productAdjustmentPoints = 0;
+  if (adjustmentType === "add") {
+    productAdjustmentPoints = basePoint * qty;
+    totalAdjustmentPoints += productAdjustmentPoints; // credit
+  } else if (adjustmentType === "reduce") {
+    productAdjustmentPoints = basePoint * qty;
+    totalAdjustmentPoints -= productAdjustmentPoints; // debit
+  }
+
+  processedProducts.push({
+    productCode,
+    adjustmentType,
+    qty,
+    basePoint,
+    points: productAdjustmentPoints,
+  });
+}
+
+Explanation:
+
+
+- add → increases total RBP points (credit).
+
+- reduce → decreases total RBP points (debit).
+
+- Accumulates both total and per-product adjustments.
+
+STEP 7: Perform Inventory Updates
+
+Add Adjustment:
+if (adjustmentType === "add") {
+  if (stockType === "salable") {
+    inventory.availableQty += qty;
+    inventory.totalStockamtDlp += dlpbyPcs * qty;
+    inventory.totalStockamtRlp += rlpbyPcs * qty;
+  } else if (stockType === "unsalable") {
+    inventory.unsalableQty += qty;
+    inventory.totalUnsalableamtDlp += dlpbyPcs * qty;
+    inventory.totalUnsalableStockamtRlp += rlpbyPcs * qty;
+  } else if (stockType === "offer") {
+    inventory.offerQty += qty;
+  }
+}
+
+Reduce Adjustment:
+else if (adjustmentType === "reduce") {
+  if (stockType === "salable") {
+    inventory.availableQty = Math.max(inventory.availableQty - qty, 0);
+    inventory.totalStockamtDlp = Math.max(inventory.totalStockamtDlp - dlpbyPcs * qty, 0);
+  } 
+  ...
+}
+
+After Adjustment:
+
+- Recalculate total quantities and save:
+
+inventory.totalQty =
+  inventory.availableQty + inventory.unsalableQty + inventory.offerQty;
+await inventory.save();
+
+Prevent negative values using Math.max().
+
+STEP 8: Transaction Logging in Transaction Model
+
+
+Purpose: Maintain history and traceability for stock changes.
+
+Transaction Object Example:
+transactions.push({
+  distributorId,
+  transactionId: stockId,
+  invItemId: inventory._id,
+  productId: product._id,
+  qty,
+  date: new Date(),
+  type: adjustmentType === "add" ? "In" : "Out",
+  description: row.remarks,
+  balanceCount:
+    stockType === "salable" ? inventory.availableQty :
+    stockType === "unsalable" ? inventory.unsalableQty :
+    inventory.offerQty,
+  transactionType: "stockadjustment",
+  stockType,
+});
+
+Batch Insert After All Iterations:
+await Transaction.insertMany(transactions);
+
+STEP 9: Update Distributor Points (If Applicable)
+
+
+RBP Scheme Validation:
+
+If the distributor has an active RBP scheme and totalAdjustmentPoints ≠ 0:
+
+const distributor = await Distributor.findById(distributorId).lean();
+
+if (distributor && distributor.RBPSchemeMapped === "yes") {
+  const latestTransaction = await DistributorTransaction.findOne({
+    distributorId,
+  }).sort({ createdAt: -1 });
+
+  const currentBalance = latestTransaction
+    ? Number(latestTransaction.balance)
+    : 0;
+
+  const transactionType =
+    totalAdjustmentPoints > 0 ? "credit" : "debit";
+  const pointsToRecord = Math.abs(totalAdjustmentPoints);
+  const newBalance =
+    transactionType === "credit"
+      ? currentBalance + pointsToRecord
+      : Math.max(currentBalance - pointsToRecord, 0);
+
+}
+
+Insert into DistributorTransaction:
+
+const distributorTransaction = new DistributorTransaction({
+  distributorId,
+  transactionType,
+  transactionFor: "Adjustment Point",
+  point: Math.round(pointsToRecord),
+  balance: newBalance,
+  status: "Success",
+  remark: `Stock adjustment points for ${processedProducts.length} products via adjustment`,
+});
+await distributorTransaction.save();
+
+const distributorTransaction = new DistributorTransaction({
+  distributorId,
+  transactionType,
+  transactionFor: "Adjustment Point",
+  point: Math.round(pointsToRecord),
+  balance: newBalance,
+  status: "Success",
+  remark: `Stock adjustment points for ${processedProducts.length} products via adjustment`,
+});
+await distributorTransaction.save();
+
+Safeguards:
+
+- Prevents negative balances on debit.
+
+- Logs warning if insufficient points before deduction.
+
+STEP 10: Return Final Response
+
+After completing all updates and insertions:
+
+res.status(201).json({
+  message: "Stock adjustment processed successfully",
+  transactions,
+  skippedRows,
+  adjustmentSummary: {
+    totalProcessedProducts: processedProducts.length,
+    totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
+    processedProducts: processedProducts.map((product) => ({
+      productCode: product.productCode,
+      adjustmentType: product.adjustmentType,
+      qty: product.qty,
+      basePoint: product.basePoint,
+      points: product.points,
+    })),
+  },
+});
+
+
+Response Fields:
+
+
+- transactions: All transaction records created.
+
+- skippedRows: Rows rejected during processing with reasons.
+
+- adjustmentSummary: Summary containing per-product point details and totals.
+
+STEP 11: Error Handling and Logging
+
+
+All logic is wrapped in a master try-catch block.
+
+Example Error Response:
+
+res.status(500).json({
+  message: error.message
+});
+
+Includes granular error messages during:
+
+
+- Invalid input
+
+- Product or inventory not found
+
+- Pricing fetch failures
+
+- Points calculation failures
+
+- Distributor or RBP inconsistencies
+
+
+FINAL OUTCOME
+
+When executed successfully:
+
+
+1. The system validates and applies each stock adjustment.
+
+2. Corresponding inventory quantities are updated accurately.
+
+3. Transactions are logged for full traceability in Transaction collection.
+
+4. Distributor’s RBP (reward points) is adjusted based on total point changes.
+
+5. Provides a detailed report of processed, skipped, and point summaries.
+
+6. Supports both stock increases and reductions.
+
+SUMMARY OF LOGICAL FLOW
+
+1. Validate input CSV-like array data.
+
+2. Initialize variables and transaction tracking IDs.
+
+3. Validate every row’s product, quantity, and adjustment type.
+
+4. Fetch and verify product pricing information.
+
+5. Fetch and verify distributor inventory for each product.
+
+6. Adjust corresponding inventory stock levels properly.
+
+7. Calculate distributed RBP points for “add”/“reduce” operations.
+
+8. Record each activity into transactions for traceability.
+
+9. Update distributor RBP balance accordingly (credit/debit).
+
+10. Send summarized results of adjustments and points.
+
+11. Handle errors and edge cases gracefully.
+
+
+IMPORTANT BUSINESS RULES
+
+1. Adjustments support both stock increases (add) and decreases (reduce).
+
+2. Valid stockType values: salable, unsalable, and offer.
+
+3. Product must exist before applying adjustments.
+
+4. Inventory record must be present for given product and distributor.
+
+5. Points adjustments only occur if the distributor has RBP scheme mapping.
+
+6. Negative stock or point balances are prevented via safe calculations.
+
+7. Each adjustment is transactionally logged for auditing.
+
+8. Data-level validation — invalid items are reported, not ignored silently.
+
+9. Supports bulk processing with partial success (valid rows processed).
+
+10. System always maintains balance integrity across inventories and RBP points.
+
+AUTHOR: Srijita
+DATE: 29 Oct 2025

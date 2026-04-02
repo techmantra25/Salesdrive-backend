@@ -1,0 +1,215 @@
+FILE: updateInvoice_steps.txt
+DATE: 27 Oct 2025
+PURPOSE: Step-by-step documentation of the "updateInvoice" API logic.
+
+------------------------------------------------------------
+FUNCTION NAME:
+updateInvoice
+
+DESCRIPTION:
+This API is responsible for updating an existing invoice.
+If the invoice status is changed to "Confirmed", it performs multiple
+automatic operations:
+- Validates product and pricing data
+- Updates inventory stock
+- Records stock transactions
+- Calculates and credits reward points (only for RBP-mapped distributors)
+- Ensures data consistency with locking mechanisms
+
+------------------------------------------------------------
+STEP 1: Acquire Lock for Safe Update
+------------------------------------------------------------
+- A distributed lock is obtained to prevent concurrent updates on the same invoice.
+- Lock name format: "invoice-update-{invoiceId}"
+- The function "acquireLock" ensures that no two users update the same invoice simultaneously.
+- If the lock cannot be acquired, the API stops and returns:
+  HTTP 400 with message:
+  "Invoice update is already in progress for invoice ID: {inId}"
+
+------------------------------------------------------------
+STEP 2: Extract Required Information
+------------------------------------------------------------
+- The invoice ID is taken from request parameters (req.params.inId).
+- The user’s distributor ID is taken from req.user._id.
+- The current date is recorded as ISO string for later use.
+
+------------------------------------------------------------
+STEP 3: Verify Invoice Exists
+------------------------------------------------------------
+- The system checks whether the given invoice exists in the "Invoice" collection using findById(inId).
+- If not found, it responds with:
+  HTTP 404 Not Found and message "Invoice not found".
+
+------------------------------------------------------------
+STEP 4: Validate and Confirm Invoice Data
+------------------------------------------------------------
+- If the incoming request attempts to change the status of the invoice to "Confirmed"
+  and it was not previously confirmed, the system begins validations.
+
+  4.1 It initializes an empty list called validationErrors[].
+
+  4.2 For each line item in the invoice:
+       - Ensures the product exists in the "Product" collection.
+         If not found, an error entry is added to validationErrors.
+       - Calls the pricing API using Axios:
+         GET /api/v1/price/product-pricing/{productId}?distributorId={distributorId}
+       - If pricing info or response data is missing,
+         another error entry is added.
+
+  4.3 If validationErrors contains any entries:
+       - The API returns HTTP 400 with details of all product errors.
+       - The invoice is NOT updated.
+
+------------------------------------------------------------
+STEP 5: Generate GRN (Goods Received Note) Info
+------------------------------------------------------------
+- If validation passes and status is "Confirmed":
+  - The current ISO date is saved as grnDate.
+  - A new GRN number is generated using invoiceNumberGenerator("GRN", distributorId).
+  - These values are added to the invoice before update.
+
+------------------------------------------------------------
+STEP 6: Update Invoice Record
+------------------------------------------------------------
+- After all validations and GRN preparations, the invoice is updated using:
+  findByIdAndUpdate(inId, req.body, { new: true })
+- The updated invoice document is stored in updatedInvoice variable for later processing.
+
+------------------------------------------------------------
+STEP 7: Handle Stock and Inventory Processing (When Confirmed)
+------------------------------------------------------------
+- If status has been changed to "Confirmed", this step executes.
+- The process iterates through every product line item in the invoice:
+
+  For each product:
+  ---------------------------------------------
+  1. Fetch product details (Product.findOne by ID)
+  2. Fetch latest price for that product using Axios GET
+  3. Calculate price per piece (RLP and DLP) depending on unit of measure:
+     - If product uom = "box", divide by number of pieces per box.
+     - Otherwise, use single-unit price.
+  4. Look for an existing inventory record:
+     Inventory.findOne({ productId, distributorId, godownType: "main" })
+  5. If inventory exists:
+     - Add receivedQty to availableQty
+     - Add damageQty to damagedQty
+     - Update stock value totals (RLP and DLP)
+     - Save the updated inventory.
+  6. If no inventory found:
+     - Generate a new inventoryItemId using generateCode("INVT")
+     - Create a new Inventory entry with received and damaged quantities.
+     - Save the new inventory record.
+  7. Create a new Transaction entry for this stock-in event:
+     - distributorId, productId, invItemId, transactionId (using transactionCode("LXSTA"))
+     - qty = receivedQty
+     - type = "In"
+     - description = "Invoice {invoiceNo} - Stock received"
+     - transactionType = "invoice"
+     - stockType = "salable"
+     - Save the transaction.
+
+  In summary, every product confirmation increases stock and creates a log transaction.
+
+------------------------------------------------------------
+STEP 8: Reward Points (RBP Scheme Validation)
+------------------------------------------------------------
+- This step also runs only if the invoice status is changed to "Confirmed".
+- The system fetches distributor details from the Distributor collection based on updatedInvoice.distributorId.
+
+  1. If distributor not found:
+     -> Logs message "Distributor not found".
+  2. If distributor exists but RBPSchemeMapped != "yes":
+     -> Logs message "Skipping reward points calculation - RBP scheme not mapped".
+     -> Skips reward point creation.
+  3. If RBP scheme is mapped:
+     -> Calculates total reward points from product data.
+
+     For each product line item:
+       - Get product details.
+       - Read productData.base_point value.
+       - Multiply base_point * receivedQty.
+       - Add result to total rewardPoints.
+
+     Example:
+       base_point = 2
+       receivedQty = 5
+       rewardPoints += 10
+
+  4. Once total points are calculated:
+       - Check if any previous transaction exists for this distributor.
+         DistributorTransaction.findOne(...).sort({ createdAt: -1 })
+
+       a) If no previous reward transaction:
+          - Create a new DistributorTransaction record:
+            - transactionType: "credit"
+            - transactionFor: "GRN"
+            - point = rewardPoints
+            - balance = rewardPoints
+            - remark mentions GRN number, invoice number, and distributor code.
+
+       b) If a previous transaction exists:
+          - Create a new transaction but add rewardPoints to the previous balance.
+            balance = latest.balance + rewardPoints
+          - Save the transaction record.
+
+  -> This transaction credits reward points to the distributor’s account for confirmed invoices.
+
+------------------------------------------------------------
+STEP 9: Send Final Response
+------------------------------------------------------------
+- After all updates and calculations, the API sends:
+  HTTP 200 OK
+  JSON response: {
+    status: 200,
+    message: "Invoice detail",
+    data: updatedInvoice
+  }
+
+------------------------------------------------------------
+STEP 10: Error Handling and Lock Release
+------------------------------------------------------------
+- If any error occurs during the process:
+  - The catch block captures it.
+  - Responds with HTTP 400 and the error message.
+- Finally block ensures the acquired lock is always released
+  (releaseLock(lockName)), allowing other updates to proceed.
+
+------------------------------------------------------------
+FINAL OUTCOME
+------------------------------------------------------------
+When the API call completes successfully:
+1. The invoice is updated and marked "Confirmed".
+2. Product and pricing validations are completed.
+3. Inventory stock and quantities are updated.
+4. New stock transactions are recorded.
+5. Reward points are calculated and credited if RBP scheme is mapped.
+6. Distributor transaction records are updated.
+7. All operations are logged and executed safely due to locking.
+
+------------------------------------------------------------
+SUMMARY OF LOGICAL FLOW
+------------------------------------------------------------
+1. Acquire lock (prevent concurrent edit)
+2. Verify invoice exists
+3. Validate product and pricing
+4. Generate GRN info
+5. Update invoice record
+6. Process stock and inventory
+7. Create inventory transaction logs
+8. Validate RBP scheme and calculate reward points
+9. Save distributor reward transaction
+10. Return success response
+11. Release lock after completion
+
+------------------------------------------------------------
+IMPORTANT BUSINESS RULES
+------------------------------------------------------------
+1. Invoice can only be confirmed once; repeated "Confirmed" updates do not re-trigger actions.
+2. Distributor must be RBP mapped to receive reward points.
+3. Inventory and transaction logs are only created on first confirmation.
+4. All database modifications happen sequentially with error handling.
+5. The locking mechanism ensures consistency under high concurrency.
+
+------------------------------------------------------------
+AUTHOR: Srijita
+Date: 27 Oct 2025

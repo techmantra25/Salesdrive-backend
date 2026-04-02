@@ -1,0 +1,77 @@
+const asyncHandler = require("express-async-handler");
+const Transaction = require("../../models/transaction.model");
+const mongoose = require("mongoose");
+
+const allTransactionList = asyncHandler(async (req, res) => {
+  try {
+    const { page = 1, limit = 10, type, toDate, fromDate } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Build the query object
+    const query = {
+      distributorId: new mongoose.Types.ObjectId(req.user?._id),
+    };
+
+    // Date filtering
+    if (fromDate || toDate) {
+      query.createdAt = {};
+      if (fromDate) {
+        const startOfDay = new Date(fromDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        query.createdAt.$gte = startOfDay;
+      }
+      if (toDate) {
+        const endOfDay = new Date(toDate);
+        endOfDay.setHours(23, 59, 59, 999);
+        query.createdAt.$lte = endOfDay;
+      }
+    }
+
+    // Type filtering (In/Out)
+    if (type) {
+      query.type = type;
+    }
+
+    // Retrieve transactions with pagination
+    const transactions = await Transaction.find(query)
+      .skip(skip)
+      .limit(limitNum)
+      .sort({ createdAt: -1 })
+      .populate([
+        { path: "productId", select: "" },
+        { path: "invItemId", select: "" },
+        { path: "distributorId", select: "" },
+      ]);
+
+    // Retrieve total count of filtered items
+    const totalFilteredItemsCount = await Transaction.countDocuments(query);
+
+    // Retrieve total count of items
+    const totalItemsCount = await Transaction.countDocuments({
+      distributorId: req.user?._id,
+    });
+
+    const totalPages = Math.ceil(totalItemsCount / limitNum);
+
+    return res.status(200).json({
+      status: 200,
+      message: "Transaction list retrieved successfully",
+      data: transactions,
+      pagination: {
+        currentPage: pageNum,
+        limit: limitNum,
+        totalPages,
+        totalCount: totalItemsCount,
+        filteredCount: totalFilteredItemsCount,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});
+
+module.exports = { allTransactionList };

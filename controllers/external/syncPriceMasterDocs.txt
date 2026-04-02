@@ -1,0 +1,828 @@
+FILE: syncPriceMaster_documentation.txt
+
+DATE: 31 Oct 2025
+
+AUTHOR: Srijita
+
+PURPOSE: Complete step-by-step documentation of the syncPriceMaster API function
+
+FUNCTION NAME:
+
+
+syncPriceMaster
+
+DESCRIPTION:
+
+
+This API synchronizes price master data from SAP ERP system into the local database and generates a CSV file for bulk price updates. It handles both national and regional pricing, performs data deduplication, validates product information, and uploads the final CSV to cloud storage for downstream processing.
+
+The function is engineered for enterprise-level price synchronization with:
+
+
+- Lock-based concurrency control to prevent parallel executions
+
+- SAP API integration for real-time price data retrieval
+
+- Comprehensive data validation and deduplication
+
+- National and regional price merging logic
+
+- CSV generation and cloud upload for bulk processing
+
+- Database integrity maintenance with transaction handling
+
+This ensures that the local price database remains synchronized with the central SAP system while maintaining data consistency and enabling efficient bulk updates.
+
+STEP-BY-STEP PROCESSING
+
+STEP 1: Acquire Concurrency Lock
+
+Purpose:
+
+
+- Prevents multiple simultaneous price synchronization processes
+
+- Ensures data integrity and eliminates race conditions
+
+- Uses distributed locking mechanism for cluster environments
+
+Lock Management:
+
+
+- Lock key: "syncPriceMaster"
+
+- Automatic release in finally block regardless of success/failure
+
+- Returns error if another sync is already running
+
+STEP 2: Handle Date Range Configuration
+
+function getDateRange(query) {
+  const formatDate = (d) => {
+    const [y, m, day] = d.toISOString().split("T")[0].split("-");
+    return `${day}.${m}.${y}`;
+  };
+  let currentDate = formatDate(new Date());
+  let previousDate = formatDate(new Date());
+  if (query.previousDate && query.currentDate) {
+    if (new Date(query.previousDate) > new Date(query.currentDate)) {
+      throw new Error("Previous date cannot be greater than current date");
+    }
+    previousDate = query.previousDate;
+    currentDate = query.currentDate;
+  }
+  return { currentDate, previousDate };
+}
+
+Purpose:
+
+
+- Converts dates to SAP-compatible format (DD.MM.YYYY)
+
+- Validates date range logic (previousDate <= currentDate)
+
+- Defaults to current date if no dates provided
+
+- Ensures proper date formatting for SAP API calls
+
+Date Format Conversion:
+
+
+- Input: ISO date format or DD.MM.YYYY
+
+- Output: DD.MM.YYYY format required by SAP API
+
+- Validation: Prevents invalid date ranges
+
+STEP 3: Load Data from SAP API
+
+async function loadDataFromApi({ currentDate, previousDate }) {
+  const url = `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_DMS_PRODUCT_MASTER_SRV/headerSet?sap-client=100&$filter=fromDate eq '${previousDate}' and toDate eq '${currentDate}' and variant eq ''&$format=json`;
+  try {
+    const response = await axios.get(url, {
+      headers: { Cookie: "sap-usercontext=sap-client=100" },
+    });
+    return response.data?.d?.results || [];
+  } catch (err) {
+    console.error("❌ [loadDataFromApi] Error fetching data from SAP API:", err.message);
+    throw err;
+  }
+}
+
+Purpose:
+
+
+- Retrieves product master data from SAP ERP system
+
+- Filters data by date range and variant criteria
+
+- Returns structured product information including prices, descriptions, and classifications
+
+SAP API Details:
+
+
+- Service: ZRUPA_DMS_PRODUCT_MASTER_SRV
+
+- Entity: headerSet
+
+- Client: 100
+
+- Format: JSON
+
+- Authentication: Cookie-based session management
+
+Data Validation:
+
+
+- Checks for empty response data
+
+- Returns 404 error if no data found
+
+- Logs data count for monitoring
+
+STEP 4: Build Product Information Lookup Maps
+
+function buildVskuInfoMap(data) {
+  const map = new Map();
+  for (const item of data) {
+    map.set(item.variant, {
+      name: item.description || "",
+      brand: item.brand || "",
+      category: item.mat_grp || "",
+    });
+  }
+  return map;
+}
+
+Purpose:
+
+
+- Creates efficient lookup map for product information
+
+- Maps variant codes to product details (name, brand, category)
+
+- Optimizes performance for subsequent data processing
+
+- Handles missing data with empty string defaults
+
+Map Structure:
+
+
+- Key: Product variant code (string)
+
+- Value: Object containing name, brand, and category
+
+- Used throughout the process for product information enrichment
+
+STEP 5: Deduplicate Data by Variant
+function deduplicateByKey(data, key) {
+  const seen = new Set();
+  const result = [];
+  for (const item of data) {
+    if (!seen.has(item[key])) {
+      seen.add(item[key]);
+      result.push(item);
+    }
+  }
+  return result;
+}
+
+Purpose:
+
+
+- Removes duplicate entries based on variant code
+
+- Ensures each product appears only once in processing
+
+- Maintains data integrity and prevents duplicate price entries
+
+- Uses Set for O(1) lookup performance
+
+Deduplication Logic:
+
+
+- Key field: variant (product code)
+
+- Keeps first occurrence, discards duplicates
+
+- Preserves original data structure
+
+STEP 6: Fetch Product IDs from Database
+
+async function getProductIds(productCodes) {
+  try {
+    const products = await Product.find({
+      product_code: { $in: productCodes },
+    })
+      .select("_id product_code")
+      .lean();
+    const map = new Map();
+    for (const p of products) {
+      map.set(p.product_code, p._id);
+    }
+    return map;
+  } catch (err) {
+    console.error("❌ [getProductIds] Error fetching product IDs:", err.message);
+    throw err;
+  }
+}
+
+Purpose:
+
+
+- Maps SAP product codes to local database product IDs
+
+- Validates that products exist in local database
+
+- Creates efficient lookup map for price record creation
+
+- Uses lean queries for optimal performance
+
+Database Query Optimization:
+
+
+- Batch query using $in operator
+
+- Select only required fields (_id, product_code)
+
+- Lean query for better performance
+
+- Error handling for database connectivity issues
+
+STEP 7: Process Price Data from SAP Response
+
+function processPrices(data) {
+  return data.map((item) => ({
+    product_code: item.variant,
+    MRP: getMRP(item),
+    DLP: getDLP(item),
+  }));
+}
+
+Purpose:
+
+
+- Extracts and calculates price information from SAP data
+
+- Converts raw SAP data to standardized price format
+
+- Applies unit conversion logic for different UOMs
+
+- Validates and formats price values
+
+Price Calculation Functions:
+
+MRP Calculation:
+
+function getMRP(item) {
+  let MRP = parseFloat(item.mrp || "0.00");
+  let MRP_CONVERSION = item?.mrp_conv ? parseFloat(item.mrp_conv?.trim()) : 1;
+  MRP = MRP / (MRP_CONVERSION > 0 ? MRP_CONVERSION : 1);
+  MRP = isNaN(MRP) ? 0 : MRP;
+  return MRP < 0 ? "0.00" : MRP.toFixed(2);
+}
+
+DLP Calculation:
+function getDLP(item) {
+  let DLP = parseFloat(item.wsp || "0.00");
+  let WSP_CONVERSION = item?.wsp_conv ? parseFloat(item.wsp_conv?.trim()) : 1;
+  DLP = DLP / (WSP_CONVERSION > 0 ? WSP_CONVERSION : 1);
+  DLP = isNaN(DLP) ? 0 : DLP;
+  return DLP < 0 ? "0.00" : DLP.toFixed(2);
+}
+
+Price Processing Logic:
+
+
+- MRP: Maximum Retail Price from SAP mrp field
+
+- DLP: Dealer Landing Price from SAP wsp (Wholesale Price) field
+
+- Unit conversion applied based on mrp_conv and wsp_conv factors
+
+- Negative prices converted to "0.00"
+
+- All prices formatted to 2 decimal places
+
+STEP 8: Build Final National Prices with Database Validation
+
+async function buildFinalPrices(priceData, vskuToInfo, productCodeToId) {
+  const effectiveDate = getTomorrowDateString();
+  const finalPrices = [];
+
+  for (const item of priceData) {
+    const productInfo = vskuToInfo.get(item.product_code) || {};
+    const product_id = productCodeToId.get(item.product_code);
+    if (!product_id || !item.DLP || parseFloat(item.DLP) <= 0) continue;
+
+    const basePrice = {
+      product_id,
+      "Product Code": item.product_code,
+      "Product Name": productInfo.name,
+      "Product Brand": productInfo.brand,
+      "Product Category": productInfo.category,
+      MRP: item.MRP,
+      "Effective Date": effectiveDate,
+      "Distributor Code": "",
+      "Distributor Name": "",
+      "Price Type": "national",
+      "Region Code": "",
+      region_id: "",
+      "Region Name": "",
+      DLP: item.DLP,
+      RLP: item.DLP,
+      "RLP Type": "new",
+    };
+
+    let latestPrice = await Price.findOne({
+      productId: product_id,
+      price_type: "national",
+      status: true,
+    }).lean();
+
+    if (latestPrice?.rlp_price && basePrice["Product Brand"] !== "MS") {
+      basePrice.RLP = latestPrice.rlp_price;
+      basePrice["RLP Type"] = "old";
+    }
+
+    if (latestPrice?.rlp_price && basePrice["Product Brand"] == "MS") {
+      if (parseFloat(latestPrice?.rlp_price) == parseFloat(basePrice?.RLP)) {
+        basePrice["RLP Type"] = "old";
+      }
+    }
+
+    if (latestPrice) {
+      if (
+        parseFloat(latestPrice?.dlp_price) !== parseFloat(basePrice?.DLP) ||
+        parseFloat(latestPrice?.mrp_price) !== parseFloat(basePrice?.MRP) ||
+        basePrice["RLP Type"] === "new"
+      ) {
+        finalPrices.push(basePrice);
+      }
+    } else {
+      finalPrices.push(basePrice);
+    }
+  }
+
+  return finalPrices;
+}
+
+Purpose:
+
+
+- Creates final national price records with complete validation
+
+- Compares new prices against existing database records
+
+- Maintains RLP (Retailer Landing Price) consistency
+
+- Only includes records that have actual price changes
+
+Price Logic Rules:
+
+
+1. Effective Date: Tomorrow's date in DD-MM-YYYY format
+
+2. RLP Handling:
+	- Non-MS brands: Preserve existing RLP if available
+
+	- MS brand: Compare RLP values to determine if new or old
+
+
+3. Change Detection: Only include records with MRP, DLP, or RLP changes
+
+4. Data Validation: Skip records without valid product_id or DLP
+
+STEP 9: Fetch and Process Regional Prices
+
+async function getRegionalPrices({ previousDate }) {
+  // Fetch all regions and build lookup maps
+  const regions = await Region.find({}).populate("stateId", "").lean();
+  
+  const stateCodeToRegion = new Map();
+  const regionCodeToId = new Map();
+  regions.forEach((r) => {
+    regionCodeToId.set(r.code, r._id);
+    stateCodeToRegion.set(r.stateId.code.padStart(2, "0"), {
+      code: r.code,
+      name: r.name,
+    });
+  });
+
+  // SAP API call for regional prices
+  const regionResponse = await axios.get(
+    `http://182.75.250.216:8000/sap/opu/odata/sap/ZRUPA_MASSIST_MAT_REG_PR1_SRV/HeaderSet(RegionCode='',Material='',FromDate='${previousDate}',ToDate='31.12.9999')/HeaderItem?$format=json`,
+    { headers: { Cookie: "sap-usercontext=sap-client=100" } }
+  );
+
+  let rows = regionResponse.data?.d?.results || [];
+  
+  // Deduplicate by Material-Region combination
+  const uniqueMatnr = new Set();
+  const filteredRows = rows.filter((item) => {
+    const key = `${item.Matnr}-${item.Regio}`;
+    if (uniqueMatnr.has(key)) return false;
+    uniqueMatnr.add(key);
+    return true;
+  });
+
+  // Process each regional price record
+  // ... (detailed processing logic)
+}
+
+Purpose:
+
+
+- Retrieves regional pricing data from separate SAP service
+
+- Maps state codes to regions for proper regional assignment
+
+- Processes unit conversions for different UOMs (PC, DZ, BOX)
+
+- Validates regional price changes against existing database records
+
+Regional Price Processing Logic:
+
+
+1. API Call: Uses ZRUPA_MASSIST_MAT_REG_PR1_SRV service
+
+2. Deduplication: Removes duplicate Material-Region combinations
+
+3. UOM Conversion:
+	- DZ (Dozen) = 12 pieces
+
+	- PC (Piece) = 1 piece
+
+	- BOX = Based on product configuration
+
+
+4. Price Calculation: price = (SAP_price / conversion_factor)
+
+STEP 10: Merge National and Regional Prices
+
+getFinalPricesAfterNationalRegionalMerge = async (finalPrices) => {
+  const regionalPrices = finalPrices.filter(item => item["Price Type"] === "regional");
+  const nationalPrices = finalPrices.filter(item => item["Price Type"] === "national");
+
+  // Create regional price lookup map
+  const regionalPriceMap = new Map();
+  regionalPrices.forEach((price) => {
+    const productCode = price["Product Code"];
+    const regionCode = price["Region Code"];
+    if (!regionalPriceMap.has(productCode)) {
+      regionalPriceMap.set(productCode, new Map());
+    }
+    regionalPriceMap.get(productCode).set(regionCode, price);
+  });
+
+  const updatedRegionalPrices = [...regionalPrices];
+  const additionalRegionalPrices = [];
+
+  for (const nationalPrice of nationalPrices) {
+    const productCode = nationalPrice["Product Code"];
+    const nationalMRP = nationalPrice.MRP;
+    const productRegionalPrices = regionalPriceMap.get(productCode);
+
+    if (productRegionalPrices && productRegionalPrices.size > 0) {
+      // Update MRP of existing regional prices to match national MRP
+      productRegionalPrices.forEach((regionalPrice, regionCode) => {
+        const index = updatedRegionalPrices.findIndex(
+          (rp) => rp["Product Code"] === productCode && rp["Region Code"] === regionCode
+        );
+        if (index !== -1) {
+          updatedRegionalPrices[index].MRP = nationalMRP;
+        }
+      });
+    } else {
+      // Check database for existing regional prices
+      const existingRegionalPrices = await Price.find({
+        productId: nationalPrice.product_id,
+        price_type: "regional",
+        status: true,
+      }).populate("regionId", "code name").lean();
+
+      if (existingRegionalPrices && existingRegionalPrices.length > 0) {
+        for (const existingPrice of existingRegionalPrices) {
+          const clonedRegionalPrice = {
+            // ... clone existing regional price with national MRP
+            MRP: nationalMRP,
+            DLP: existingPrice.dlp_price || "0.00",
+            RLP: existingPrice.rlp_price || "0.00",
+            "RLP Type": "old",
+          };
+          additionalRegionalPrices.push(clonedRegionalPrice);
+        }
+      }
+    }
+  }
+
+  return [...nationalPrices, ...updatedRegionalPrices, ...additionalRegionalPrices];
+};
+
+Purpose:
+
+
+- Synchronizes MRP values between national and regional prices
+
+- Ensures regional prices inherit national MRP when updated
+
+- Clones existing regional prices when new national prices are added
+
+- Maintains price consistency across different price types
+
+Merge Logic:
+
+
+1. Existing Regional Prices: Update MRP to match national price
+
+2. Missing Regional Prices: Clone from database with updated national MRP
+
+3. Price Inheritance: Regional DLP/RLP preserved, MRP synchronized
+
+4. Data Integrity: Maintains all existing regional price relationships
+
+STEP 11: Generate CSV Content
+
+function generateCSV(finalPrices) {
+  const csvHeader = [
+    "Price Type", "Region Code", "Region Name", "Distributor Code",
+    "Distributor Name", "Product Code", "Product Name", "Product Brand",
+    "Product Category", "MRP", "DLP", "RLP", "Effective Date", "RLP Type"
+  ];
+  
+  const escapeCsvValue = (value) =>
+    value == null ? "" : 
+    /[",\n\r]/.test(String(value)) ? 
+    `"${String(value).replace(/"/g, '""')}"` : 
+    String(value);
+    
+  return [
+    csvHeader.join(","),
+    ...finalPrices.map((row) =>
+      csvHeader.map((field) => escapeCsvValue(row[field])).join(",")
+    ),
+  ].join("\n");
+}
+
+Purpose:
+
+
+- Converts final price data to CSV format for bulk processing
+
+- Handles CSV special characters and escaping
+
+- Maintains data integrity during format conversion
+
+- Creates standardized format for downstream systems
+
+CSV Format:
+
+
+- Headers: 14 columns covering all price attributes
+
+- Escaping: Handles quotes, commas, and newlines in data
+
+- Null handling: Converts null/undefined to empty strings
+
+- Consistent formatting for all price types (national/regional)
+
+STEP 12: Upload CSV to Cloud Storage
+
+async function uploadCSV(csvContent, currentDate) {
+  const uploadsDir = path.join(__dirname, "../../uploads");
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  
+  const csvFileName = `price_master_${currentDate}.csv`;
+  const csvFilePath = path.join(uploadsDir, csvFileName);
+  fs.writeFileSync(csvFilePath, csvContent);
+
+  try {
+    const formData = new FormData();
+    formData.append("my_file", fs.createReadStream(csvFilePath));
+    formData.append("fileName", csvFileName);
+    
+    const result = await axios.post(
+      `${SERVER_URL}/api/v1/cloudinary/upload`,
+      formData,
+      { headers: formData.getHeaders() }
+    );
+    
+    return result.data;
+  } finally {
+    try {
+      fs.unlinkSync(csvFilePath);
+    } catch (err) {
+      console.warn("⚠️ [uploadCSV] Failed to delete temp file:", err.message);
+    }
+  }
+}
+
+Purpose:
+
+
+- Uploads CSV file to cloud storage (Cloudinary)
+
+- Creates temporary local file for upload process
+
+- Cleans up temporary files after upload
+
+- Returns cloud URL for database storage
+
+Upload Process:
+
+
+1. File Creation: Write CSV content to temporary local file
+
+2. Form Data: Create multipart form data with file stream
+
+3. Cloud Upload: Post to Cloudinary upload endpoint
+
+4. Cleanup: Delete temporary file regardless of success/failure
+
+STEP 13: Save CSV Record and Trigger Bulk Update
+const [priceCSV] = await Promise.all([
+  PriceCSV.create({
+    url: { cronURL: uploadResult.secure_url, modifiedURL: null },
+    status: "Pending",
+  }),
+  axios.put(`${SERVER_URL}/api/v1/price/bulk-update-status`, {}),
+]);
+
+Purpose:
+
+
+- Creates database record for CSV file tracking
+
+- Triggers bulk update process for price synchronization
+
+- Uses parallel execution for optimal performance
+
+- Links CSV file to bulk update workflow
+
+Database Record:
+
+
+- URL: Cloud storage URL for CSV file
+
+- Status: Initially "Pending" for processing queue
+
+- Timestamps: Automatic creation timestamps for tracking
+
+STEP 14: Return Success Response and Release Lock
+
+res.status(200).json({
+  message: "Price master data synced and uploaded successfully",
+  data: { urlData: uploadResult, priceCSV },
+});
+
+// In finally block:
+await releaseLock("syncPriceMaster");
+console.log("🔓 [syncPriceMaster] Lock released.");
+
+Purpose:
+
+
+- Returns comprehensive success response with upload details
+
+- Ensures lock is always released regardless of outcome
+
+- Provides tracking information for monitoring systems
+
+RESPONSE FORMAT
+
+Success Response (200):
+
+{
+  "message": "Price master data synced and uploaded successfully",
+  "data": {
+    "urlData": {
+      "secure_url": "https://cloudinary.com/path/to/csv",
+      "public_id": "price_master_file_id",
+      "format": "csv",
+      "resource_type": "raw"
+    },
+    "priceCSV": {
+      "_id": "csv_record_id",
+      "url": {
+        "cronURL": "https://cloudinary.com/path/to/csv",
+        "modifiedURL": null
+      },
+      "status": "Pending",
+      "createdAt": "2025-10-31T12:00:00.000Z"
+    }
+  }
+}
+
+Error Responses:
+
+Lock Acquisition Failed (400):
+{
+  "error": true,
+  "status": 400,
+  "message": "Another sync is in progress. Please try again later."
+}
+
+No Data Found (404):
+{
+  "error": true,
+  "status": 404,
+  "message": "No data found for the given date range"
+}
+Processing Error (500):
+{
+  "error": true,
+  "status": 500,
+  "message": "Error message describing the specific failure"
+}
+
+DATA MODELS INVOLVED
+
+Collections Used:
+
+1. PriceCSV - CSV file tracking and status
+
+2. Product - Product master data for validation
+
+3. Price - Existing price records for comparison
+
+4. Region - Regional mapping for state-to-region conversion
+
+Key Relationships:
+
+- Product.product_code ↔ SAP variant field
+
+- Price.productId → Product._id
+
+- Price.regionId → Region._id
+
+- Region.stateId → State code mapping
+
+BUSINESS RULES
+
+1. Concurrency Control: Only one sync process allowed at a time
+
+2. Date Validation: previousDate must be <= currentDate
+
+3. Price Validation: DLP must be > 0 for valid price records
+
+4. MRP Synchronization: Regional MRP inherits from national prices
+
+5. RLP Preservation: Existing RLP values maintained unless MS brand
+
+6. Change Detection: Only modified prices included in CSV
+
+7. Effective Date: All prices effective from tomorrow's date
+
+8. Unit Conversion: Applied based on SAP conversion factors
+
+PERFORMANCE CONSIDERATIONS
+
+1. Batch Processing: Handles large datasets efficiently
+
+2. Parallel Queries: Uses Promise.all for concurrent operations
+
+3. Database Optimization: Lean queries and selective field retrieval
+
+4. Memory Management: Processes data in chunks to prevent memory issues
+
+5. Network Optimization: Single API calls with batch data retrieval
+
+ERROR HANDLING
+
+1. Lock Management: Guaranteed release in finally block
+
+2. API Failures: Comprehensive error logging and propagation
+
+3. Data Validation: Skips invalid records with logging
+
+4. File Operations: Proper cleanup of temporary files
+
+5. Database Errors: Transaction rollback and error reporting
+
+INTEGRATION POINTS
+
+1. SAP ERP: Direct API integration for price data
+
+2. Cloudinary: File storage for CSV uploads
+
+3. Bulk Update Service: Triggers price update workflow
+
+4. Lock Service: Distributed locking for concurrency control
+
+MONITORING AND LOGGING
+
+1. Progress Tracking: Step-by-step execution logging
+
+2. Data Metrics: Record counts at each processing stage
+
+3. Performance Metrics: Execution time tracking
+
+4. Error Logging: Comprehensive error capture and context
+
+5. Business Metrics: Price change counts and validation results
+
+AUTHOR: Srijita
+
+DATE: 31 Oct 2025
