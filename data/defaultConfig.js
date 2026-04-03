@@ -4,7 +4,7 @@ const defaultConfig = {
   commonSettings: {
     companyName: "Company Name",
     companyLogo:
-      "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/lux_dms%2Flux_dms_1747378589331.png?alt=media",
+      "https://tse4.mm.bing.net/th/id/OIP.iKd7KJlfCF3dZEQMTe1G6AAAAA?pid=ImgDet&w=184&h=230&c=7&dpr=1.3&o=7&rm=3",
   },
   functionalSettings: {
     need_employee_approval_for_po: "admin approval",
