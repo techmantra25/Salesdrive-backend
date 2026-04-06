@@ -6,24 +6,28 @@ const Collection = require("../models/collection.model");
 const Brand = require("../models/brand.model");
 const Price = require("../models/price.model");
 
+/**
+ * ✅ CREATE PRODUCT
+ */
 const createProduct = asyncHandler(async (req, res) => {
   try {
     const {
-      product_code,
+      s4hana_code,
       sku_group_id,
       sku_group__name,
       cat_id,
       collection_id,
       brand,
-      subBrand,
-      supplier,
+      segment,
+      // supplier,
       size,
       color,
       pack,
-      no_of_pieces_in_a_box,
-      name,
+      std_pkg_in_pc,
+      wp_pc,
+      description,
       img_path,
-      product_type,
+      collection_product_type,
       product_valuation_type,
       product_hsn_code,
       cgst,
@@ -33,34 +37,35 @@ const createProduct = asyncHandler(async (req, res) => {
       uom,
       base_point,
       ean11,
-
     } = req.body;
+   
 
     let productExist = await Product.findOne({
-      product_code: req.body.product_code,
+      s4hana_code: req.body.s4hana_code,
     });
 
     if (productExist) {
       res.status(400);
       throw new Error("Product already exists");
     }
-
+console.log(req.body)
     const productData = await Product.create({
-      product_code,
+      s4hana_code,
       sku_group_id,
       sku_group__name,
       cat_id,
       collection_id,
       brand,
-      subBrand,
-      supplier,
+      segment,
+      // supplier,
       size,
       color,
       pack,
-      no_of_pieces_in_a_box,
-      name,
+      std_pkg_in_pc,
+      wp_pc,
+      description,
       img_path,
-      product_type,
+      collection_product_type,
       product_valuation_type,
       product_hsn_code,
       cgst,
@@ -83,28 +88,20 @@ const createProduct = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * ✅ PRODUCT DETAIL
+ */
 const productDetail = asyncHandler(async (req, res) => {
   try {
     let productData = await Product.findOne({
       _id: req.params.proId,
     }).populate([
-      {
-        path: "cat_id",
-        select: "",
-      },
-      {
-        path: "collection_id",
-        select: "",
-      },
-      {
-        path: "brand",
-        select: "",
-      },
-      {
-        path: "subBrand",
-        select: "",
-      },
+      { path: "cat_id", select: "" },
+      { path: "collection_id", select: "" },
+      { path: "brand", select: "" },
+      { path: "segment", select: "" }, // ✅ changed
     ]);
+
     return res.status(201).json({
       status: 201,
       message: "Product Data",
@@ -115,6 +112,10 @@ const productDetail = asyncHandler(async (req, res) => {
     throw new Error(error?.message || "Something went wrong");
   }
 });
+
+/**
+ * ✅ UPDATE PRODUCT (NO LOGIC CHANGE)
+ */
 
 
 //old code 
@@ -183,29 +184,25 @@ const productDetail = asyncHandler(async (req, res) => {
 //   }
 // });
 
-
 const updateProduct = asyncHandler(async (req, res) => {
   try {
     let message;
 
-    // Check if request is trying to activate the product (status: true)
     if (req.body.hasOwnProperty("status") && req.body.status === true) {
-      // Check if there's at least one active price for this product
       const activePriceExists = await Price.findOne({
         productId: req.params.proId,
-        status: true
+        status: true,
       });
 
       if (!activePriceExists) {
-        // No active price found - block the activation
         return res.status(400).send({
           error: true,
-          message: "Cannot activate product. No active price found for this product."
+          message:
+            "Cannot activate product. No active price found for this product.",
         });
       }
     }
 
-    // Proceed with the Product update
     let productList = await Product.findOneAndUpdate(
       { _id: req.params.proId },
       req.body,
@@ -231,32 +228,22 @@ const updateProduct = asyncHandler(async (req, res) => {
     throw new Error(error?.message || "Something went wrong");
   }
 });
+
+/**
+ * ✅ ALL PRODUCT LIST
+ */
 const productAllList = asyncHandler(async (req, res) => {
   try {
     let productList = await Product.find({})
       .populate([
-        {
-          path: "cat_id",
-          select: "",
-        },
-        {
-          path: "collection_id",
-          select: "",
-        },
-        {
-          path: "brand",
-          select: "",
-        },
-        {
-          path: "subBrand",
-          select: "",
-        },
-        {
-          path: "supplier",
-          select: "",
-        },
+        { path: "cat_id", select: "" },
+        { path: "collection_id", select: "" },
+        { path: "brand", select: "" },
+        { path: "segment", select: "" }, // ✅ changed
+        // { path: "supplier", select: "" },
       ])
       .sort({ _id: -1 });
+
     return res.status(201).json({
       status: 201,
       message: "All product list",
@@ -268,106 +255,102 @@ const productAllList = asyncHandler(async (req, res) => {
   }
 });
 
+/**
+ * ✅ PAGINATED LIST
+ */
 const productPaginatedList = asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Build filter object
     const filter = {};
 
-    // Status filter
     if (req.query.status !== undefined) {
       filter.status = req.query.status === "true";
     }
 
-    // Brand filter
     if (req.query.brand) {
       filter.brand = req.query.brand;
     }
 
-    // Category filter
     if (req.query.category) {
       filter.cat_id = req.query.category;
     }
 
-    // Collection filter
     if (req.query.collection) {
       filter.collection_id = req.query.collection;
     }
 
-    // SubBrand filter
-    if (req.query.subBrand) {
-      filter.subBrand = req.query.subBrand;
+    if (req.query.segment) {
+      filter.segment = req.query.segment;
     }
 
     const TIMEZONE = "Asia/Kolkata";
 
-    // Date range filter on createdAt
     if (req.query.startDate && req.query.endDate) {
       filter.updatedAt = {
         $gte: moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate(),
         $lte: moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate(),
       };
-      // const start = moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate();
-      // const end = moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate();
-      // filter.$or = [
-      //   { createdAt: { $gte: start, $lte: end } },
-      //   { updatedAt: { $gte: start, $lte: end } }
-      // ];
     }
-    // Search functionality
+
     if (req.query.search) {
       const searchRegex = new RegExp(req.query.search, "i");
+
       filter.$or = [
-        { product_code: searchRegex },
-        { name: searchRegex },
+        { s4hana_code: searchRegex },
+        { description: searchRegex },
         { sku_group_id: searchRegex },
         { sku_group__name: searchRegex },
         { product_hsn_code: searchRegex },
         { ean11: searchRegex },
+
+        // ✅ SUPPORT OLD DATA ALSO
+        { product_code: searchRegex },
+        { name: searchRegex },
       ];
     }
 
-    // Get total count without filters for pagination info
-    const totalCount = await Product.countDocuments({});
+    const totalCount = await Product.countDocuments(filter);
+    const filteredCount = totalCount;
 
-    // Get filtered count
-    const filteredCount = await Product.countDocuments(filter);
-
-    // Get products with pagination
     const products = await Product.find(filter)
       .populate([
-        {
-          path: "cat_id",
-          select: "",
-        },
-        {
-          path: "collection_id",
-          select: "",
-        },
-        {
-          path: "brand",
-          select: "",
-        },
-        {
-          path: "subBrand",
-          select: "",
-        },
-        {
-          path: "supplier",
-          select: "",
-        },
+        { path: "cat_id", select: "" },
+        { path: "collection_id", select: "" },
+        { path: "brand", select: "" },
+        { path: "segment", select: "" },
       ])
-      .sort({ product_code: 1 })
+      .sort({ createdAt: -1 }) // ✅ better sorting
       .skip(skip)
       .limit(limit);
+
+    // ✅🔥 MAIN FIX — NORMALIZE DATA
+    const normalizedProducts = products.map((item) => {
+      const obj = item.toObject();
+
+      return {
+        ...obj,
+
+        // NEW STRUCTURE (fallback from old)
+        s4hana_code: obj.s4hana_code || obj.product_code,
+        description: obj.description || obj.name,
+        segment: obj.segment || obj.subBrand,
+        std_pkg_in_pc: obj.std_pkg_in_pc || obj.no_of_pieces_in_a_box,
+
+        // optional cleanup
+        product_code: undefined,
+        name: undefined,
+        subBrand: undefined,
+        no_of_pieces_in_a_box: undefined,
+      };
+    });
 
     return res.status(200).json({
       status: 200,
       message: "Product paginated list",
-      data: products,
+      data: normalizedProducts, // ✅ FIXED
       pagination: {
         currentPage: page,
         limit,
@@ -381,7 +364,6 @@ const productPaginatedList = asyncHandler(async (req, res) => {
     throw error;
   }
 });
-
 module.exports = {
   createProduct,
   productDetail,
