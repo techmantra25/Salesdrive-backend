@@ -193,8 +193,8 @@ const loginUser = asyncHandler(async (req, res) => {
 
         res.cookie("DBToken", token, {
           httpOnly: true,
-          secure: process.env.NODE_ENV === "production",
-          sameSite: "lax",
+          secure: "true",
+          sameSite: 'none',
           path: "/",
           maxAge: 30 * 24 * 60 * 60 * 1000,
           priority: "high",
@@ -265,8 +265,8 @@ const logoutDistributor = asyncHandler(async (req, res) => {
   try {
     res.cookie("DBToken", "", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: "true",
+      sameSite: 'none',
       path: "/",
       expires: new Date(0),
       maxAge: 0,
