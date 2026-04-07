@@ -16,7 +16,7 @@ const corsOptions = {
     "https://rbp-rupa.netlify.app",
     "https://rbp-rupa-dms.netlify.app",
 
-    "https://skipper-salesdrive-csp.netlify.app/sign-in?mode=admin",
+    "https://skipper-salesdrive-csp.netlify.app",
     // ADD THESE
     "capacitor://localhost",
     "ionic://localhost",
