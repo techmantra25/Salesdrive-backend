@@ -12,11 +12,11 @@ const productSchema = new mongoose.Schema(
 
     sku_group_id: {
       type: String,
-      required: true,
+      // required: true,
     },
     sku_group__name: {
       type: String,
-      required: true,
+      // required: true,
     },
 
     cat_id: {

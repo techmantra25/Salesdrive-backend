@@ -39,6 +39,8 @@ const {
   bulkUpdateEanCode,
 } = require("../../controllers/product/bulkUpdateEanCode.js");
 
+const { bulkUploadProduct } = require("../../controllers/bulkProductuplaod.controlelr.js");
+
 const productRoutes = express.Router();
 
 productRoutes.route("/create").post(protectRoute,  authorizeRoles(), createProduct);
@@ -72,8 +74,11 @@ productRoutes
   .route("/update/:proId")
   .patch(protectRoute, authorizeRoles(), updateProduct);
 
+
 productRoutes.route("/product-paginated-list").get(protect, productPaginatedList);
 productRoutes.route("/product-download").get(protect, downloadProductList);
+
+productRoutes.route("/bulk-upload-product").post(protectRoute, authorizeRoles(), bulkUploadProduct);
 
 // temporary route to upload ean code
 

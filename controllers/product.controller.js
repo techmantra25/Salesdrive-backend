@@ -186,11 +186,13 @@ const productDetail = asyncHandler(async (req, res) => {
 
 const updateProduct = asyncHandler(async (req, res) => {
   try {
-    let message;
+    const productId = req.params.proId;
+    console.log("Updating product with ID:", productId);
 
+    // ✅ STATUS VALIDATION
     if (req.body.hasOwnProperty("status") && req.body.status === true) {
       const activePriceExists = await Price.findOne({
-        productId: req.params.proId,
+        productId: productId,
         status: true,
       });
 
@@ -203,26 +205,114 @@ const updateProduct = asyncHandler(async (req, res) => {
       }
     }
 
-    let productList = await Product.findOneAndUpdate(
-      { _id: req.params.proId },
-      req.body,
-      { new: true }
+    // ✅ PAYLOAD
+    const payload = {
+      s4hana_code: req.body.s4hana_code,
+      description: req.body.description,
+
+      sku_group_id: req.body.sku_group_id,
+      sku_group__name: req.body.sku_group__name,
+
+      cat_id: req.body.cat_id,
+      collection_id: req.body.collection_id,
+      brand: req.body.brand,
+      segment: req.body.segment,
+
+      supplier: req.body.supplier,
+
+      size: req.body.size,
+      color: req.body.color,
+      pack: req.body.pack,
+
+      std_pkg_in_pc: req.body.std_pkg_in_pc,
+      wp_pc: req.body.wp_pc,
+
+      img_path: req.body.img_path,
+
+      collection_product_type: req.body.collection_product_type,
+      product_valuation_type: req.body.product_valuation_type,
+      product_hsn_code: req.body.product_hsn_code,
+
+      cgst: req.body.cgst,
+      sgst: req.body.sgst,
+      igst: req.body.igst,
+
+      sbu: req.body.sbu,
+      base_point: req.body.base_point,
+
+      uom: req.body.uom,
+      ean11: req.body.ean11,
+
+      status: req.body.status,
+    };
+
+    console.log("Payload for update:", payload);
+
+    // ✅ FIX: REMOVE undefined, null, "" (IMPORTANT)
+    Object.keys(payload).forEach((key) => {
+      if (
+        payload[key] === undefined ||
+        payload[key] === null ||
+        payload[key] === ""
+      ) {
+        delete payload[key];
+      }
+    });
+
+    // ❌ LOCK FIELD
+    delete payload.s4hana_code;
+
+    // ✅ REQUIRED VALIDATION
+    if (!payload.description) {
+      return res.status(400).send({
+        error: true,
+        message: "Description is required",
+      });
+    }
+
+    if (!payload.cat_id) {
+      return res.status(400).send({
+        error: true,
+        message: "Category is required",
+      });
+    }
+
+    if (!payload.brand) {
+      return res.status(400).send({
+        error: true,
+        message: "Brand is required",
+      });
+    }
+
+    if (!payload.collection_id) {
+      return res.status(400).send({
+        error: true,
+        message: "Collection is required",
+      });
+    }
+
+    // ✅ UPDATE
+    const updatedProduct = await Product.findByIdAndUpdate(
+      productId,
+      payload,
+      {
+        new: true,
+        runValidators: true,
+      }
     );
 
-    if (productList) {
-      message = {
-        error: false,
-        message: "Product updated successfully",
-        data: productList,
-      };
-      return res.status(200).send(message);
-    } else {
-      message = {
+    if (!updatedProduct) {
+      return res.status(404).send({
         error: true,
-        message: "Product not found or not updated",
-      };
-      return res.status(404).send(message);
+        message: "Product not found",
+      });
     }
+
+    return res.status(200).send({
+      error: false,
+      message: "Product updated successfully",
+      data: updatedProduct,
+    });
   } catch (error) {
     res.status(400);
     throw new Error(error?.message || "Something went wrong");
