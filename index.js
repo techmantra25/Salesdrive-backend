@@ -56,18 +56,18 @@ app.use(cookieParser());
 
 // Health check
 // keepSeverAliveJob.start();
-fetchSecondaryOrderEntryJob.start();
-fetchPrimaryInvoicesJob.start();
-fetchProductPricesJob.start();
-bulkPriceStatusUpdateJob.start();
-fetchProductsJob.start();
-fetchQuotationStatusJob.start();
-AutoApprovePriceJob.start();
-fetchOutletsJob.start();
-balanceUpdateMorningAfternoonJob.start();
-balanceUpdateEveningJob.start();
-// cronRetryAllFailedInvoiceAdjustmentsJob.start();
-syncOutletCodeUpdatesJob.start();
+// fetchSecondaryOrderEntryJob.start();
+// fetchPrimaryInvoicesJob.start();
+// fetchProductPricesJob.start();
+// bulkPriceStatusUpdateJob.start();
+// fetchProductsJob.start();
+// fetchQuotationStatusJob.start();
+// AutoApprovePriceJob.start();
+// fetchOutletsJob.start();
+// balanceUpdateMorningAfternoonJob.start();
+// balanceUpdateEveningJob.start();
+// // cronRetryAllFailedInvoiceAdjustmentsJob.start();
+// syncOutletCodeUpdatesJob.start();
 
 // Health check route
 app.get("/", (req, res) => {
