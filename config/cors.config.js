@@ -15,10 +15,12 @@ const corsOptions = {
     "https://testing-salesdrive-dms.netlify.app",
     "https://rbp-rupa.netlify.app",
     "https://rbp-rupa-dms.netlify.app",
+  
 
 
     "https://skipper-salesdrive.netlify.app",
     "https://skipper-salesdrive-csp.netlify.app",
+    "https://skipper-salesdrive-dms.netlify.app",
 
     // ADD THESE
     "capacitor://localhost",
