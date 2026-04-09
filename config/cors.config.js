@@ -9,6 +9,7 @@ const corsOptions = {
     "http://localhost:4173",
     "http://localhost:5174",
     "http://localhost:4174",
+    "http://localhost:5175",
     "https://rupa.mysalesdrive.in",
     "https://rupa.central.mysalesdrive.in",
     "https://testing-salesdrive-csp.netlify.app",
@@ -19,7 +20,7 @@ const corsOptions = {
 
     "https://skipper-salesdrive-csp.netlify.app",
     "https://skipper-salesdrive-dms.netlify.app",
-    
+
 
     // ADD THESE
     "capacitor://localhost",
