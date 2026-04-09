@@ -87,8 +87,8 @@ async function startQueueIfNotRunning() {
 }
 
 // Schedule with node-cron: every 27 minute
-cron.schedule("*/27 * * * *", () => {
-  startQueueIfNotRunning();
-});
+// cron.schedule("*/27 * * * *", () => {
+//   startQueueIfNotRunning();
+// });
 
 module.exports = syncGRNQueue;

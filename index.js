@@ -22,18 +22,18 @@ const {
 // ------------Static Cron imports-----------------
 const {
   // keepSeverAliveJob,
-  fetchSecondaryOrderEntryJob,
-  fetchPrimaryInvoicesJob,
-  fetchProductPricesJob,
-  bulkPriceStatusUpdateJob,
-  fetchProductsJob,
-  fetchQuotationStatusJob,
-  AutoApprovePriceJob,
-  fetchOutletsJob,
-  balanceUpdateMorningAfternoonJob,
-  balanceUpdateEveningJob,
-  // cronRetryAllFailedInvoiceAdjustmentsJob,
-  syncOutletCodeUpdatesJob,
+  // fetchSecondaryOrderEntryJob,
+  // fetchPrimaryInvoicesJob,
+  // fetchProductPricesJob,
+  // bulkPriceStatusUpdateJob,
+  // fetchProductsJob,
+  // fetchQuotationStatusJob,
+  // AutoApprovePriceJob,
+  // fetchOutletsJob,
+  // balanceUpdateMorningAfternoonJob,
+  // balanceUpdateEveningJob,
+  // // cronRetryAllFailedInvoiceAdjustmentsJob,
+  // syncOutletCodeUpdatesJob,
 } = require("./jobs/cron");
 
 const app = expressApp;

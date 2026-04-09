@@ -45,11 +45,11 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
     // ================= EXISTING PRODUCTS =================
     const allCodes = rows.map((r) => clean(r["S/4HANA Code"]));
     const existingProducts = await Product.find({
-      s4hana_code: { $in: allCodes },
-    }).select("s4hana_code");
+      product_code: { $in: allCodes },
+    }).select("product_code");
 
     const existingSet = new Set(
-      existingProducts.map((p) => p.s4hana_code)
+      existingProducts.map((p) => p.product_code)
     );
 
     // ✅ NEW: Track duplicates inside file
@@ -64,21 +64,21 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
       const row = rows[i];
 
       try {
-        const s4hana_code = clean(row["S/4HANA Code"]);
+        const product_code = clean(row["S/4HANA Code"]);
         const description = clean(row["Description"]);
 
         // ================= REQUIRED =================
-        if (!s4hana_code) throw new Error("S/4HANA Code is required");
+        if (!product_code) throw new Error("S/4HANA Code is required");
         if (!description) throw new Error("Description is required");
 
         // ================= DUPLICATE IN FILE =================
-        if (fileSet.has(s4hana_code)) {
+        if (fileSet.has(product_code)) {
           throw new Error("Duplicate in file");
         }
-        fileSet.add(s4hana_code);
+        fileSet.add(product_code);
 
         // ================= DUPLICATE IN DB =================
-        if (existingSet.has(s4hana_code)) {
+        if (existingSet.has(product_code)) {
           throw new Error("Product already exists");
         }
 
@@ -103,7 +103,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
 
         // ================= FINAL PAYLOAD =================
         const payload = {
-          s4hana_code,
+          product_code,
           sku_group_id: clean(row["SKU Group Code"]),
           sku_group__name: clean(row["SKU Group Name"]),
 
@@ -136,7 +136,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
         bulkData.push(payload);
         successData.push({
           index: i + 2,
-          s4hana_code,
+          product_code,
         });
       } catch (error) {
         skippedRows.push({

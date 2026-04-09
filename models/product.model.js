@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const productSchema = new mongoose.Schema(
   {
     // ✅ RENAMED
-    s4hana_code: {
+    product_code: {
       type: String,
       required: true,
       unique: true,
@@ -147,10 +147,10 @@ const productSchema = new mongoose.Schema(
 );
 
 // ✅ INDEXES (UPDATED)
-productSchema.index({ cat_id: 1 });
-productSchema.index({ collection_id: 1 });
-productSchema.index({ brand: 1 });
-productSchema.index({ segment: 1 });
+// productSchema.index({ cat_id: 1 });
+// productSchema.index({ collection_id: 1 });
+// productSchema.index({ brand: 1 });
+// productSchema.index({ segment: 1 });
 
 const Product = mongoose.model("Product", productSchema);
 
