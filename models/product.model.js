@@ -70,8 +70,8 @@ const productSchema = new mongoose.Schema(
       type: String,
     },
 
-    // ✅ RENAMED (name → description)
-    description: {
+    // ✅ RENAMED (name → name)
+    name: {
       type: String,
       required: true,
     },

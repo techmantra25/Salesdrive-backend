@@ -65,11 +65,11 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
 
       try {
         const product_code = clean(row["S/4HANA Code"]);
-        const description = clean(row["Description"]);
+        const name = clean(row["Name"]);
 
         // ================= REQUIRED =================
         if (!product_code) throw new Error("S/4HANA Code is required");
-        if (!description) throw new Error("Description is required");
+        if (!name) throw new Error("Name is required");
 
         // ================= DUPLICATE IN FILE =================
         if (fileSet.has(product_code)) {
@@ -117,7 +117,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
           pack: clean(row["Pack"]),
           std_pkg_in_pc: clean(row["Std Pkg in Pc"]),
           wp_pc: clean(row["W/P Pc"]),
-          description,
+          name,
           img_path: clean(row["Image Path"]),
           collection_product_type: clean(row["Product Type"]),
           product_valuation_type: clean(row["Product Valuation Type"]),

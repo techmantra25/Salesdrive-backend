@@ -25,7 +25,7 @@ const createProduct = asyncHandler(async (req, res) => {
       pack,
       std_pkg_in_pc,
       wp_pc,
-      description,
+      name,
       img_path,
       collection_product_type,
       product_valuation_type,
@@ -63,7 +63,7 @@ console.log(req.body)
       pack,
       std_pkg_in_pc,
       wp_pc,
-      description,
+      name,
       img_path,
       collection_product_type,
       product_valuation_type,
@@ -208,7 +208,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     // ✅ PAYLOAD
     const payload = {
       product_code: req.body.product_code,
-      description: req.body.description,
+      name: req.body.name,
 
       sku_group_id: req.body.sku_group_id,
       sku_group__name: req.body.sku_group__name,
@@ -263,10 +263,10 @@ const updateProduct = asyncHandler(async (req, res) => {
     delete payload.product_code;
 
     // ✅ REQUIRED VALIDATION
-    if (!payload.description) {
+    if (!payload.name) {
       return res.status(400).send({
         error: true,
-        message: "Description is required",
+        message: "Name is required",
       });
     }
 
@@ -390,7 +390,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
 
       filter.$or = [
         { product_code: searchRegex },
-        { description: searchRegex },
+        { name: searchRegex },
         { sku_group_id: searchRegex },
         { sku_group__name: searchRegex },
         { product_hsn_code: searchRegex },
@@ -425,7 +425,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
 
         // NEW STRUCTURE (fallback from old)
         product_code: obj.product_code || obj.product_code,
-        description: obj.description || obj.name,
+        name: obj.name || obj.name,
         segment: obj.segment || obj.subBrand,
         std_pkg_in_pc: obj.std_pkg_in_pc || obj.no_of_pieces_in_a_box,
 
