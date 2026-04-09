@@ -93,8 +93,8 @@ async function startQueueIfNotRunning() {
 }
 
 // Schedule with node-cron: every 37 minutes
-cron.schedule("*/37 * * * *", () => {
-  startQueueIfNotRunning();
-});
+// cron.schedule("*/37 * * * *", () => {
+//   startQueueIfNotRunning();
+// });
 
 module.exports = syncInventoryQueue;

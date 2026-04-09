@@ -118,14 +118,14 @@ async function startQueueIfNotRunning() {
 }
 
 // Schedule to run on the 1st of every month at 00:30 AM
-cron.schedule(
-  "30 00 2 * *",
-  () => {
-    startQueueIfNotRunning();
-  },
-  null,
-  true,
-  "Asia/Kolkata"
-);
+// cron.schedule(
+//   "30 00 2 * *",
+//   () => {
+//     startQueueIfNotRunning();
+//   },
+//   null,
+//   true,
+//   "Asia/Kolkata"
+// );
 
 module.exports = processRetailerMultiplierPoints;

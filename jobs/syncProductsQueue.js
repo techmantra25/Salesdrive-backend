@@ -102,8 +102,8 @@ async function startQueueIfNotRunning() {
 // "* * * * * *"	every second
 
 // Schedule with node-cron: every 6 hours 30 minutes minutes
-cron.schedule("30 */6 * * *", () => {
-  startQueueIfNotRunning();
-});
+// cron.schedule("30 */6 * * *", () => {
+//   startQueueIfNotRunning();
+// });
 
 module.exports = syncProductQueue;

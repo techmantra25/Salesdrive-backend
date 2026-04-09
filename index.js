@@ -22,18 +22,18 @@ const {
 // ------------Static Cron imports-----------------
 const {
   // keepSeverAliveJob,
-  fetchSecondaryOrderEntryJob,
-  fetchPrimaryInvoicesJob,
-  fetchProductPricesJob,
-  bulkPriceStatusUpdateJob,
-  fetchProductsJob,
-  fetchQuotationStatusJob,
-  AutoApprovePriceJob,
-  fetchOutletsJob,
-  balanceUpdateMorningAfternoonJob,
-  balanceUpdateEveningJob,
-  // cronRetryAllFailedInvoiceAdjustmentsJob,
-  syncOutletCodeUpdatesJob,
+  // fetchSecondaryOrderEntryJob,
+  // fetchPrimaryInvoicesJob,
+  // fetchProductPricesJob,
+  // bulkPriceStatusUpdateJob,
+  // fetchProductsJob,
+  // fetchQuotationStatusJob,
+  // AutoApprovePriceJob,
+  // fetchOutletsJob,
+  // balanceUpdateMorningAfternoonJob,
+  // balanceUpdateEveningJob,
+  // // cronRetryAllFailedInvoiceAdjustmentsJob,
+  // syncOutletCodeUpdatesJob,
 } = require("./jobs/cron");
 
 const app = expressApp;
@@ -56,18 +56,18 @@ app.use(cookieParser());
 
 // Health check
 // keepSeverAliveJob.start();
-fetchSecondaryOrderEntryJob.start();
-fetchPrimaryInvoicesJob.start();
-fetchProductPricesJob.start();
-bulkPriceStatusUpdateJob.start();
-fetchProductsJob.start();
-fetchQuotationStatusJob.start();
-AutoApprovePriceJob.start();
-fetchOutletsJob.start();
-balanceUpdateMorningAfternoonJob.start();
-balanceUpdateEveningJob.start();
-// cronRetryAllFailedInvoiceAdjustmentsJob.start();
-syncOutletCodeUpdatesJob.start();
+// fetchSecondaryOrderEntryJob.start();
+// fetchPrimaryInvoicesJob.start();
+// fetchProductPricesJob.start();
+// bulkPriceStatusUpdateJob.start();
+// fetchProductsJob.start();
+// fetchQuotationStatusJob.start();
+// AutoApprovePriceJob.start();
+// fetchOutletsJob.start();
+// balanceUpdateMorningAfternoonJob.start();
+// balanceUpdateEveningJob.start();
+// // cronRetryAllFailedInvoiceAdjustmentsJob.start();
+// syncOutletCodeUpdatesJob.start();
 
 // Health check route
 app.get("/", (req, res) => {
