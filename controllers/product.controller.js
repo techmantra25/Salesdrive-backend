@@ -12,7 +12,7 @@ const Price = require("../models/price.model");
 const createProduct = asyncHandler(async (req, res) => {
   try {
     const {
-      s4hana_code,
+      product_code,
       sku_group_id,
       sku_group__name,
       cat_id,
@@ -41,7 +41,7 @@ const createProduct = asyncHandler(async (req, res) => {
    
 
     let productExist = await Product.findOne({
-      s4hana_code: req.body.s4hana_code,
+      product_code: req.body.product_code,
     });
 
     if (productExist) {
@@ -50,7 +50,7 @@ const createProduct = asyncHandler(async (req, res) => {
     }
 console.log(req.body)
     const productData = await Product.create({
-      s4hana_code,
+      product_code,
       sku_group_id,
       sku_group__name,
       cat_id,
@@ -207,7 +207,7 @@ const updateProduct = asyncHandler(async (req, res) => {
 
     // ✅ PAYLOAD
     const payload = {
-      s4hana_code: req.body.s4hana_code,
+      product_code: req.body.product_code,
       description: req.body.description,
 
       sku_group_id: req.body.sku_group_id,
@@ -260,7 +260,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     });
 
     // ❌ LOCK FIELD
-    delete payload.s4hana_code;
+    delete payload.product_code;
 
     // ✅ REQUIRED VALIDATION
     if (!payload.description) {
@@ -389,7 +389,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
       const searchRegex = new RegExp(req.query.search, "i");
 
       filter.$or = [
-        { s4hana_code: searchRegex },
+        { product_code: searchRegex },
         { description: searchRegex },
         { sku_group_id: searchRegex },
         { sku_group__name: searchRegex },
@@ -424,7 +424,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
         ...obj,
 
         // NEW STRUCTURE (fallback from old)
-        s4hana_code: obj.s4hana_code || obj.product_code,
+        product_code: obj.product_code || obj.product_code,
         description: obj.description || obj.name,
         segment: obj.segment || obj.subBrand,
         std_pkg_in_pc: obj.std_pkg_in_pc || obj.no_of_pieces_in_a_box,
