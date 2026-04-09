@@ -139,3 +139,4 @@ jobs/cornRoutes.md
 
 # Local Firebase service account credentials
 lux-dms-firebase-adminsdk.json
+*.firebase-adminsdk.json
