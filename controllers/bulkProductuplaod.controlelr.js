@@ -43,7 +43,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
     subBrands.forEach((s) => (subBrandMap[s.code] = s._id));
 
     // ================= EXISTING PRODUCTS =================
-    const allCodes = rows.map((r) => clean(r["S/4HANA Code"]));
+    const allCodes = rows.map((r) => clean(r["Product Code"]));
     const existingProducts = await Product.find({
       product_code: { $in: allCodes },
     }).select("product_code");
@@ -64,12 +64,12 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
       const row = rows[i];
 
       try {
-        const product_code = clean(row["S/4HANA Code"]);
-        const name = clean(row["Name"]);
+        const product_code = clean(row["Product Code"]);
+        const name = clean(row["Product Name"]);
 
         // ================= REQUIRED =================
-        if (!product_code) throw new Error("S/4HANA Code is required");
-        if (!name) throw new Error("Name is required");
+        if (!product_code) throw new Error("Product Code is required");
+        if (!name) throw new Error("Product Name is required");
 
         // ================= DUPLICATE IN FILE =================
         if (fileSet.has(product_code)) {
@@ -115,11 +115,11 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
           size: clean(row["Size"]),
           color: clean(row["Color"]),
           pack: clean(row["Pack"]),
-          std_pkg_in_pc: clean(row["Std Pkg in Pc"]),
+          no_of_pieces_in_a_box: clean(row["Std Pkg in Pc"]),
           wp_pc: clean(row["W/P Pc"]),
           name,
           img_path: clean(row["Image Path"]),
-          collection_product_type: clean(row["Product Type"]),
+          product_type: clean(row["Product Type"]),
           product_valuation_type: clean(row["Product Valuation Type"]),
           product_hsn_code: clean(row["HSN Code"]),
           cgst: clean(row["CGST"]),
