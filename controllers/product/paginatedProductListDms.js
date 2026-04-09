@@ -28,8 +28,9 @@ const buildDmsProductFilter = ({ distributorProductIds, query }) => {
   }
 
   if (query.subBrand) {
-    filter.segment = query.subBrand;
+    filter.subBrand = query.subBrand;
   }
+
   if (query.startDate && query.endDate) {
     filter.updatedAt = {
       $gte: moment.tz(query.startDate, TIMEZONE).startOf("day").toDate(),
@@ -66,7 +67,7 @@ const productPopulateFields = [
     select: "",
   },
   {
-    path: "segment",
+    path: "subBrand",
     select: "",
   },
   {
@@ -127,19 +128,11 @@ const paginatedProductListDms = asyncHandler(async (req, res) => {
         .skip(skip)
         .limit(limit),
     ]);
-    const mappedProducts = products.map((product) => {
-      const obj = product.toObject();
-
-      obj.subBrand = obj.segment;
-      delete obj.segment;
-
-      return obj;
-    });
 
     return res.status(200).json({
       status: 200,
       message: "Product paginated list",
-      data: mappedProducts,
+      data: products,
       pagination: {
         currentPage: page,
         limit,
@@ -249,9 +242,9 @@ const downloadPaginatedProductListDmsCsv = asyncHandler(async (req, res) => {
         "Brand Code": product?.brand?.code || "",
         "Brand Name": product?.brand?.name || "",
         "Brand Description": product?.brand?.desc || "",
-        "Sub Brand Code": product?.segment?.code || "",
-        "Sub Brand Name": product?.segment?.name || "",
-        "Sub Brand Description": product?.segment?.desc || "",
+        "Sub Brand Code": product?.subBrand?.code || "",
+        "Sub Brand Name": product?.subBrand?.name || "",
+        "Sub Brand Description": product?.subBrand?.desc || "",
         "Category Code": product?.cat_id?.code || "",
         "Category Name": product?.cat_id?.name || "",
         "Collection Code": product?.collection_id?.code || "",
@@ -267,14 +260,14 @@ const downloadPaginatedProductListDmsCsv = asyncHandler(async (req, res) => {
         "Created Date Time":
           product?.createdAt && moment(product?.createdAt).isValid()
             ? moment(product?.createdAt)
-              .tz(TIMEZONE)
-              .format("YYYY-MM-DD hh:mm A")
+                .tz(TIMEZONE)
+                .format("YYYY-MM-DD hh:mm A")
             : "",
         "Updated Date Time":
           product?.updatedAt && moment(product?.updatedAt).isValid()
             ? moment(product?.updatedAt)
-              .tz(TIMEZONE)
-              .format("YYYY-MM-DD hh:mm A")
+                .tz(TIMEZONE)
+                .format("YYYY-MM-DD hh:mm A")
             : "",
         Status: product?.status ? "Active" : "Inactive",
       });
