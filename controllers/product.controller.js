@@ -6,9 +6,6 @@ const Collection = require("../models/collection.model");
 const Brand = require("../models/brand.model");
 const Price = require("../models/price.model");
 
-/**
- * ✅ CREATE PRODUCT
- */
 const createProduct = asyncHandler(async (req, res) => {
   try {
     const {
@@ -19,15 +16,14 @@ const createProduct = asyncHandler(async (req, res) => {
       collection_id,
       brand,
       subBrand,
-      // supplier,
+      supplier,
       size,
       color,
       pack,
-      std_pkg_in_pc,
-      wp_pc,
+      no_of_pieces_in_a_box,
       name,
       img_path,
-      collection_product_type,
+      product_type,
       product_valuation_type,
       product_hsn_code,
       cgst,
@@ -36,9 +32,7 @@ const createProduct = asyncHandler(async (req, res) => {
       sbu,
       uom,
       base_point,
-      ean11,
     } = req.body;
-   
 
     let productExist = await Product.findOne({
       product_code: req.body.product_code,
@@ -48,7 +42,7 @@ const createProduct = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error("Product already exists");
     }
-console.log(req.body)
+
     const productData = await Product.create({
       product_code,
       sku_group_id,
@@ -57,15 +51,14 @@ console.log(req.body)
       collection_id,
       brand,
       subBrand,
-      // supplier,
+      supplier,
       size,
       color,
       pack,
-      std_pkg_in_pc,
-      wp_pc,
+      no_of_pieces_in_a_box,
       name,
       img_path,
-      collection_product_type,
+      product_type,
       product_valuation_type,
       product_hsn_code,
       cgst,
@@ -74,7 +67,6 @@ console.log(req.body)
       sbu,
       uom,
       base_point,
-      ean11,
     });
 
     return res.status(201).json({
@@ -88,20 +80,28 @@ console.log(req.body)
   }
 });
 
-/**
- * ✅ PRODUCT DETAIL
- */
 const productDetail = asyncHandler(async (req, res) => {
   try {
     let productData = await Product.findOne({
       _id: req.params.proId,
     }).populate([
-      { path: "cat_id", select: "" },
-      { path: "collection_id", select: "" },
-      { path: "brand", select: "" },
-      { path: "subBrand", select: "" }, // ✅ changed
+      {
+        path: "cat_id",
+        select: "",
+      },
+      {
+        path: "collection_id",
+        select: "",
+      },
+      {
+        path: "brand",
+        select: "",
+      },
+      {
+        path: "subBrand",
+        select: "",
+      },
     ]);
-
     return res.status(201).json({
       status: 201,
       message: "Product Data",
@@ -112,10 +112,6 @@ const productDetail = asyncHandler(async (req, res) => {
     throw new Error(error?.message || "Something went wrong");
   }
 });
-
-/**
- * ✅ UPDATE PRODUCT (NO LOGIC CHANGE)
- */
 
 
 //old code 
@@ -184,156 +180,80 @@ const productDetail = asyncHandler(async (req, res) => {
 //   }
 // });
 
+
 const updateProduct = asyncHandler(async (req, res) => {
   try {
-    const productId = req.params.proId;
-    console.log("Updating product with ID:", productId);
+    let message;
 
-    // ✅ STATUS VALIDATION
+    // Check if request is trying to activate the product (status: true)
     if (req.body.hasOwnProperty("status") && req.body.status === true) {
+      // Check if there's at least one active price for this product
       const activePriceExists = await Price.findOne({
-        productId: productId,
-        status: true,
+        productId: req.params.proId,
+        status: true
       });
 
       if (!activePriceExists) {
+        // No active price found - block the activation
         return res.status(400).send({
           error: true,
-          message:
-            "Cannot activate product. No active price found for this product.",
+          message: "Cannot activate product. No active price found for this product."
         });
       }
     }
 
-    // ✅ PAYLOAD
-    const payload = {
-      product_code: req.body.product_code,
-      name: req.body.name,
-
-      sku_group_id: req.body.sku_group_id,
-      sku_group__name: req.body.sku_group__name,
-
-      cat_id: req.body.cat_id,
-      collection_id: req.body.collection_id,
-      brand: req.body.brand,
-      subBrand: req.body.subBrand,
-
-      supplier: req.body.supplier,
-
-      size: req.body.size,
-      color: req.body.color,
-      pack: req.body.pack,
-
-      std_pkg_in_pc: req.body.std_pkg_in_pc,
-      wp_pc: req.body.wp_pc,
-
-      img_path: req.body.img_path,
-
-      collection_product_type: req.body.collection_product_type,
-      product_valuation_type: req.body.product_valuation_type,
-      product_hsn_code: req.body.product_hsn_code,
-
-      cgst: req.body.cgst,
-      sgst: req.body.sgst,
-      igst: req.body.igst,
-
-      sbu: req.body.sbu,
-      base_point: req.body.base_point,
-
-      uom: req.body.uom,
-      ean11: req.body.ean11,
-
-      status: req.body.status,
-    };
-
-    console.log("Payload for update:", payload);
-
-    // ✅ FIX: REMOVE undefined, null, "" (IMPORTANT)
-    Object.keys(payload).forEach((key) => {
-      if (
-        payload[key] === undefined ||
-        payload[key] === null ||
-        payload[key] === ""
-      ) {
-        delete payload[key];
-      }
-    });
-
-    // ❌ LOCK FIELD
-    delete payload.product_code;
-
-    // ✅ REQUIRED VALIDATION
-    if (!payload.name) {
-      return res.status(400).send({
-        error: true,
-        message: "Name is required",
-      });
-    }
-
-    if (!payload.cat_id) {
-      return res.status(400).send({
-        error: true,
-        message: "Category is required",
-      });
-    }
-
-    if (!payload.brand) {
-      return res.status(400).send({
-        error: true,
-        message: "Brand is required",
-      });
-    }
-
-    if (!payload.collection_id) {
-      return res.status(400).send({
-        error: true,
-        message: "Collection is required",
-      });
-    }
-
-    // ✅ UPDATE
-    const updatedProduct = await Product.findByIdAndUpdate(
-      productId,
-      payload,
-      {
-        new: true,
-        runValidators: true,
-      }
+    // Proceed with the Product update
+    let productList = await Product.findOneAndUpdate(
+      { _id: req.params.proId },
+      req.body,
+      { new: true }
     );
 
-    if (!updatedProduct) {
-      return res.status(404).send({
+    if (productList) {
+      message = {
+        error: false,
+        message: "Product updated successfully",
+        data: productList,
+      };
+      return res.status(200).send(message);
+    } else {
+      message = {
         error: true,
-        message: "Product not found",
-      });
+        message: "Product not found or not updated",
+      };
+      return res.status(404).send(message);
     }
-
-    return res.status(200).send({
-      error: false,
-      message: "Product updated successfully",
-      data: updatedProduct,
-    });
   } catch (error) {
     res.status(400);
     throw new Error(error?.message || "Something went wrong");
   }
 });
-
-/**
- * ✅ ALL PRODUCT LIST
- */
 const productAllList = asyncHandler(async (req, res) => {
   try {
     let productList = await Product.find({})
       .populate([
-        { path: "cat_id", select: "" },
-        { path: "collection_id", select: "" },
-        { path: "brand", select: "" },
-        { path: "subBrand", select: "" }, // ✅ changed
-        // { path: "supplier", select: "" },
+        {
+          path: "cat_id",
+          select: "",
+        },
+        {
+          path: "collection_id",
+          select: "",
+        },
+        {
+          path: "brand",
+          select: "",
+        },
+        {
+          path: "subBrand",
+          select: "",
+        },
+        {
+          path: "supplier",
+          select: "",
+        },
       ])
       .sort({ _id: -1 });
-
     return res.status(201).json({
       status: 201,
       message: "All product list",
@@ -345,102 +265,105 @@ const productAllList = asyncHandler(async (req, res) => {
   }
 });
 
-/**
- * ✅ PAGINATED LIST
- */
 const productPaginatedList = asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    // Build filter object
     const filter = {};
 
+    // Status filter
     if (req.query.status !== undefined) {
       filter.status = req.query.status === "true";
     }
 
+    // Brand filter
     if (req.query.brand) {
       filter.brand = req.query.brand;
     }
 
+    // Category filter
     if (req.query.category) {
       filter.cat_id = req.query.category;
     }
 
+    // Collection filter
     if (req.query.collection) {
       filter.collection_id = req.query.collection;
     }
 
+    // SubBrand filter
     if (req.query.subBrand) {
       filter.subBrand = req.query.subBrand;
     }
 
     const TIMEZONE = "Asia/Kolkata";
 
+    // Date range filter on createdAt
     if (req.query.startDate && req.query.endDate) {
       filter.updatedAt = {
         $gte: moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate(),
         $lte: moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate(),
       };
+      // const start = moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate();
+      // const end = moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate();
+      // filter.$or = [
+      //   { createdAt: { $gte: start, $lte: end } },
+      //   { updatedAt: { $gte: start, $lte: end } }
+      // ];
     }
-
+    // Search functionality
     if (req.query.search) {
       const searchRegex = new RegExp(req.query.search, "i");
-
       filter.$or = [
         { product_code: searchRegex },
         { name: searchRegex },
         { sku_group_id: searchRegex },
         { sku_group__name: searchRegex },
         { product_hsn_code: searchRegex },
-        { ean11: searchRegex },
-
-        // ✅ SUPPORT OLD DATA ALSO
-        { product_code: searchRegex },
-        { name: searchRegex },
       ];
     }
 
-    const totalCount = await Product.countDocuments(filter);
-    const filteredCount = totalCount;
+    // Get total count without filters for pagination info
+    const totalCount = await Product.countDocuments({});
 
+    // Get filtered count
+    const filteredCount = await Product.countDocuments(filter);
+
+    // Get products with pagination
     const products = await Product.find(filter)
       .populate([
-        { path: "cat_id", select: "" },
-        { path: "collection_id", select: "" },
-        { path: "brand", select: "" },
-        { path: "subBrand", select: "" },
+        {
+          path: "cat_id",
+          select: "",
+        },
+        {
+          path: "collection_id",
+          select: "",
+        },
+        {
+          path: "brand",
+          select: "",
+        },
+        {
+          path: "subBrand",
+          select: "",
+        },
+        {
+          path: "supplier",
+          select: "",
+        },
       ])
-      .sort({ createdAt: -1 }) // ✅ better sorting
+      .sort({ product_code: 1 })
       .skip(skip)
       .limit(limit);
-
-    // ✅🔥 MAIN FIX — NORMALIZE DATA
-    const normalizedProducts = products.map((item) => {
-      const obj = item.toObject();
-
-      return {
-        ...obj,
-
-        // NEW STRUCTURE (fallback from old)
-        product_code: obj.product_code || obj.product_code,
-        name: obj.name || obj.name,
-        subBrand: obj.subBrand || obj.subBrand,
-        std_pkg_in_pc: obj.std_pkg_in_pc || obj.no_of_pieces_in_a_box,
-
-        // optional cleanup
-        product_code: undefined,
-        name: undefined,
-        subBrand: undefined,
-        no_of_pieces_in_a_box: undefined,
-      };
-    });
 
     return res.status(200).json({
       status: 200,
       message: "Product paginated list",
-      data: normalizedProducts, // ✅ FIXED
+      data: products,
       pagination: {
         currentPage: page,
         limit,
@@ -454,6 +377,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
     throw error;
   }
 });
+
 module.exports = {
   createProduct,
   productDetail,
