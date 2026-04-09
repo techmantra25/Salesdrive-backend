@@ -14,11 +14,19 @@ const firebaseAppConfig = {
 
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
   firebaseAppConfig.credential = admin.credential.applicationDefault();
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  // Read Firebase credentials from environment variable (for cloud deployments)
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  firebaseAppConfig.credential = admin.credential.cert(serviceAccount);
 } else {
+  // Fallback to local file (development only - NEVER commit this file)
   const serviceAccountPath = path.resolve(__dirname, "../../lux-dms-firebase-adminsdk.json");
   if (!fs.existsSync(serviceAccountPath)) {
     throw new Error(
-      "Firebase service account file not found. Create lux-dms-firebase-adminsdk.json locally or set GOOGLE_APPLICATION_CREDENTIALS."
+      "Firebase credentials not found. Either:\n" +
+      "1. Set FIREBASE_SERVICE_ACCOUNT environment variable with JSON credentials\n" +
+      "2. Or set GOOGLE_APPLICATION_CREDENTIALS path\n" +
+      "3. Or create lux-dms-firebase-adminsdk.json locally"
     );
   }
   const serviceAccount = require(serviceAccountPath);
