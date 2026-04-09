@@ -113,8 +113,8 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
       query.color = { $regex: color, $options: "i" };
     }
 
-    // supplier not null
-    query.supplier = { $ne: null };
+    // Optional: only filter by supplier if explicitly required
+    // query.supplier = { $exists: true, $ne: null };
 
     // category should not include
     // const excludedCategories = [
@@ -138,6 +138,7 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     // Fetch paginated products
 
     console.time("PRODUCT_LIST")
+    console.log(query,'query')
     const productList = await Product.find(query)
       .populate([
         {
@@ -160,6 +161,7 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
       .sort({ product_code: 1 })
       .skip(skip)
       .limit(limit);
+      console.log(productList,'productList')
       console.timeEnd("PRODUCT_LIST")
 
     const totalPages = Math.ceil(totalFilteredCount / limit);

@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
 const generatePOHTML = require("./util/generatePOHTML");
 const DbBank = require("../../models/dbBank.model");
+const axios = require("axios");
 
 const printPO = asyncHandler(async (req, res) => {
   try {
@@ -63,8 +64,23 @@ const printPO = asyncHandler(async (req, res) => {
 
     purchaseOrder.bankData = bankData;
 
+    // Fetch logo and convert to base64
+    let logoBase64 = null;
+    const logoUrl = "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
+
+    try {
+      const response = await axios.get(logoUrl, {
+        responseType: "arraybuffer",
+        timeout: 5000,
+      });
+      const base64 = Buffer.from(response.data).toString("base64");
+      logoBase64 = `data:image/png;base64,${base64}`;
+    } catch (logoError) {
+      console.error("Failed to fetch logo:", logoError.message);
+    }
+
     // Generate HTML with layout options
-    let htmlContent = generatePOHTML(purchaseOrder);
+    let htmlContent = generatePOHTML(purchaseOrder, { logoBase64 });
 
     // Inject auto-print script just before </body>
     const autoPrintScript = `
@@ -121,6 +137,7 @@ const printPO = asyncHandler(async (req, res) => {
     }
 
     res.setHeader("Content-Type", "text/html");
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' https://firebasestorage.googleapis.com data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;");
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
