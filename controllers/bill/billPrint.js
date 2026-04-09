@@ -106,7 +106,7 @@ const billPrintPDF = asyncHandler(async (req, res) => {
 
     // Fetch logo and convert to base64
     let logoBase64 = null;
-    const logoUrl = "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1749812986881.png?alt=media";
+    const logoUrl = "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
     
     try {
       const response = await axios.get(logoUrl, {

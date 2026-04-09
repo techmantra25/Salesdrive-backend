@@ -198,7 +198,7 @@ const worker = new Worker(
 
         // Emit safely (DO NOT FAIL JOB)
         try {
-          io.to(room).emit("notification", {
+          io.to(room).emit("skipper-notification", {
             _id: savedNotification._id,
             type: savedNotification.type,
             title: savedNotification.title,
@@ -259,7 +259,7 @@ const worker = new Worker(
             }[n.userType] || "user";
 
           try {
-            io.to(`${roomPrefix}:${n.userId}`).emit("notification", {
+            io.to(`${roomPrefix}:${n.userId}`).emit("skipper-notification", {
               _id: n._id,
               type: n.type,
               title: n.title,

@@ -258,7 +258,7 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 src="${escapeHtml(
                   options?.logoBase64 ||
                     options?.logoUrl ||
-                    "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1749812986881.png?alt=media",
+                    "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
                 )}"
                 alt="Company Logo"
                 onerror="this.style.display='none'"

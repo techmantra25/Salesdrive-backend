@@ -297,7 +297,7 @@ async function generateBillHTML(bill, options = {}) {
         <!-- Top Right Logo -->
         <div class="logo-container">
           <img
-            src="${options.logoBase64 || "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1749812986881.png?alt=media"}"
+            src="${options.logoBase64 || "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media"}"
             alt="Company Logo"
             onerror="this.style.display='none'"
           />
