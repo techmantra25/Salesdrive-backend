@@ -55,7 +55,7 @@ const outletTransferCopy = asyncHandler(async (req, res) => {
               competitorBrands: outlet.competitorBrands,
               existingRetailer: outlet.existingRetailer,
               outletSource: outlet.outletSource,
-              OutletSegments: outlet.OutletSegments,
+              OutletsubBrands: outlet.OutletsubBrands,
               createdFromLead: outlet._id,
               outletType: "transfer",
               referenceId: [outlet._id], // Reference the original outlet
@@ -131,7 +131,7 @@ const outletTransferCopy = asyncHandler(async (req, res) => {
             competitorBrands: outlet.competitorBrands,
             existingRetailer: outlet.existingRetailer,
             outletSource: outlet.outletSource,
-            OutletSegments: outlet.OutletSegments,
+            OutletsubBrands: outlet.OutletsubBrands,
             createdFromLead: outlet._id,
             outletType: outletType,
             referenceId: [outlet._id], // Reference the original outlet

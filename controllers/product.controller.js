@@ -18,7 +18,7 @@ const createProduct = asyncHandler(async (req, res) => {
       cat_id,
       collection_id,
       brand,
-      segment,
+      subBrand,
       // supplier,
       size,
       color,
@@ -56,7 +56,7 @@ console.log(req.body)
       cat_id,
       collection_id,
       brand,
-      segment,
+      subBrand,
       // supplier,
       size,
       color,
@@ -99,7 +99,7 @@ const productDetail = asyncHandler(async (req, res) => {
       { path: "cat_id", select: "" },
       { path: "collection_id", select: "" },
       { path: "brand", select: "" },
-      { path: "segment", select: "" }, // ✅ changed
+      { path: "subBrand", select: "" }, // ✅ changed
     ]);
 
     return res.status(201).json({
@@ -216,7 +216,7 @@ const updateProduct = asyncHandler(async (req, res) => {
       cat_id: req.body.cat_id,
       collection_id: req.body.collection_id,
       brand: req.body.brand,
-      segment: req.body.segment,
+      subBrand: req.body.subBrand,
 
       supplier: req.body.supplier,
 
@@ -329,7 +329,7 @@ const productAllList = asyncHandler(async (req, res) => {
         { path: "cat_id", select: "" },
         { path: "collection_id", select: "" },
         { path: "brand", select: "" },
-        { path: "segment", select: "" }, // ✅ changed
+        { path: "subBrand", select: "" }, // ✅ changed
         // { path: "supplier", select: "" },
       ])
       .sort({ _id: -1 });
@@ -372,8 +372,8 @@ const productPaginatedList = asyncHandler(async (req, res) => {
       filter.collection_id = req.query.collection;
     }
 
-    if (req.query.segment) {
-      filter.segment = req.query.segment;
+    if (req.query.subBrand) {
+      filter.subBrand = req.query.subBrand;
     }
 
     const TIMEZONE = "Asia/Kolkata";
@@ -410,7 +410,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
         { path: "cat_id", select: "" },
         { path: "collection_id", select: "" },
         { path: "brand", select: "" },
-        { path: "segment", select: "" },
+        { path: "subBrand", select: "" },
       ])
       .sort({ createdAt: -1 }) // ✅ better sorting
       .skip(skip)
@@ -426,7 +426,7 @@ const productPaginatedList = asyncHandler(async (req, res) => {
         // NEW STRUCTURE (fallback from old)
         product_code: obj.product_code || obj.product_code,
         name: obj.name || obj.name,
-        segment: obj.segment || obj.subBrand,
+        subBrand: obj.subBrand || obj.subBrand,
         std_pkg_in_pc: obj.std_pkg_in_pc || obj.no_of_pieces_in_a_box,
 
         // optional cleanup

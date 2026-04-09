@@ -24,7 +24,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
       val !== undefined && val !== null ? val.toString().trim() : "";
 
     // ================= MASTER DATA (OPTIMIZED) =================
-    const [categories, collections, brands, segments] = await Promise.all([
+    const [categories, collections, brands, subBrands] = await Promise.all([
       Category.find(),
       Collection.find(),
       Brand.find(),
@@ -35,12 +35,12 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
     const categoryMap = {};
     const collectionMap = {};
     const brandMap = {};
-    const segmentMap = {};
+    const subBrandMap = {};
 
     categories.forEach((c) => (categoryMap[c.code] = c._id));
     collections.forEach((c) => (collectionMap[c.code] = c._id));
     brands.forEach((b) => (brandMap[b.code] = b._id));
-    segments.forEach((s) => (segmentMap[s.code] = s._id));
+    subBrands.forEach((s) => (subBrandMap[s.code] = s._id));
 
     // ================= EXISTING PRODUCTS =================
     const allCodes = rows.map((r) => clean(r["S/4HANA Code"]));
@@ -92,8 +92,8 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
         const brandId = brandMap[clean(row["Brand Code"])];
         if (!brandId) throw new Error("Invalid Brand Code");
 
-        const segmentId =
-          segmentMap[clean(row["Segment Code"])] || null;
+        const subBrandId =
+          subBrandMap[clean(row["subBrand Code"])] || null;
 
         // ================= ENUM VALIDATION =================
         const uom = clean(row["UOM"]) || "pcs";
@@ -110,7 +110,7 @@ const bulkUploadProduct = asyncHandler(async (req, res) => {
           cat_id: catId,
           collection_id: collectionId,
           brand: brandId,
-          segment: segmentId,
+          subBrand: subBrandId,
 
           size: clean(row["Size"]),
           color: clean(row["Color"]),

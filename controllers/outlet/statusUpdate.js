@@ -86,7 +86,7 @@ const statusUpdate = asyncHandler(async (req, res) => {
         poaFrontImage: updatedOutlet?.poaFrontImage,
         poaBackImage: updatedOutlet?.poaBackImage,
         enrollmentForm: updatedOutlet?.enrollmentForm,
-        OutletSegments: updatedOutlet?.OutletSegments || "",
+        OutletsubBrands: updatedOutlet?.OutletsubBrands || "",
         categoryOfOutlet: updatedOutlet?.categoryOfOutlet || "",
         productCategory: updatedOutlet?.productCategory || "",
         sellingBrands: updatedOutlet?.sellingBrands,

@@ -73,7 +73,7 @@
 //               poaBackImage: row["POA Back Image"],
 //               enrollmentForm: row["Enrollment Form"],
 //               location: row["Location"],
-//               OutletSegments: row["Outlet Segment"],
+//               OutletsubBrands: row["Outlet subBrand"],
 //               categoryOfOutlet: row["Category Of Outlet"],
 //               productCategory: row["Product Category"],
 //               sellingBrands: sellingBrands.map((brand) => brand._id), // Array of ObjectIds

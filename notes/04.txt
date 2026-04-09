@@ -141,7 +141,7 @@ const bulkApproveRejectOutletTemplate = asyncHandler(async (req, res) => {
           poaFrontImage: outlet?.poaFrontImage,
           poaBackImage: outlet?.poaBackImage,
           enrollmentForm: outlet?.enrollmentForm,
-          outletSegment: outlet?.OutletSegments,
+          outletsubBrand: outlet?.OutletsubBrands,
           outletCategory: outlet?.outletCategory,
           productCategory: outlet?.productCategory,
           sellingBrands: outlet?.sellingBrands
@@ -194,7 +194,7 @@ const bulkApproveRejectOutletTemplate = asyncHandler(async (req, res) => {
       { label: "POA Front Image", value: "poaFrontImage" },
       { label: "POA Back Image", value: "poaBackImage" },
       { label: "Enrollment Form", value: "enrollmentForm" },
-      { label: "Outlet Segment", value: "outletSegment" },
+      { label: "Outlet subBrand", value: "outletsubBrand" },
       { label: "Category Of Outlet", value: "outletCategory" },
       { label: "Product Category", value: "productCategory" },
       { label: "Selling Brands", value: "sellingBrands" },

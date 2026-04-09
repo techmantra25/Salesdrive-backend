@@ -103,7 +103,7 @@ const getAllReport = asyncHandler(async (req, res) => {
         teleCallingSlot: outlet?.teleCallingSlot?.join("; "),
         categoryOfOutlet: outlet?.categoryOfOutlet,
         productCategory: outlet?.productCategory,
-        OutletSegments: outlet?.OutletSegments,
+        OutletsubBrands: outlet?.OutletsubBrands,
         sellingBrands: outlet?.sellingBrands
           ?.map((brand) => brand?.name)
           ?.join("; "),
@@ -223,8 +223,8 @@ const getAllReport = asyncHandler(async (req, res) => {
         value: "productCategory",
       },
       {
-        label: "Outlet Segments",
-        value: "OutletSegments",
+        label: "Outlet subBrands",
+        value: "OutletsubBrands",
       },
       {
         label: "Selling Brands",
