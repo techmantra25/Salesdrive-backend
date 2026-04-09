@@ -27,10 +27,9 @@ const buildDmsProductFilter = ({ distributorProductIds, query }) => {
     filter.collection_id = query.collection;
   }
 
-  if (query.subBrand) {
-    filter.subBrand = query.subBrand;
-  }
-
+ if (query.segment) {
+  filter.segment = query.segment;
+}
   if (query.startDate && query.endDate) {
     filter.updatedAt = {
       $gte: moment.tz(query.startDate, TIMEZONE).startOf("day").toDate(),
@@ -66,10 +65,10 @@ const productPopulateFields = [
     path: "brand",
     select: "",
   },
-  {
-    path: "subBrand",
-    select: "",
-  },
+ {
+  path: "segment",
+  select: "",
+},
   {
     path: "supplier",
     select: "",
