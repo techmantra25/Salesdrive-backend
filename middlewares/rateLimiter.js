@@ -8,12 +8,12 @@ const rateLimit = require("express-rate-limit");
 
 // Login rate limiter: 5 attempts per 15 minutes
 const loginRateLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 5, // Limit each IP to 5 requests per windowMs
+  windowMs: 1 * 60 * 1000, // 5 minutes
+  max: 50, // Limit each IP to 5 requests per windowMs
   message: {
     status: 429,
     error: true,
-    message: "Too many login attempts. Please try again after 15 minutes.",
+    message: "Too many login attempts. Please try again after 1 minutes.",
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
