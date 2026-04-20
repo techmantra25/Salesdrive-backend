@@ -120,17 +120,14 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       item.sgst = sgst;
       item.igst = igst;
 
-      // ✅ Normalize
       item.l1Basic = Number(item.l1Basic || 0);
       item.orderQty = Number(item.orderQty || 0);
 
-      // ✅ SO VALUE
-      const soValue = item.orderQty * item.l1Basic;
+      const basicAmt = Number(item.basicAmt || 0);
+      const soValue = item.orderQty * basicAmt;
 
-      // ✅ TAXABLE
       item.taxableAmt = soValue;
 
-      // ✅ GST CALCULATION
       if (igst > 0) {
         item.totalIGST = (soValue * igst) / 100;
         item.totalCGST = 0;
