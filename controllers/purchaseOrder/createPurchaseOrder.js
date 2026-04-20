@@ -3,12 +3,11 @@ const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Distributor = require("../../models/distributor.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
-const Inventory = require("../../models/inventory.model"); // Assuming Inventory model exists
+const Inventory = require("../../models/inventory.model");
 const { purchaseOrderNumberGenerator } = require("../../utils/codeGenerator");
 const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config");
 
-// Create Purchase Order
 const createPurchaseOrder = asyncHandler(async (req, res) => {
   try {
     const {
@@ -33,6 +32,8 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       totalBasePoints,
     } = req.body;
 
+    console.log("Received data for creating purchase order:", req.body);
+
     const distributor = await Distributor.findById(distributorId);
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
@@ -45,8 +46,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     } catch (error) {
       res.status(400);
       throw new Error(
-        `Error fetching config details: ${
-          error?.response?.data?.message || error.message
+        `Error fetching config details: ${error?.response?.data?.message || error.message
         }`
       );
     }
@@ -74,20 +74,21 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       approved_by = null;
     }
 
-    // Validate each line item for product, price, and inventory
+    // 🔥 LINE ITEM LOOP
     for (const item of lineItems) {
+
       const product = await Product.findById(item.product);
       if (!product) {
-        return res
-          .status(404)
-          .json({ message: `Product not found for ID ${item.product}` });
+        return res.status(404).json({
+          message: `Product not found for ID ${item.product}`
+        });
       }
 
       const price = await Price.findById(item.price);
       if (!price) {
-        return res
-          .status(404)
-          .json({ message: `Price not found for ID ${item.price}` });
+        return res.status(404).json({
+          message: `Price not found for ID ${item.price}`
+        });
       }
 
       if (item.inventoryId) {
@@ -98,12 +99,80 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
           });
         }
       }
+
+      if (!item.plant || item.plant === "") {
+        item.plant = null;
+      }
+
+      // ✅ GST FROM PRODUCT
+      // 🔥 Convert product GST
+      let cgst = Number(product.cgst || 0);
+      let sgst = Number(product.sgst || 0);
+      let igst = Number(product.igst || 0);
+
+      // 🔥 DEFAULT GST LOGIC
+      if (cgst === 0 && sgst === 0 && igst === 0) {
+        cgst = 9;
+        sgst = 9;
+        igst = 0;
+      }
+      item.cgst = cgst;
+      item.sgst = sgst;
+      item.igst = igst;
+
+      // ✅ Normalize
+      item.l1Basic = Number(item.l1Basic || 0);
+      item.orderQty = Number(item.orderQty || 0);
+
+      // ✅ SO VALUE
+      const soValue = item.orderQty * item.l1Basic;
+
+      // ✅ TAXABLE
+      item.taxableAmt = soValue;
+
+      // ✅ GST CALCULATION
+      if (igst > 0) {
+        item.totalIGST = (soValue * igst) / 100;
+        item.totalCGST = 0;
+        item.totalSGST = 0;
+      } else {
+        item.totalCGST = (soValue * cgst) / 100;
+        item.totalSGST = (soValue * sgst) / 100;
+        item.totalIGST = 0;
+      }
+
+      item.totalGST =
+        (item.totalCGST || 0) +
+        (item.totalSGST || 0) +
+        (item.totalIGST || 0);
+
+      item.lineTotal = soValue + item.totalGST;
+
+      item.grossAmt = soValue;
+      item.netAmt = item.lineTotal;
+    }
+
+    // 🔥 TOTAL CALCULATION (ADDED FIX)
+    let totalCGST = 0;
+    let totalSGST = 0;
+    let totalIGST = 0;
+    let totalGSTAmountCalc = 0;
+    let grossAmountCalc = 0;
+    let netAmountCalc = 0;
+
+    for (const item of lineItems) {
+      totalCGST += item.totalCGST || 0;
+      totalSGST += item.totalSGST || 0;
+      totalIGST += item.totalIGST || 0;
+      totalGSTAmountCalc += item.totalGST || 0;
+      grossAmountCalc += item.taxableAmt || 0;
+      netAmountCalc += item.lineTotal || 0;
     }
 
     // Generate order number
     const orderNumber = await purchaseOrderNumberGenerator("PO");
 
-    // Create and save the purchase order
+    // 🔥 SAVE (FIXED)
     const newPurchaseOrder = new PurchaseOrder({
       distributorId,
       selectedBrand,
@@ -113,13 +182,17 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       expectedDeliveryDate,
       lineItems,
       totalLines,
-      grossAmount,
-      taxableAmount,
-      cgst,
-      sgst,
-      igst,
-      netAmount,
-      totalGSTAmount,
+
+      grossAmount: grossAmountCalc,
+      taxableAmount: grossAmountCalc,
+
+      cgst: totalCGST,
+      sgst: totalSGST,
+      igst: totalIGST,
+
+      netAmount: netAmountCalc,
+      totalGSTAmount: totalGSTAmountCalc,
+
       remarks,
       approvedStatus,
       rejectedReason,
@@ -133,12 +206,10 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     const purchaseOrderId = savedPurchaseOrder._id;
 
     try {
-      // hit the send quotation API
       await axios.get(
         `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
       );
     } catch (error) {
-      // make the approval status as Not Approved
       await PurchaseOrder.findByIdAndUpdate(
         purchaseOrderId,
         {
@@ -154,8 +225,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
 
       res.status(400);
       throw new Error(
-        `Error sending quotation: ${
-          error?.response?.data?.message || error.message
+        `Error sending quotation: ${error?.response?.data?.message || error.message
         }`
       );
     }
@@ -165,6 +235,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       message: "Purchase Order created successfully",
       data: savedPurchaseOrder,
     });
+
   } catch (error) {
     res.status(400).json({ message: error.message || "Something went wrong" });
   }
