@@ -6,7 +6,7 @@ const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config");
 
 // Get Purchase Order
-const confirmGrnPrimeryOrder = asyncHandler(async (req, res) => {
+const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
 
@@ -124,4 +124,4 @@ const confirmGrnPrimeryOrder = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { confirmGrnPrimeryOrder };
+module.exports = { getGrnPrimeryOrder };
