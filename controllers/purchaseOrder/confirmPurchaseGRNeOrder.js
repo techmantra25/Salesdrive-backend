@@ -3,108 +3,140 @@ const PurchaseOrder = require("../../models/purchaseOrder.model");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
 
-// Update Purchase Order
 const confirmPurchaseGRNeOrder = asyncHandler(async (req, res) => {
-
   try {
     const { purchaseOrderId } = req.params;
+    const { lineItems = [], status } = req.body;
+
+    console.log("Received data:", { purchaseOrderId, lineItems, status });
 
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
+
     if (!purchaseOrder) {
       return res.status(404).json({ message: "Purchase Order not found" });
     }
 
-    // Add updater info to body
-    req.body.updatedByType = "Distributor";
-    req.body.updatedBy = req.user?._id || null;
+    let totalGross = 0;
+    let totalGST = 0;
+    let totalNet = 0;
 
-    let status = req.body.status || purchaseOrder.status;
+    // ✅ Correct mapping using product ObjectId
+    const updatedLineItems = purchaseOrder.lineItems.map((existingItem) => {
+      const updatedItem = lineItems.find(
+        (i) =>
+          String(i.productId) === String(existingItem.product) // ✅ FIXED
+      );
+
+      if (!updatedItem) return existingItem;
+
+      const grossAmt = Number(updatedItem.grossAmt || 0);
+      const taxableAmt = Number(updatedItem.taxableAmt || grossAmt);
+      const netAmt = Number(updatedItem.netAmt || 0);
+
+      const gstAmt = netAmt - grossAmt;
+
+      totalGross += grossAmt;
+      totalGST += gstAmt;
+      totalNet += netAmt;
+
+      return {
+        ...existingItem.toObject(),
+
+        boxOrderQty: Number(updatedItem.boxOrderQty || 0),
+        orderQty: Number(updatedItem.orderQty || 0),
+
+        grossAmt,
+        taxableAmt,
+
+        // ✅ store GST properly
+        totalIGST: existingItem.totalIGST || 0,
+        totalCGST: existingItem.totalCGST || gstAmt / 2,
+        totalSGST: existingItem.totalSGST || gstAmt / 2,
+
+        netAmt,
+      };
+    });
+
+    // ✅ Approval logic
     let config = {};
     try {
-      config = await axios.get(`${SERVER_URL}/api/v1/config/get-config`);
-      config = config.data.data;
+      const resConfig = await axios.get(
+        `${SERVER_URL}/api/v1/config/get-config`
+      );
+      config = resConfig.data.data;
     } catch (error) {
-      res.status(400);
       throw new Error(
-        `Error fetching config details: ${
+        `Config error: ${
           error?.response?.data?.message || error.message
         }`
       );
     }
 
-    let need_employee_approval_for_po =
+    let needApproval =
       config?.functionalSettings?.need_employee_approval_for_po ||
       "no approval";
 
     let approvedStatus = "Not Approved";
     let approved_by = null;
 
-    if (
-      need_employee_approval_for_po === "no approval" &&
-      status === "Confirmed"
-    ) {
+    if (needApproval === "no approval" && status === "Confirmed") {
       approvedStatus = "Approved";
-      approved_by = req?.user?._id || null;
-    }
-
-    if (
-      need_employee_approval_for_po === "agent approval" ||
-      need_employee_approval_for_po === "admin approval"
-    ) {
-      approvedStatus = "Not Approved";
-      approved_by = null;
+      approved_by = req.user?._id || null;
     }
 
     if (status === "Cancelled") {
       approvedStatus = "Not Approved";
-      approved_by = req?.user?._id || null;
+      approved_by = req.user?._id || null;
     }
 
-    req.body.approvedStatus = approvedStatus;
-    req.body.approved_by = approved_by;
+    // ✅ FINAL DB UPDATE
+    const updatedPurchaseOrder = await PurchaseOrder.findByIdAndUpdate(
+      purchaseOrderId,
+      {
+        status,
+        lineItems: updatedLineItems,
 
-    // Update the purchase order
-    const updatedPurchaseOrder = await PurchaseOrder.findOneAndUpdate(
-      { _id: purchaseOrderId },
-      req.body,
+        grossAmount: totalGross,
+        taxableAmount: totalGross,
+        totalGSTAmount: totalGST,
+        netAmount: totalNet,
+
+        approvedStatus,
+        approved_by,
+
+        updatedBy: req.user?._id,
+        updatedByType: "Distributor",
+      },
       { new: true }
     );
 
+    // ✅ Send quotation
     try {
-      // hit the send quotation API
       await axios.get(
         `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
       );
     } catch (error) {
-      // make the approval status as Not Approved
-      await PurchaseOrder.findByIdAndUpdate(
-        purchaseOrderId,
-        {
-          $set: {
-            approvedStatus: "Not Approved",
-            approved_by: null,
-            approvedByType: null,
-            quotationSuccess: false,
-          },
-        },
-        { new: true }
-      );
+      await PurchaseOrder.findByIdAndUpdate(purchaseOrderId, {
+        approvedStatus: "Not Approved",
+        approved_by: null,
+        quotationSuccess: false,
+      });
 
-      res.status(400);
       throw new Error(
-        `Error sending quotation: ${
+        `Quotation error: ${
           error?.response?.data?.message || error.message
         }`
       );
     }
 
     res.status(200).json({
-      status: 200,
       message: "GRN Confirmed Successfully",
       data: updatedPurchaseOrder,
     });
   } catch (error) {
-    res.status(400).json({ message: error.message || "Something went wrong" });
+    res.status(400).json({
+      message: error.message || "Something went wrong",
+    });
   }
 });
 
