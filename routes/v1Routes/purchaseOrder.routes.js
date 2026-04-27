@@ -47,6 +47,8 @@ const { poReport } = require("../../controllers/purchaseOrder/poReport.js");
 const { printPO } = require("../../controllers/purchaseOrder/printPO.js");
 const { confirmPurchaseGRNeOrder } = require("../../controllers/purchaseOrder/confirmPurchaseGRNeOrder.js");
 
+const { addSoNumberToOrder } = require("../../controllers/purchaseOrder/addSoNumberPurchaseOrdre.js");
+
 
 const purchaseOrderRoutes = express.Router();
 
@@ -59,6 +61,11 @@ purchaseOrderRoutes
   purchaseOrderRoutes
   .route("/confirm-grn-primary-order/:purchaseOrderId")
   .patch(protect, confirmPurchaseGRNeOrder);
+
+purchaseOrderRoutes
+  .route("/add-so-number-to-order/:purchaseOrderId")
+  .patch(protect, addSoNumberToOrder);
+
 purchaseOrderRoutes
   .route("/update-purchase-order/:purchaseOrderId")
   .patch(protectDisRoute, updatePurchaseOrder);

@@ -8,7 +8,7 @@ const confirmPurchaseGRNeOrder = asyncHandler(async (req, res) => {
     const { purchaseOrderId } = req.params;
     const { lineItems = [], status } = req.body;
 
-    console.log("Received data:", { purchaseOrderId, lineItems, status });
+  console.log("Received data for GRN confirmation:", lineItems);
 
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
@@ -130,7 +130,7 @@ const confirmPurchaseGRNeOrder = asyncHandler(async (req, res) => {
     }
 
     res.status(200).json({
-      message: "GRN Confirmed Successfully",
+      message: "GRN Confirmed Successfulldfvcsdvy",
       data: updatedPurchaseOrder,
     });
   } catch (error) {

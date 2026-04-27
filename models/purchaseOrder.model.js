@@ -32,6 +32,7 @@ const LineItemSchema = new mongoose.Schema({
     type: String,
   },
 
+
   boxOrderQty: {
     type: Number,
     default: 0,
@@ -89,10 +90,20 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    invoiceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Invoice"
+    },
     supplierId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
     },
+    soNumber: {
+  type: String,
+  unique: true,
+  sparse: true,
+  trim: true,
+},
     expectedDeliveryDate: {
       type: Date,
     },

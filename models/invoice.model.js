@@ -84,6 +84,11 @@ const invoiceSchema = new mongoose.Schema(
       default: "All",
       required: true,
     },
+    purchaseOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PurchaseOrder",
+      required: true
+    },
     targetIds: {
       type: [
         {
