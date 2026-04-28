@@ -1,14 +1,15 @@
 const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
-const { SERVER_URL } = require("../../config/server.config");
-const axios = require("axios");
+const Invoice = require("../../models/invoice.model");
+const Price = require("../../models/price.model");
+const Product = require("../../models/product.model");
 
-const confirmPurchaseGRNeOrder = asyncHandler(async (req, res) => {
+const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
-    const { lineItems = [], status } = req.body;
+    const { lineItems = [] } = req.body;
 
-  console.log("Received data for GRN confirmation:", lineItems);
+    console.log("📥 GRN Request:", lineItems);
 
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
@@ -16,128 +17,261 @@ const confirmPurchaseGRNeOrder = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: "Purchase Order not found" });
     }
 
+    // =========================
+    // 🔥 FETCH ALL PREVIOUS INVOICES
+    // =========================
+    const invoices = await Invoice.find({
+      purchaseOrderId: purchaseOrder._id,
+    });
+
+    // =========================
+    // 🔥 BUILD RECEIVED QTY MAP
+    // =========================
+    const receivedMap = {};
+
+    for (const inv of invoices) {
+      for (const li of inv.lineItems) {
+        const key = String(li.product);
+        receivedMap[key] =
+          (receivedMap[key] || 0) + Number(li.qty || 0);
+      }
+    }
+
+    const grnNumber = `GRN-${Date.now()}`;
+
     let totalGross = 0;
-    let totalGST = 0;
+    let totalTaxable = 0;
+    let totalCGST = 0;
+    let totalSGST = 0;
+    let totalIGST = 0;
     let totalNet = 0;
 
-    // ✅ Correct mapping using product ObjectId
-    const updatedLineItems = purchaseOrder.lineItems.map((existingItem) => {
-      const updatedItem = lineItems.find(
-        (i) =>
-          String(i.productId) === String(existingItem.product) // ✅ FIXED
+    const invoiceLineItems = [];
+
+    // =========================
+    // 🔁 LOOP THROUGH REQUEST ITEMS
+    // =========================
+    for (const item of lineItems) {
+      const poItem = purchaseOrder.lineItems.find(
+        (p) => String(p.product) === String(item.productId)
       );
 
-      if (!updatedItem) return existingItem;
+      if (!poItem) {
+        console.log("⚠️ Not in PO:", item.productId);
+        continue;
+      }
 
-      const grossAmt = Number(updatedItem.grossAmt || 0);
-      const taxableAmt = Number(updatedItem.taxableAmt || grossAmt);
-      const netAmt = Number(updatedItem.netAmt || 0);
+      const requestedQty = Number(item.orderQty || 0);
+      if (!requestedQty || requestedQty <= 0) continue;
 
-      const gstAmt = netAmt - grossAmt;
+      const alreadyReceived =
+        receivedMap[String(item.productId)] || 0;
 
-      totalGross += grossAmt;
-      totalGST += gstAmt;
-      totalNet += netAmt;
+      const remainingQty = poItem.orderQty - alreadyReceived;
 
-      return {
-        ...existingItem.toObject(),
+      // ❌ Skip completed
+      if (remainingQty <= 0) {
+        console.log("⏭ Already completed:", item.productId);
+        continue;
+      }
 
-        boxOrderQty: Number(updatedItem.boxOrderQty || 0),
-        orderQty: Number(updatedItem.orderQty || 0),
+      // ❌ Prevent over GRN
+      if (requestedQty > remainingQty) {
+        return res.status(400).json({
+          message: `Only ${remainingQty} qty remaining for product ${item.productId}`,
+        });
+      }
 
-        grossAmt,
-        taxableAmt,
+      // =========================
+      // 💰 FETCH PRICE
+      // =========================
+      let priceDoc = await Price.findOne({
+        productId: item.productId,
+        distributorId: purchaseOrder.distributorId,
+        status: true,
+      }).sort({ createdAt: -1 });
 
-        // ✅ store GST properly
-        totalIGST: existingItem.totalIGST || 0,
-        totalCGST: existingItem.totalCGST || gstAmt / 2,
-        totalSGST: existingItem.totalSGST || gstAmt / 2,
+      if (!priceDoc) {
+        priceDoc = await Price.findOne({
+          productId: item.productId,
+          price_type: "national",
+          status: true,
+        }).sort({ createdAt: -1 });
+      }
 
-        netAmt,
-      };
+      if (!priceDoc) {
+        console.log("⚠️ No price:", item.productId);
+        continue;
+      }
+
+      const mrp = Number(priceDoc.mrp_price || 0);
+
+      // =========================
+      // 🎯 L1 DISCOUNT
+      // =========================
+      const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+
+      let basicRate = mrp;
+      if (l1 > 0) {
+        basicRate = mrp - (mrp * l1) / 100;
+      }
+
+      if (!basicRate || basicRate < 0) {
+        basicRate = mrp;
+      }
+
+      // =========================
+      // 🧾 TAX FETCH
+      // =========================
+      const product = await Product.findById(item.productId);
+
+      let cgstPercent = Number(product?.cgst || 0);
+      let sgstPercent = Number(product?.sgst || 0);
+      let igstPercent = Number(product?.igst || 0);
+
+      if (!cgstPercent && !sgstPercent && !igstPercent) {
+        cgstPercent = 9;
+        sgstPercent = 9;
+      }
+
+      // =========================
+      // 🧮 CALCULATIONS
+      // =========================
+      const grossAmount = basicRate * requestedQty;
+      const taxableAmount = grossAmount;
+
+      let cgst = 0,
+        sgst = 0,
+        igst = 0;
+
+      if (igstPercent > 0) {
+        igst = (grossAmount * igstPercent) / 100;
+      } else {
+        cgst = (grossAmount * cgstPercent) / 100;
+        sgst = (grossAmount * sgstPercent) / 100;
+      }
+
+      const netAmount = grossAmount + cgst + sgst + igst;
+
+      // =========================
+      // ➕ TOTALS
+      // =========================
+      totalGross += grossAmount;
+      totalTaxable += taxableAmount;
+      totalCGST += cgst;
+      totalSGST += sgst;
+      totalIGST += igst;
+      totalNet += netAmount;
+
+      // =========================
+      // 📦 PUSH LINE ITEM
+      // =========================
+      invoiceLineItems.push({
+        product: item.productId,
+        plant: poItem.plant || null,
+        goodsType: "billed",
+
+        mrp,
+        basicRate,
+
+        qty: requestedQty,
+        receivedQty: requestedQty,
+
+        poNumber: purchaseOrder.purchaseOrderNo,
+
+        grossAmount,
+        discountAmount: 0,
+        specialDiscountAmount: 0,
+        taxableAmount,
+
+        cgst,
+        sgst,
+        igst,
+
+        netAmount,
+
+        usedBasePoint: 0,
+        shortageQty: 0,
+        shortageUom: "pcs",
+        damageQty: 0,
+        damageUom: "pcs",
+
+        adjustmentStatus: "success",
+      });
+    }
+
+    // =========================
+    // ❌ NO VALID ITEMS
+    // =========================
+    if (!invoiceLineItems.length) {
+      return res.status(400).json({
+        message: "No remaining qty available for GRN",
+      });
+    }
+
+    // =========================
+    // 🧾 CREATE INVOICE
+    // =========================
+    const invoice = await Invoice.create({
+      distributorId: purchaseOrder.distributorId,
+      invoiceNo: `INV-${Date.now()}`,
+      date: new Date(),
+
+      status: "In-Transit",
+
+      purchaseOrderId: purchaseOrder._id,
+
+      grnDate: new Date(),
+      grnNumber,
+
+      lineItems: invoiceLineItems,
+
+      grossAmount: totalGross,
+      taxableAmount: totalTaxable,
+
+      cgst: totalCGST,
+      sgst: totalSGST,
+      igst: totalIGST,
+
+      invoiceAmount: totalNet,
+      totalInvoiceAmount: totalNet,
+
+      GRNFKDATE: new Date(),
+      grnStatus: "success",
+
+      adjustmentSummary: {
+        totalProducts: invoiceLineItems.length,
+        successfulAdjustments: invoiceLineItems.length,
+        failedAdjustments: 0,
+        lastRetryAttempt: new Date(),
+      },
     });
 
-    // ✅ Approval logic
-    let config = {};
-    try {
-      const resConfig = await axios.get(
-        `${SERVER_URL}/api/v1/config/get-config`
-      );
-      config = resConfig.data.data;
-    } catch (error) {
-      throw new Error(
-        `Config error: ${
-          error?.response?.data?.message || error.message
-        }`
-      );
-    }
+    // =========================
+    // 🔗 UPDATE PO (MULTIPLE INVOICES)
+    // =========================
+    purchaseOrder.invoiceIds = purchaseOrder.invoiceIds || [];
+    purchaseOrder.invoiceIds.push(invoice._id);
 
-    let needApproval =
-      config?.functionalSettings?.need_employee_approval_for_po ||
-      "no approval";
+    purchaseOrder.status = "Confirmed";
+    purchaseOrder.updatedBy = req.user?._id;
+    purchaseOrder.updatedByType = "Distributor";
 
-    let approvedStatus = "Not Approved";
-    let approved_by = null;
+    await purchaseOrder.save();
 
-    if (needApproval === "no approval" && status === "Confirmed") {
-      approvedStatus = "Approved";
-      approved_by = req.user?._id || null;
-    }
-
-    if (status === "Cancelled") {
-      approvedStatus = "Not Approved";
-      approved_by = req.user?._id || null;
-    }
-
-    // ✅ FINAL DB UPDATE
-    const updatedPurchaseOrder = await PurchaseOrder.findByIdAndUpdate(
-      purchaseOrderId,
-      {
-        status,
-        lineItems: updatedLineItems,
-
-        grossAmount: totalGross,
-        taxableAmount: totalGross,
-        totalGSTAmount: totalGST,
-        netAmount: totalNet,
-
-        approvedStatus,
-        approved_by,
-
-        updatedBy: req.user?._id,
-        updatedByType: "Distributor",
-      },
-      { new: true }
-    );
-
-    // ✅ Send quotation
-    try {
-      await axios.get(
-        `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
-      );
-    } catch (error) {
-      await PurchaseOrder.findByIdAndUpdate(purchaseOrderId, {
-        approvedStatus: "Not Approved",
-        approved_by: null,
-        quotationSuccess: false,
-      });
-
-      throw new Error(
-        `Quotation error: ${
-          error?.response?.data?.message || error.message
-        }`
-      );
-    }
-
-    res.status(200).json({
-      message: "GRN Confirmed Successfulldfvcsdvy",
-      data: updatedPurchaseOrder,
+    return res.status(200).json({
+      message: "✅ GRN created successfully",
+      data: invoice,
     });
   } catch (error) {
-    res.status(400).json({
+    console.error("❌ GRN ERROR:", error);
+
+    return res.status(400).json({
       message: error.message || "Something went wrong",
     });
   }
 });
 
-module.exports = { confirmPurchaseGRNeOrder };
+module.exports = {
+  confirmPurchaseGRNeOrder: confirmGRNAndGenerateInvoice,
+};
