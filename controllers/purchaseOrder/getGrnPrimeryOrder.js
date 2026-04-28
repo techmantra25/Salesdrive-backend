@@ -5,7 +5,6 @@ const getInTransitQty = require("../../utils/getInTransitQty");
 const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config");
 
-// Get Purchase Order
 const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
@@ -13,10 +12,10 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
     let purchaseOrder = await PurchaseOrder.findById(purchaseOrderId)
       .populate([
         { path: "distributorId", select: "" },
-        { path: "supplierId", select: " " },
+        { path: "supplierId", select: "" },
         {
           path: "lineItems.product",
-          select: " ",
+          select: "",
           populate: [
             { path: "cat_id", select: "" },
             { path: "collection_id", select: "" },
@@ -38,24 +37,69 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
 
     const distributorId = purchaseOrder?.distributorId?._id;
 
+    // =========================
+    // ✅ BUILD RECEIVED MAP
+    // =========================
+    const invoices = await Invoice.find({
+      purchaseOrderId: purchaseOrder._id,
+    });
+
+    const receivedMap = {};
+
+    for (const inv of invoices) {
+      for (const li of inv.lineItems) {
+        const key = String(li.product);
+        receivedMap[key] =
+          (receivedMap[key] || 0) + Number(li.qty || 0);
+      }
+    }
+
     let lineItems = purchaseOrder?.lineItems;
 
-    // fetch in-transit qty for each line item
+    // =========================
+    // ✅ PROCESS LINE ITEMS
+    // =========================
     lineItems = await Promise.all(
       lineItems.map(async (item) => {
         try {
-          // fetch in transit stock
+          const productId = item?.product?._id;
+
+          // ✅ remaining calculation
+          const alreadyReceived =
+            receivedMap[String(productId)] || 0;
+
+          const remainingQty = Math.max(
+            (item.orderQty || 0) - alreadyReceived,
+            0
+          );
+
+          const piecesPerBox =
+            Number(item?.product?.no_of_pieces_in_a_box || 1);
+
+          const remainingBoxQty = Math.floor(
+            remainingQty / piecesPerBox
+          );
+
+          // =========================
+          // ✅ IN-TRANSIT
+          // =========================
           const inTransitInvoices = await Invoice.find({
             distributorId: distributorId,
             status: "In-Transit",
           }).populate("lineItems.product");
 
-          const productId = item?.product?._id;
-
-          const intransitQty = getInTransitQty(inTransitInvoices, productId);
+          const intransitQty = getInTransitQty(
+            inTransitInvoices,
+            productId
+          );
 
           return {
             ...item,
+
+            // ✅ NEW FIELDS (ONLY ADDITION)
+            existorderqty: remainingQty,
+            existboxorderqty: remainingBoxQty,
+
             inventoryId: item?.inventoryId
               ? {
                   ...item?.inventoryId,
@@ -64,9 +108,12 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
               : null,
           };
         } catch (error) {
-          console.error("Error fetching in-transit qty:", error);
+          console.error("Error processing item:", error);
+
           return {
             ...item,
+            existorderqty: 0,
+            existboxorderqty: 0,
             inventoryId: item?.inventoryId
               ? {
                   ...item?.inventoryId,
@@ -78,7 +125,9 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
       })
     );
 
-    // fetch norms qty for each line item for the distributor
+    // =========================
+    // ✅ PRODUCT NORMS (UNCHANGED)
+    // =========================
     lineItems = await Promise.all(
       lineItems.map(async (item) => {
         try {
@@ -88,17 +137,10 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
             `${SERVER_URL}/api/v1/product_norm/get_product_norm_by_db_id_and_product_id/distributor/${distributorId?.toString()}/product/${productId?.toString()}`
           );
 
-          if (response?.data?.data) {
-            return {
-              ...item,
-              productNorm: response?.data?.data,
-            };
-          } else {
-            return {
-              ...item,
-              productNorm: null,
-            };
-          }
+          return {
+            ...item,
+            productNorm: response?.data?.data || null,
+          };
         } catch (error) {
           return {
             ...item,

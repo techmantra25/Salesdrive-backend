@@ -49,6 +49,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     const invoiceLineItems = [];
     const productSummary = [];
 
+    // ✅ NEW ARRAYS
+    const failedProducts = [];
+    const completedProducts = [];
+
     // =========================
     // 🔁 PROCESS LINE ITEMS
     // =========================
@@ -62,7 +66,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         continue;
       }
 
-      // ✅ FIX: FETCH PRODUCT FIRST
+      // ✅ FETCH PRODUCT
       const product = await Product.findById(item.productId);
       const productName =
         product?.name || product?.productName || "Unknown Product";
@@ -75,17 +79,23 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
       const remainingQty = poItem.orderQty - alreadyReceived;
 
-      // ❌ Skip completed
+      // ⏭ Already completed
       if (remainingQty <= 0) {
         console.log("⏭ Already completed:", productName);
+
+        completedProducts.push(
+          `${productName} (Already completed)`
+        );
+
         continue;
       }
 
-      // ❌ Prevent over GRN
+      // ❌ Over quantity (DO NOT RETURN)
       if (requestedQty > remainingQty) {
-        return res.status(400).json({
-          message: `Only ${remainingQty} qty remaining for product ${productName}`,
-        });
+        failedProducts.push(
+          `${productName} (Only ${remainingQty} qty left)`
+        );
+        continue;
       }
 
       // =========================
@@ -127,7 +137,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       }
 
       // =========================
-      // 🧾 TAX (use already fetched product)
+      // 🧾 TAX
       // =========================
       let cgstPercent = Number(product?.cgst || 0);
       let sgstPercent = Number(product?.sgst || 0);
@@ -174,32 +184,24 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         product: item.productId,
         plant: poItem.plant || null,
         goodsType: "billed",
-
         mrp,
         basicRate,
-
         qty: requestedQty,
         receivedQty: requestedQty,
-
         poNumber: purchaseOrder.purchaseOrderNo,
-
         grossAmount,
         discountAmount: 0,
         specialDiscountAmount: 0,
         taxableAmount,
-
         cgst,
         sgst,
         igst,
-
         netAmount,
-
         usedBasePoint: 0,
         shortageQty: 0,
         shortageUom: "pcs",
         damageQty: 0,
         damageUom: "pcs",
-
         adjustmentStatus: "success",
       });
 
@@ -209,12 +211,16 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       });
     }
 
+    // ❌ If nothing valid
     if (!invoiceLineItems.length) {
       return res.status(400).json({
         message: "No remaining qty available for GRN",
       });
     }
 
+    // =========================
+    // 🧾 CREATE INVOICE
+    // =========================
     const invoice = await Invoice.create({
       distributorId: purchaseOrder.distributorId,
       invoiceNo: `INV-${Date.now()}`,
@@ -241,41 +247,29 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       },
     });
 
-    const updatedReceivedMap = { ...receivedMap };
+    // =========================
+    // 🧾 FINAL MESSAGE
+    // =========================
+    let finalMessage = "";
 
-    for (const li of invoiceLineItems) {
-      const key = String(li.product);
-      updatedReceivedMap[key] =
-        (updatedReceivedMap[key] || 0) + Number(li.qty || 0);
+    if (productSummary.length) {
+      const successMsg = productSummary
+        .map((p) => `${p.name} (${p.qty})`)
+        .join(", ");
+
+      finalMessage += `⚠️ Partial GRN created for: ${successMsg}`;
     }
 
-    const isFullyCompleted = purchaseOrder.lineItems.every((poItem) => {
-      const receivedQty =
-        updatedReceivedMap[String(poItem.product)] || 0;
+    if (failedProducts.length) {
+      finalMessage += ` | ❌ Failed: ${failedProducts.join(", ")}`;
+    }
 
-      return receivedQty >= poItem.orderQty;
-    });
-
-    purchaseOrder.invoiceIds = purchaseOrder.invoiceIds || [];
-    purchaseOrder.invoiceIds.push(invoice._id);
-
-    purchaseOrder.status = isFullyCompleted
-      ? "Completed"
-      : "Partially Received";
-
-    purchaseOrder.updatedBy = req.user?._id;
-    purchaseOrder.updatedByType = "Distributor";
-
-    await purchaseOrder.save();
-
-    const productMessage = productSummary
-      .map((p) => `${p.name} (${p.qty})`)
-      .join(", ");
+    if (completedProducts.length) {
+      finalMessage += ` | ⏭ Skipped: ${completedProducts.join(", ")}`;
+    }
 
     return res.status(200).json({
-      message: isFullyCompleted
-        ? `✅ GRN completed for: ${productMessage}`
-        : `⚠️ Partial GRN created for: ${productMessage}`,
+      message: finalMessage,
       data: invoice,
     });
   } catch (error) {
