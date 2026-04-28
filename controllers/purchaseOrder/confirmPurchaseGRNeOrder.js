@@ -18,14 +18,14 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     }
 
     // =========================
-    // 🔥 FETCH ALL PREVIOUS INVOICES
+    // 🔥 FETCH PREVIOUS INVOICES
     // =========================
     const invoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
     });
 
     // =========================
-    // 🔥 BUILD RECEIVED QTY MAP
+    // 🔥 BUILD RECEIVED MAP
     // =========================
     const receivedMap = {};
 
@@ -47,9 +47,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     let totalNet = 0;
 
     const invoiceLineItems = [];
+    const productSummary = [];
 
     // =========================
-    // 🔁 LOOP THROUGH REQUEST ITEMS
+    // 🔁 PROCESS LINE ITEMS
     // =========================
     for (const item of lineItems) {
       const poItem = purchaseOrder.lineItems.find(
@@ -61,6 +62,11 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         continue;
       }
 
+      // ✅ FIX: FETCH PRODUCT FIRST
+      const product = await Product.findById(item.productId);
+      const productName =
+        product?.name || product?.productName || "Unknown Product";
+
       const requestedQty = Number(item.orderQty || 0);
       if (!requestedQty || requestedQty <= 0) continue;
 
@@ -71,14 +77,14 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
       // ❌ Skip completed
       if (remainingQty <= 0) {
-        console.log("⏭ Already completed:", item.productId);
+        console.log("⏭ Already completed:", productName);
         continue;
       }
 
       // ❌ Prevent over GRN
       if (requestedQty > remainingQty) {
         return res.status(400).json({
-          message: `Only ${remainingQty} qty remaining for product ${item.productId}`,
+          message: `Only ${remainingQty} qty remaining for product ${productName}`,
         });
       }
 
@@ -121,10 +127,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       }
 
       // =========================
-      // 🧾 TAX FETCH
+      // 🧾 TAX (use already fetched product)
       // =========================
-      const product = await Product.findById(item.productId);
-
       let cgstPercent = Number(product?.cgst || 0);
       let sgstPercent = Number(product?.sgst || 0);
       let igstPercent = Number(product?.igst || 0);
@@ -198,47 +202,37 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
         adjustmentStatus: "success",
       });
+
+      productSummary.push({
+        name: productName,
+        qty: requestedQty,
+      });
     }
 
-    // =========================
-    // ❌ NO VALID ITEMS
-    // =========================
     if (!invoiceLineItems.length) {
       return res.status(400).json({
         message: "No remaining qty available for GRN",
       });
     }
 
-    // =========================
-    // 🧾 CREATE INVOICE
-    // =========================
     const invoice = await Invoice.create({
       distributorId: purchaseOrder.distributorId,
       invoiceNo: `INV-${Date.now()}`,
       date: new Date(),
-
       status: "In-Transit",
-
       purchaseOrderId: purchaseOrder._id,
-
       grnDate: new Date(),
       grnNumber,
-
       lineItems: invoiceLineItems,
-
       grossAmount: totalGross,
       taxableAmount: totalTaxable,
-
       cgst: totalCGST,
       sgst: totalSGST,
       igst: totalIGST,
-
       invoiceAmount: totalNet,
       totalInvoiceAmount: totalNet,
-
       GRNFKDATE: new Date(),
       grnStatus: "success",
-
       adjustmentSummary: {
         totalProducts: invoiceLineItems.length,
         successfulAdjustments: invoiceLineItems.length,
@@ -247,20 +241,41 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       },
     });
 
-    // =========================
-    // 🔗 UPDATE PO (MULTIPLE INVOICES)
-    // =========================
+    const updatedReceivedMap = { ...receivedMap };
+
+    for (const li of invoiceLineItems) {
+      const key = String(li.product);
+      updatedReceivedMap[key] =
+        (updatedReceivedMap[key] || 0) + Number(li.qty || 0);
+    }
+
+    const isFullyCompleted = purchaseOrder.lineItems.every((poItem) => {
+      const receivedQty =
+        updatedReceivedMap[String(poItem.product)] || 0;
+
+      return receivedQty >= poItem.orderQty;
+    });
+
     purchaseOrder.invoiceIds = purchaseOrder.invoiceIds || [];
     purchaseOrder.invoiceIds.push(invoice._id);
 
-    purchaseOrder.status = "Confirmed";
+    purchaseOrder.status = isFullyCompleted
+      ? "Completed"
+      : "Partially Received";
+
     purchaseOrder.updatedBy = req.user?._id;
     purchaseOrder.updatedByType = "Distributor";
 
     await purchaseOrder.save();
 
+    const productMessage = productSummary
+      .map((p) => `${p.name} (${p.qty})`)
+      .join(", ");
+
     return res.status(200).json({
-      message: "✅ GRN created successfully",
+      message: isFullyCompleted
+        ? `✅ GRN completed for: ${productMessage}`
+        : `⚠️ Partial GRN created for: ${productMessage}`,
       data: invoice,
     });
   } catch (error) {
