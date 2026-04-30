@@ -118,6 +118,11 @@ const invoiceSchema = new mongoose.Schema(
     roundOff: { type: Number, default: 0 }, // round off amount
     totalInvoiceAmount: { type: Number }, // invoiceAmount + roundOff
     totalBasePoints: { type: Number, default: null },
+    invoicetype   : {
+      type: String,
+      enum: ["Complete-Invoiced", "Partially-Invoiced"],
+      default: "All",
+    },
 
     purchaseReturnIds: {
       type: [mongoose.Schema.Types.ObjectId],

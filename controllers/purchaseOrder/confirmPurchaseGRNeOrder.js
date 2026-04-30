@@ -219,6 +219,29 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     }
 
     // =========================
+// 🏷️ DETERMINE INVOICE TYPE
+// =========================
+let invoicetype = "Partially-Invoiced";
+
+const allProductsCompleted = purchaseOrder.lineItems.every((poItem) => {
+  const alreadyReceived =
+    receivedMap[String(poItem.product)] || 0;
+
+  const currentReceived =
+    invoiceLineItems
+      .filter(
+        (li) =>
+          String(li.product) === String(poItem.product)
+      )
+      .reduce((sum, li) => sum + (li.qty || 0), 0);
+
+  return alreadyReceived + currentReceived >= poItem.orderQty;
+});
+
+if (allProductsCompleted) {
+  invoicetype = "Complete-Invoiced";
+}
+    // =========================
     // 🧾 CREATE INVOICE
     // =========================
     const invoice = await Invoice.create({
@@ -239,6 +262,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       totalInvoiceAmount: totalNet,
       GRNFKDATE: new Date(),
       grnStatus: "success",
+      invoicetype,
       adjustmentSummary: {
         totalProducts: invoiceLineItems.length,
         successfulAdjustments: invoiceLineItems.length,
