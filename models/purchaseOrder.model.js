@@ -32,13 +32,11 @@ const LineItemSchema = new mongoose.Schema({
     type: String,
   },
 
-
   boxOrderQty: {
     type: Number,
     default: 0,
   },
 
-  // ✅ FIXED (TYPO CORRECTED)
   orderQty: {
     type: Number,
     default: 0,
@@ -94,6 +92,12 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Invoice"
     },
+      invoicestatus: {
+    type: String,
+    enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
+    default: "Pending",
+  },
+
     supplierId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",

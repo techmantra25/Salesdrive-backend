@@ -195,6 +195,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       rejectedReason,
       approved_by,
       status,
+      invoicestatus: "Pending",
       orderRemark,
       totalBasePoints,
     });
