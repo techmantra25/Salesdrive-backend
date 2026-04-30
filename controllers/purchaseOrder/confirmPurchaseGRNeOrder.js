@@ -266,6 +266,56 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         lastRetryAttempt: new Date(),
       },
     });
+    // =========================
+    // 🔥 UPDATE PURCHASE ORDER INVOICE STATUS (ONLY THIS CHANGE)
+    // =========================
+
+    // Fetch all invoices again (including current one)
+    const allInvoices = await Invoice.find({
+      purchaseOrderId: purchaseOrder._id,
+    });
+
+    // Build total received qty map
+    const totalReceivedMap = {};
+
+    for (const inv of allInvoices) {
+      for (const li of inv.lineItems) {
+        const key = String(li.product);
+        totalReceivedMap[key] =
+          (totalReceivedMap[key] || 0) + Number(li.qty || 0);
+      }
+    }
+
+    // Decide PO status
+    let isComplete = true;
+    let isPartial = false;
+
+    for (const poItem of purchaseOrder.lineItems) {
+      const received = totalReceivedMap[String(poItem.product)] || 0;
+
+      if (received === 0) {
+        isComplete = false;
+      } else if (received < poItem.orderQty) {
+        isComplete = false;
+        isPartial = true;
+      } else {
+        isPartial = true;
+      }
+    }
+
+    let poInvoiceStatus = "Pending";
+
+    if (isComplete) {
+      poInvoiceStatus = "Complete-Invoiced";
+    } else if (isPartial) {
+      poInvoiceStatus = "Partially-Invoiced";
+    }
+
+    // Update ONLY invoicestatus
+    await PurchaseOrder.findByIdAndUpdate(
+      purchaseOrder._id,
+      { $set: { invoicestatus: poInvoiceStatus } }
+    );
 
     // =========================
     // 🧾 FINAL MESSAGE
