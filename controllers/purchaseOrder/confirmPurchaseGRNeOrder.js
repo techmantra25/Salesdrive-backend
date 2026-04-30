@@ -52,7 +52,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // ✅ NEW ARRAYS
     const failedProducts = [];
     const completedProducts = [];
-
+    const zeroQtyProducts = [];
+    let hasValidationError = false;
     // =========================
     // 🔁 PROCESS LINE ITEMS
     // =========================
@@ -71,33 +72,37 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       const productName =
         product?.name || product?.productName || "Unknown Product";
 
+
+
       const requestedQty = Number(item.orderQty || 0);
-      if (!requestedQty || requestedQty <= 0) continue;
 
       const alreadyReceived =
         receivedMap[String(item.productId)] || 0;
 
       const remainingQty = poItem.orderQty - alreadyReceived;
 
-      // ⏭ Already completed
-      if (remainingQty <= 0) {
-        console.log("⏭ Already completed:", productName);
-
-        completedProducts.push(
-          `${productName} (Already completed)`
+      // ❌ Case 1: user entered qty but nothing available
+      if (remainingQty <= 0 && requestedQty > 0) {
+        failedProducts.push(
+          `${productName} (No qty available)`
         );
-
+        hasValidationError = true;
         continue;
       }
 
-      // ❌ Over quantity (DO NOT RETURN)
+      // ❌ Case 2: user exceeded remaining qty
       if (requestedQty > remainingQty) {
         failedProducts.push(
           `${productName} (Only ${remainingQty} qty left)`
         );
+        hasValidationError = true;
         continue;
       }
 
+      // ✅ Case 3: ignore zero qty (important)
+      if (!requestedQty || requestedQty <= 0) {
+        continue;
+      }
       // =========================
       // 💰 FETCH PRICE
       // =========================
@@ -210,12 +215,28 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         qty: requestedQty,
       });
     }
+    // ❌ STRICT OVER-QTY VALIDATION (NEW)
 
-    // ❌ If nothing valid
-    if (!invoiceLineItems.length) {
+
+    if (hasValidationError) {
       return res.status(400).json({
-        message: "No remaining qty available for GRN",
+        message: `Invoice failed. Issues: ${failedProducts.join(", ")}`,
       });
+    }
+    if (!invoiceLineItems.length) {
+      let message = "Cannot create invoice.";
+
+      if (failedProducts.length) {
+        message += ` Exceeded qty: ${failedProducts.join(", ")}`;
+      } else {
+        message += ` No valid quantity provided.`;
+      }
+
+      if (completedProducts.length) {
+        message += ` | Already completed: ${completedProducts.join(", ")}`;
+      }
+
+      return res.status(400).json({ message });
     }
 
     // =========================
@@ -334,10 +355,9 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       finalMessage += ` | ❌ Failed: ${failedProducts.join(", ")}`;
     }
 
-    if (completedProducts.length) {
-      finalMessage += ` | ⏭ Skipped: ${completedProducts.join(", ")}`;
+    if (zeroQtyProducts.length) {
+      finalMessage += ` | ⚠️ Zero qty: ${zeroQtyProducts.join(", ")}`;
     }
-
     return res.status(200).json({
       message: finalMessage,
       data: invoice,
