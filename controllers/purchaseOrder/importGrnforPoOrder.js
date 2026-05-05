@@ -5,16 +5,9 @@ const Price = require("../../models/price.model");
 const Product = require("../../models/product.model");
 
 /**
- * 🔥 Reusable single GRN processor (same as your existing logic)
+ * 🔥 COMMON GRN GENERATOR (REUSED)
  */
-const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
-  const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
-  console.log("Processing PO:", purchaseOrderId, "with items:", lineItems);
-
-  if (!purchaseOrder) {
-    throw new Error("Purchase Order not found");
-  }
-
+const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
   const invoices = await Invoice.find({
     purchaseOrderId: purchaseOrder._id,
   });
@@ -38,40 +31,45 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
   let totalNet = 0;
 
   const invoiceLineItems = [];
-  const productSummary = [];
   const failedProducts = [];
-
-  let hasValidationError = false;
+  const productSummary = [];
 
   for (const item of lineItems) {
+    // 🔥 find product using productCode
+    const product = await Product.findOne({
+      productCode: item.productCode,
+    });
+
+    if (!product) {
+      failedProducts.push(`Invalid Product Code: ${item.productCode}`);
+      continue;
+    }
+
     const poItem = purchaseOrder.lineItems.find(
-      (p) => String(p.product) === String(item.productId)
+      (p) => String(p.product) === String(product._id)
     );
 
-    if (!poItem) continue;
-
-    const product = await Product.findById(item.productId);
-    const productName =
-      product?.name || product?.productName || "Unknown Product";
+    if (!poItem) {
+      failedProducts.push(`${product.name} (Not in PO)`);
+      continue;
+    }
 
     const requestedQty = Number(item.orderQty || 0);
     const alreadyReceived =
-      receivedMap[String(item.productId)] || 0;
+      receivedMap[String(product._id)] || 0;
 
     const remainingQty = poItem.orderQty - alreadyReceived;
 
-    // ❌ validation same as single
+    // ❌ validations
     if (remainingQty <= 0 && requestedQty > 0) {
-      failedProducts.push(`${productName} (No qty available)`);
-      hasValidationError = true;
+      failedProducts.push(`${product.name} (No qty available)`);
       continue;
     }
 
     if (requestedQty > remainingQty) {
       failedProducts.push(
-        `${productName} (Only ${remainingQty} qty left)`
+        `${product.name} (Only ${remainingQty} qty left)`
       );
-      hasValidationError = true;
       continue;
     }
 
@@ -79,20 +77,23 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
 
     // 💰 price
     let priceDoc = await Price.findOne({
-      productId: item.productId,
+      productId: product._id,
       distributorId: purchaseOrder.distributorId,
       status: true,
     }).sort({ createdAt: -1 });
 
     if (!priceDoc) {
       priceDoc = await Price.findOne({
-        productId: item.productId,
+        productId: product._id,
         price_type: "national",
         status: true,
       }).sort({ createdAt: -1 });
     }
 
-    if (!priceDoc) continue;
+    if (!priceDoc) {
+      failedProducts.push(`${product.name} (No price found)`);
+      continue;
+    }
 
     const mrp = Number(priceDoc.mrp_price || 0);
     const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
@@ -102,9 +103,15 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
       basicRate = mrp - (mrp * l1) / 100;
     }
 
-    const cgstPercent = Number(product?.cgst || 9);
-    const sgstPercent = Number(product?.sgst || 9);
-    const igstPercent = Number(product?.igst || 0);
+    // 🧾 tax
+    let cgstPercent = Number(product?.cgst || 0);
+    let sgstPercent = Number(product?.sgst || 0);
+    let igstPercent = Number(product?.igst || 0);
+
+    if (!cgstPercent && !sgstPercent && !igstPercent) {
+      cgstPercent = 9;
+      sgstPercent = 9;
+    }
 
     const grossAmount = basicRate * requestedQty;
     const taxableAmount = grossAmount;
@@ -122,6 +129,7 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
 
     const netAmount = grossAmount + cgst + sgst + igst;
 
+    // ➕ totals
     totalGross += grossAmount;
     totalTaxable += taxableAmount;
     totalCGST += cgst;
@@ -129,8 +137,10 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
     totalIGST += igst;
     totalNet += netAmount;
 
+    // 📦 push
     invoiceLineItems.push({
-      product: item.productId,
+      product: product._id,
+      plant: poItem.plant || null,
       goodsType: "billed",
       mrp,
       basicRate,
@@ -138,26 +148,31 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
       receivedQty: requestedQty,
       poNumber: purchaseOrder.purchaseOrderNo,
       grossAmount,
+      discountAmount: 0,
+      specialDiscountAmount: 0,
       taxableAmount,
       cgst,
       sgst,
       igst,
       netAmount,
+      usedBasePoint: 0,
+      shortageQty: 0,
+      damageQty: 0,
       adjustmentStatus: "success",
     });
 
     productSummary.push({
-      name: productName,
+      name: product.name,
       qty: requestedQty,
     });
   }
 
-  if (hasValidationError) {
-    throw new Error(`Issues: ${failedProducts.join(", ")}`);
-  }
-
   if (!invoiceLineItems.length) {
-    throw new Error("No valid quantity provided");
+    throw new Error(
+      failedProducts.length
+        ? failedProducts.join(", ")
+        : "No valid quantity provided"
+    );
   }
 
   // 🧾 create invoice
@@ -180,41 +195,83 @@ const processSingleGRN = async ({ purchaseOrderId, lineItems }) => {
     grnStatus: "success",
   });
 
+  // 🔥 update PO status
+  const allInvoices = await Invoice.find({
+    purchaseOrderId: purchaseOrder._id,
+  });
+
+  const totalReceivedMap = {};
+  for (const inv of allInvoices) {
+    for (const li of inv.lineItems) {
+      const key = String(li.product);
+      totalReceivedMap[key] =
+        (totalReceivedMap[key] || 0) + Number(li.qty || 0);
+    }
+  }
+
+  let isComplete = true;
+  let isPartial = false;
+
+  for (const poItem of purchaseOrder.lineItems) {
+    const received = totalReceivedMap[String(poItem.product)] || 0;
+
+    if (received === 0) {
+      isComplete = false;
+    } else if (received < poItem.orderQty) {
+      isComplete = false;
+      isPartial = true;
+    } else {
+      isPartial = true;
+    }
+  }
+
+  let poInvoiceStatus = "Pending";
+
+  if (isComplete) poInvoiceStatus = "Complete-Invoiced";
+  else if (isPartial) poInvoiceStatus = "Partially-Invoiced";
+
+  await PurchaseOrder.findByIdAndUpdate(
+    purchaseOrder._id,
+    { $set: { invoicestatus: poInvoiceStatus } }
+  );
+
   return {
     message: `GRN created for ${productSummary.length} items`,
     data: invoice,
+    failedProducts,
   };
 };
 
 /**
- * 🚀 MAIN CONTROLLER: BULK GRN IMPORT
+ * 🚀 BULK GRN IMPORT (CSV BASED)
  */
 const importGrnforPoOrder = asyncHandler(async (req, res) => {
   try {
     const rows = req.body.data;
-console.log("Received bulk GRN data:", rows);
+
     if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({
         message: "No data provided",
       });
     }
 
-    // 🔥 group by PO
+    // 🔥 group by PO Number
     const grouped = {};
 
     for (const row of rows) {
-      const poId = row.purchaseOrderId;
+      const poNumber = row["PO Number"];
+      const productCode = row["Product Code"];
 
-      if (!poId || !row.productId) continue;
+      if (!poNumber || !productCode) continue;
 
-      if (!grouped[poId]) {
-        grouped[poId] = [];
+      if (!grouped[poNumber]) {
+        grouped[poNumber] = [];
       }
 
-      grouped[poId].push({
-        productId: row.productId,
-        orderQty: Number(row.orderQty || 0),
-        l1Basic: Number(row.l1Basic || 0),
+      grouped[poNumber].push({
+        productCode,
+        orderQty: Number(row["SO Qty (PCS)"] || 0),
+        l1Basic: Number(row["L1 Basic"] || 0),
       });
     }
 
@@ -222,20 +279,29 @@ console.log("Received bulk GRN data:", rows);
     const errors = [];
 
     // 🔁 process each PO
-    for (const poId of Object.keys(grouped)) {
+    for (const poNumber of Object.keys(grouped)) {
       try {
-        const result = await processSingleGRN({
-          purchaseOrderId: poId,
-          lineItems: grouped[poId],
+        const purchaseOrder = await PurchaseOrder.findOne({
+          purchaseOrderNo: poNumber,
+        });
+
+        if (!purchaseOrder) {
+          throw new Error("Purchase Order not found");
+        }
+
+        const result = await generateGRNForPO({
+          purchaseOrder,
+          lineItems: grouped[poNumber],
         });
 
         results.push({
-          purchaseOrderId: poId,
+          purchaseOrderNo: poNumber,
           message: result.message,
+          failedProducts: result.failedProducts,
         });
       } catch (err) {
         errors.push({
-          purchaseOrderId: poId,
+          purchaseOrderNo: poNumber,
           message: err.message,
         });
       }

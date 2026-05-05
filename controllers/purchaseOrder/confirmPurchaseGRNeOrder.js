@@ -265,7 +265,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       distributorId: purchaseOrder.distributorId,
       invoiceNo: `INV-${Date.now()}`,
       date: new Date(),
-      status: "In-Transit",
+      status: "Confirmed",
       purchaseOrderId: purchaseOrder._id,
       grnDate: new Date(),
       grnNumber,
