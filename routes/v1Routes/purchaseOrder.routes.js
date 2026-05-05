@@ -48,6 +48,7 @@ const { printPO } = require("../../controllers/purchaseOrder/printPO.js");
 const { confirmPurchaseGRNeOrder } = require("../../controllers/purchaseOrder/confirmPurchaseGRNeOrder.js");
 
 const { addSoNumberToOrder } = require("../../controllers/purchaseOrder/addSoNumberPurchaseOrdre.js");
+const { importGrnforPoOrder } = require("../../controllers/purchaseOrder/importGrnforPoOrder.js");
 
 
 const purchaseOrderRoutes = express.Router();
@@ -57,6 +58,10 @@ purchaseOrderRoutes.route("/create-purchase-order").post(protect, createPurchase
 purchaseOrderRoutes
   .route("/detail-purchase-order/:purchaseOrderId")
   .get(protect, getGrnPrimeryOrder);
+
+purchaseOrderRoutes
+  .route("/import-grn-for-po-order")
+  .post(protect, importGrnforPoOrder);
 
   purchaseOrderRoutes
   .route("/confirm-grn-primary-order/:purchaseOrderId")
