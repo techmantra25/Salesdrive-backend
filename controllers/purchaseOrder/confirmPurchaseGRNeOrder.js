@@ -20,6 +20,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔥 FETCH PREVIOUS INVOICES
     // =========================
+
+
     const invoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
     });
@@ -36,8 +38,34 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
           (receivedMap[key] || 0) + Number(li.qty || 0);
       }
     }
+    // =========================
+    // 🔢 GENERATE GRN NUMBER
+    // =========================
 
-    const grnNumber = `GRN-${Date.now()}`;
+    // Get current year (last 2 digits)
+    const year = new Date().getFullYear().toString().slice(-2);
+
+    // Find last GRN of this year
+    const lastInvoice = await Invoice.findOne({
+      grnNumber: { $regex: `^GRN-${year}` },
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Default sequence
+    let nextSequence = 1;
+
+    if (lastInvoice?.grnNumber) {
+      const lastNumber = lastInvoice.grnNumber.split("-")[1]; // "2600001"
+      const lastSeq = Number(lastNumber.slice(2)); // remove "26"
+      nextSequence = lastSeq + 1;
+    }
+
+    // Pad sequence → 00001
+    const paddedSeq = String(nextSequence).padStart(5, "0");
+
+    // Final GRN
+    const grnNumber = `GRN-${year}${paddedSeq}`;
 
     let totalGross = 0;
     let totalTaxable = 0;
