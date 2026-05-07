@@ -3,6 +3,8 @@ const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Invoice = require("../../models/invoice.model");
 const Price = require("../../models/price.model");
 const Product = require("../../models/product.model");
+const axios = require("axios");
+const SERVER_URL = process.env.SERVER_URL || "http://localhost:5000";
 
 const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
   try {
@@ -324,6 +326,46 @@ await PurchaseOrder.findByIdAndUpdate(
     $push: { invoiceIds: invoice._id }
   }
 );
+
+
+
+
+console.log("🚀 AUTO CALLING INVOICE UPDATE API");
+
+console.log("TOKEN:", req.headers.authorization);
+
+try {
+
+const updateResponse = await axios.patch(
+  `${SERVER_URL}/api/v1/invoice/update-invoice/${invoice._id}`,
+  {
+    status: "Confirmed",
+  },
+);
+
+  console.log("✅ AUTO INVOICE UPDATED");
+
+  console.log(updateResponse.data);
+
+} catch (autoError) {
+
+  console.log("❌ AUTO UPDATE FAILED");
+
+  console.log(
+    autoError?.response?.data || autoError.message
+  );
+
+}
+
+
+
+
+
+
+
+
+
+
     // Fetch all invoices again (including current one)
     const allInvoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,

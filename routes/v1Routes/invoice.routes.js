@@ -14,6 +14,8 @@ const {
   updateInvoice,
   retryInvoiceAdjustments,
 } = require("../../controllers/invoice/updateInvoice.js");
+
+
 const {
   cronRetryAllFailedInvoiceAdjustments,
 } = require("../../controllers/invoice/cronRetryAllFailedInvoiceAdjustments.js");
@@ -31,12 +33,19 @@ const {invoiceDetailForSaleReturn} = require("../../controllers/invoice/invoiceD
 const { findAndRemoveInvoice } = require("../../controllers/invoice/find-and-remove-invoice.js");
 const { paginatedDeletedInvoiceList } = require("../../controllers/invoice/paginatedDeletedInvoiceList.js");
 
+const {updateinvoiceInternal} = require("../../controllers/purchaseOrder/updateinvoiceInternal.js");
 const invoiceRoutes = express.Router();
+
+  invoiceRoutes
+  .route("/update-invoice-internal/:inId")
+  .patch( updateinvoiceInternal);
 
 invoiceRoutes.route("/create-invoice").post(protect, createInvoice);
 invoiceRoutes
   .route("/update-invoice/:inId")
   .patch(protectDisRoute, updateInvoice);
+
+
 
 invoiceRoutes
   .route("/retry-adjustments/:inId")
