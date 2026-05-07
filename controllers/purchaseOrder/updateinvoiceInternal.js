@@ -5,7 +5,7 @@ const Product = require("../../models/product.model");
 const Distributor = require("../../models/distributor.model");
 const DistributorTransaction = require("../../models/distributorTransaction.model");
 const Inventory = require("../../models/inventory.model");
-const {updatePrimaryTargetAchievement} = require("../bill/util/updatePrimaryTargetAchievement.js");
+const { updatePrimaryTargetAchievement } = require("../bill/util/updatePrimaryTargetAchievement.js");
 const { acquireLock, releaseLock } = require("../../models/lock.model");
 const {
   transactionCode,
@@ -224,17 +224,17 @@ const updateinvoiceInternal = asyncHandler(async (req, res) => {
   const lockName = `invoice-update-${inId}`;
 
 
-console.log(`🔒 Attempting to acquire lockxxxxxx: ${lockName}`)
+  console.log(`🔒 Attempting to acquire lockxxxxxx: ${lockName}`)
 
-console.log(`📄 Invoice ID xxxx: ${inId}`) ;
+  console.log(`📄 Invoice ID xxxx: ${inId}`);
 
 
   const existingInvoice = await Invoice.findById(inId);
   if (!existingInvoice) {
     return res.status(404).json({ message: "Invoice not found" });
   }
-const distributorId = existingInvoice.distributorId;
-console.log(`👤 Distributor xxxx: ${distributorId}`);
+  const distributorId = existingInvoice.distributorId;
+  console.log(`👤 Distributor xxxx: ${distributorId}`);
 
   // CONFIRMATION VALIDATION (NO LOCK)
   if (
@@ -367,21 +367,21 @@ console.log(`👤 Distributor xxxx: ${distributorId}`);
 
 
     // Status logic
-if (failed === 0 && !grnFailed) {
-  updatedInvoice.status = "Confirmed";
+    if (failed === 0 && !grnFailed) {
+      updatedInvoice.status = "Confirmed";
 
-  // CALL PRIMARY TARGET ACHIEVEMENT UPDATE HERE
-  await updatePrimaryTargetAchievement({
-   
- distributorId: distributorId,
-  invoiceId: updatedInvoice._id,
-  billDate: updatedInvoice.createdAt,
-  totalBillValue: updatedInvoice.totalInvoiceAmount,
-  lineItems: updatedInvoice.lineItems,
-  });
-} else {
-  updatedInvoice.status = "Partially-Adjusted";
-}
+      // CALL PRIMARY TARGET ACHIEVEMENT UPDATE HERE
+      await updatePrimaryTargetAchievement({
+
+        distributorId: distributorId,
+        invoiceId: updatedInvoice._id,
+        billDate: updatedInvoice.createdAt,
+        totalBillValue: updatedInvoice.totalInvoiceAmount,
+        lineItems: updatedInvoice.lineItems,
+      });
+    } else {
+      updatedInvoice.status = "Partially-Adjusted";
+    }
 
 
     await updatedInvoice.save();
