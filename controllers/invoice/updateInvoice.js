@@ -223,6 +223,12 @@ const updateInvoice = asyncHandler(async (req, res) => {
   const distributorId = req.user._id;
   const lockName = `invoice-update-${inId}`;
 
+
+console.log(`🔒 Attempting to acquire lockxxxxxx: ${lockName}`)
+console.log(`👤 Distributor xxxx: ${distributorId}`);
+console.log(`📄 Invoice ID xxxx: ${inId}`) ;
+
+
   const existingInvoice = await Invoice.findById(inId);
   if (!existingInvoice) {
     return res.status(404).json({ message: "Invoice not found" });

@@ -88,10 +88,13 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    invoiceId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Invoice"
-    },
+   invoiceIds: [
+  {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Invoice",
+    default: [],
+  },
+],
       invoicestatus: {
     type: String,
     enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],

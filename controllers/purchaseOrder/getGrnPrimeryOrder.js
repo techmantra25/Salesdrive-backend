@@ -159,7 +159,7 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
       status: 200,
       message: "Purchase Order found",
       data: purchaseOrder,
-       invoiceId: purchaseOrder?.invoiceId || null,
+      invoiceIds: purchaseOrder?.invoiceIds || [],
     });
   } catch (error) {
     res.status(400);

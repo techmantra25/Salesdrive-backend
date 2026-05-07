@@ -318,7 +318,12 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔥 UPDATE PURCHASE ORDER INVOICE STATUS (ONLY THIS CHANGE)
     // =========================
-
+await PurchaseOrder.findByIdAndUpdate(
+  purchaseOrder._id,
+  {
+    $push: { invoiceIds: invoice._id }
+  }
+);
     // Fetch all invoices again (including current one)
     const allInvoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
