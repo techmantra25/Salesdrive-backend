@@ -120,7 +120,7 @@ const invoiceSchema = new mongoose.Schema(
     totalBasePoints: { type: Number, default: null },
     invoicetype   : {
       type: String,
-      enum: ["Complete-Invoiced", "Partially-Invoiced"],
+      enum: ["Complete-Invoiced", "Partially-Invoiced","All"],
       default: "All",
     },
 
