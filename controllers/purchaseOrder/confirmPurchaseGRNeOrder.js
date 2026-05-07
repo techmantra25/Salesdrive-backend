@@ -235,7 +235,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         shortageUom: "pcs",
         damageQty: 0,
         damageUom: "pcs",
-        adjustmentStatus: "success",
+        adjustmentStatus: "pending",
       });
 
       productSummary.push({
