@@ -220,12 +220,12 @@ async function createGRNRewardPoints(invoice) {
 
 const updateinvoiceInternal = asyncHandler(async (req, res) => {
   const { inId } = req.params;
-  const distributorId = req.user._id;
+
   const lockName = `invoice-update-${inId}`;
 
 
 console.log(`🔒 Attempting to acquire lockxxxxxx: ${lockName}`)
-console.log(`👤 Distributor xxxx: ${distributorId}`);
+
 console.log(`📄 Invoice ID xxxx: ${inId}`) ;
 
 
@@ -233,11 +233,8 @@ console.log(`📄 Invoice ID xxxx: ${inId}`) ;
   if (!existingInvoice) {
     return res.status(404).json({ message: "Invoice not found" });
   }
-
-  // Ensure invoice belongs to logged-in distributor
-  if (existingInvoice.distributorId.toString() !== distributorId.toString()) {
-    return res.status(403).json({ message: "Unauthorized access to invoice" });
-  }
+const distributorId = existingInvoice.distributorId;
+console.log(`👤 Distributor xxxx: ${distributorId}`);
 
   // CONFIRMATION VALIDATION (NO LOCK)
   if (

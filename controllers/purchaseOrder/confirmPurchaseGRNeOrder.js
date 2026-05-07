@@ -337,7 +337,7 @@ console.log("TOKEN:", req.headers.authorization);
 try {
 
 const updateResponse = await axios.patch(
-  `${SERVER_URL}/api/v1/invoice/update-invoice/${invoice._id}`,
+  `${SERVER_URL}/api/v1/invoice/update-invoice-internal/${invoice._id}`,
   {
     status: "Confirmed",
   },
