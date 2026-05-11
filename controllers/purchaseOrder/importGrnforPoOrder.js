@@ -64,9 +64,11 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
     }).session(session);
 
     const receivedMap = {};
+
     for (const inv of invoices) {
       for (const li of inv.lineItems) {
         const key = String(li.product);
+
         receivedMap[key] =
           (receivedMap[key] || 0) +
           Number(li.receivedQty || li.qty || 0);
@@ -75,12 +77,12 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
 
     const grnNumber = await generateGRNNumber(session);
 
-    let totalGross = 0,
-      totalTaxable = 0,
-      totalCGST = 0,
-      totalSGST = 0,
-      totalIGST = 0,
-      totalNet = 0;
+    let totalGross = 0;
+    let totalTaxable = 0;
+    let totalCGST = 0;
+    let totalSGST = 0;
+    let totalIGST = 0;
+    let totalNet = 0;
 
     const invoiceLineItems = [];
     const failedProducts = [];
@@ -95,6 +97,7 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
 
       if (!product) {
         console.log("❌ Product not found:", cleanCode);
+
         failedProducts.push(`Invalid Code: ${cleanCode}`);
         continue;
       }
@@ -109,10 +112,12 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
       }
 
       const requestedQty = Number(item.orderQty || 0);
+
       const alreadyReceived =
         receivedMap[String(product._id)] || 0;
 
-      const remainingQty = poItem.orderQty - alreadyReceived;
+      const remainingQty =
+        poItem.orderQty - alreadyReceived;
 
       // ❌ validations
       if (remainingQty <= 0 && requestedQty > 0) {
@@ -127,7 +132,9 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
         continue;
       }
 
-      if (!requestedQty || requestedQty <= 0) continue;
+      if (!requestedQty || requestedQty <= 0) {
+        continue;
+      }
 
       // 💰 price
       let priceDoc = await Price.findOne({
@@ -154,9 +161,13 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
       }
 
       const mrp = Number(priceDoc.mrp_price || 0);
-      const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+
+      const l1 = Number(
+        item.l1Basic ?? poItem.l1Basic ?? 0
+      );
 
       let basicRate = mrp;
+
       if (l1 > 0) {
         basicRate = mrp - (mrp * l1) / 100;
       }
@@ -166,16 +177,21 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
       let sgstPercent = Number(product?.sgst || 0);
       let igstPercent = Number(product?.igst || 0);
 
-      if (!cgstPercent && !sgstPercent && !igstPercent) {
+      if (
+        !cgstPercent &&
+        !sgstPercent &&
+        !igstPercent
+      ) {
         cgstPercent = 9;
         sgstPercent = 9;
       }
 
-      const grossAmount = basicRate * requestedQty;
+      const grossAmount =
+        basicRate * requestedQty;
 
-      let cgst = 0,
-        sgst = 0,
-        igst = 0;
+      let cgst = 0;
+      let sgst = 0;
+      let igst = 0;
 
       if (igstPercent > 0) {
         igst = (grossAmount * igstPercent) / 100;
@@ -184,7 +200,8 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
         sgst = (grossAmount * sgstPercent) / 100;
       }
 
-      const netAmount = grossAmount + cgst + sgst + igst;
+      const netAmount =
+        grossAmount + cgst + sgst + igst;
 
       // ➕ totals
       totalGross += grossAmount;
@@ -212,7 +229,9 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
         adjustmentStatus: "success",
       });
 
-      productSummary.push(`${product.name} (${requestedQty})`);
+      productSummary.push(
+        `${product.name} (${requestedQty})`
+      );
     }
 
     // ❌ no valid items
@@ -248,8 +267,10 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
           grnStatus: "success",
           adjustmentSummary: {
             totalProducts: invoiceLineItems.length,
-            successfulAdjustments: invoiceLineItems.length,
-            failedAdjustments: failedProducts.length,
+            successfulAdjustments:
+              invoiceLineItems.length,
+            failedAdjustments:
+              failedProducts.length,
             lastRetryAttempt: new Date(),
           },
         },
@@ -263,9 +284,11 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
     }).session(session);
 
     const totalReceivedMap = {};
+
     for (const inv of allInvoices) {
       for (const li of inv.lineItems) {
         const key = String(li.product);
+
         totalReceivedMap[key] =
           (totalReceivedMap[key] || 0) +
           Number(li.receivedQty || li.qty || 0);
@@ -276,22 +299,34 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
     let isPartial = false;
 
     for (const poItem of purchaseOrder.lineItems) {
-      const received = totalReceivedMap[String(poItem.product)] || 0;
+      const received =
+        totalReceivedMap[String(poItem.product)] || 0;
 
-      if (received === 0) isComplete = false;
-      else if (received < poItem.orderQty) {
+      if (received === 0) {
+        isComplete = false;
+      } else if (received < poItem.orderQty) {
         isComplete = false;
         isPartial = true;
-      } else isPartial = true;
+      } else {
+        isPartial = true;
+      }
     }
 
     let status = "Pending";
-    if (isComplete) status = "Complete-Invoiced";
-    else if (isPartial) status = "Partially-Invoiced";
+
+    if (isComplete) {
+      status = "Complete-Invoiced";
+    } else if (isPartial) {
+      status = "Partially-Invoiced";
+    }
 
     await PurchaseOrder.findByIdAndUpdate(
       purchaseOrder._id,
-      { $set: { invoicestatus: status } },
+      {
+        $set: {
+          invoicestatus: status,
+        },
+      },
       { session }
     );
 
@@ -309,6 +344,7 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+
     throw error;
   }
 };
@@ -316,74 +352,112 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
 /**
  * 🚀 BULK API
  */
-const importGrnforPoOrder = asyncHandler(async (req, res) => {
-  try {
-    const rows = req.body.data;
-
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ message: "No data provided" });
-    }
-
-    const grouped = {};
-
-    for (const row of rows) {
-      const poNumber = row["PO Number"];
-      const productCode = row["Product Code"];
-
-      if (!poNumber || !productCode) continue;
-
-      if (!grouped[poNumber]) grouped[poNumber] = [];
-
-      grouped[poNumber].push({
-        productCode,
-        orderQty: Number(row["SO Qty (PCS)"] || 0),
-        l1Basic: Number(row["L1 Basic"] || 0),
-      });
-    }
-
-    const results = [];
-    const errors = [];
-
-    for (const poNumber of Object.keys(grouped)) {
-      try {
-        const purchaseOrder = await PurchaseOrder.findOne({
-          purchaseOrderNo: poNumber,
-        });
-
-        if (!purchaseOrder) {
-          throw new Error("PO not found");
-        }
-
-        const result = await generateGRNForPO({
-          purchaseOrder,
-          lineItems: grouped[poNumber],
-        });
-
-        results.push({
-          purchaseOrderNo: poNumber,
-          message: result.message,
-        });
-      } catch (err) {
-        errors.push({
-          purchaseOrderNo: poNumber,
-          message: err.message,
+const importGrnforPoOrder = asyncHandler(
+  async (req, res) => {
+    try {
+      const rows = req.body.data;
+console.log("Received rows:",rows);
+      if (
+        !rows ||
+        !Array.isArray(rows) ||
+        rows.length === 0
+      ) {
+        return res.status(400).json({
+          message: "No data provided",
         });
       }
-    }
 
-    return res.status(200).json({
-      message: "Bulk GRN processed",
-      successCount: results.length,
-      failedCount: errors.length,
-      results,
-      errors,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      message: error.message || "Something went wrong",
-    });
+      const grouped = {};
+
+      for (const row of rows) {
+        const soNumber =
+          row["SO Number"] ||
+          row["soNumber"];
+
+        const productCode =
+          row["Product Code"] ||
+          row["productCode"];
+
+        if (!soNumber || !productCode) {
+          continue;
+        }
+
+        if (!grouped[soNumber]) {
+          grouped[soNumber] = [];
+        }
+
+        grouped[soNumber].push({
+          productCode: String(
+            productCode
+          ).trim(),
+orderQty: Number(
+  row["SO Qty (PCS)"] ||
+  row["Invoice Qty"] ||
+  row["invoiceQty"] ||
+  row["receivedQty"] ||
+  row["orderQty"] ||
+  0
+),
+          l1Basic: Number(
+            row["L1 Basic"] ||
+              row["l1Basic"] ||
+              0
+          ),
+        });
+      }
+
+      const results = [];
+      const errors = [];
+
+      for (const soNumber of Object.keys(grouped)) {
+        try {
+          const purchaseOrder =
+            await PurchaseOrder.findOne({
+              soNumber: soNumber,
+            });
+
+          if (!purchaseOrder) {
+            throw new Error(
+              "SO Number not found"
+            );
+          }
+
+          const result =
+            await generateGRNForPO({
+              purchaseOrder,
+              lineItems: grouped[soNumber],
+            });
+
+          results.push({
+            soNumber,
+            purchaseOrderNo:
+              purchaseOrder.purchaseOrderNo,
+            message: result.message,
+          });
+        } catch (err) {
+          errors.push({
+            soNumber,
+            message: err.message,
+          });
+        }
+      }
+
+      return res.status(200).json({
+        message: "Bulk GRN processed",
+        successCount: results.length,
+        failedCount: errors.length,
+        results,
+        errors,
+      });
+    } catch (error) {
+      return res.status(500).json({
+        message:
+          error.message ||
+          "Something went wrong",
+      });
+    }
   }
-});
+);
 
 module.exports = {
   importGrnforPoOrder,
