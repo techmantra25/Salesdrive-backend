@@ -51,7 +51,36 @@ const generateGRNNumber = async (session) => {
 /**
  * 🔥 CORE GRN GENERATOR
  */
-const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
+const generateInvoiceNumber = async (session) => {
+  const year = new Date().getFullYear().toString().slice(-2);
+
+  const lastInvoice = await Invoice.findOne({
+    invoiceNo: { $regex: `^INV-${year}` },
+  })
+    .sort({ createdAt: -1 })
+    .session(session);
+
+  let nextSequence = 1;
+
+  if (lastInvoice?.invoiceNo) {
+    const lastNumber =
+      lastInvoice.invoiceNo.split("-")[1];
+
+    const lastSeq = Number(lastNumber.slice(2));
+
+    nextSequence = lastSeq + 1;
+  }
+
+  return `INV-${year}${String(nextSequence).padStart(
+    5,
+    "0"
+  )}`;
+};
+const generateGRNForPO = async ({
+  purchaseOrder,
+  lineItems,
+  invoiceNo,
+}) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -248,7 +277,9 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
       [
         {
           distributorId: purchaseOrder.distributorId,
-          invoiceNo: `INV-${Date.now()}`,
+          invoiceNo:
+            invoiceNo ||
+            (await generateInvoiceNumber(session)),
           date: new Date(),
           status: "Confirmed",
           grnDate: new Date(),
@@ -275,6 +306,16 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
           },
         },
       ],
+      { session }
+    );
+
+    await PurchaseOrder.findByIdAndUpdate(
+      purchaseOrder._id,
+      {
+        $addToSet: {
+          invoiceIds: invoice._id,
+        },
+      },
       { session }
     );
 
@@ -334,11 +375,10 @@ const generateGRNForPO = async ({ purchaseOrder, lineItems }) => {
     session.endSession();
 
     return {
-      message: `GRN created: ${productSummary.join(", ")}${
-        failedProducts.length
-          ? ` | Failed: ${failedProducts.join(", ")}`
-          : ""
-      }`,
+      message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
+        ? ` | Failed: ${failedProducts.join(", ")}`
+        : ""
+        }`,
       data: invoice,
     };
   } catch (error) {
@@ -356,7 +396,7 @@ const importGrnforPoOrder = asyncHandler(
   async (req, res) => {
     try {
       const rows = req.body.data;
-console.log("Received rows:",rows);
+      console.log("Received rows:", rows);
       if (
         !rows ||
         !Array.isArray(rows) ||
@@ -387,22 +427,28 @@ console.log("Received rows:",rows);
         }
 
         grouped[soNumber].push({
-          productCode: String(
-            productCode
-          ).trim(),
-orderQty: Number(
-  row["SO Qty (PCS)"] ||
-  row["Invoice Qty"] ||
-  row["invoiceQty"] ||
-  row["receivedQty"] ||
-  row["orderQty"] ||
-  0
-),
+          productCode: String(productCode).trim(),
+
+          orderQty: Number(
+            row["SO Qty (PCS)"] ||
+            row["Invoice Qty"] ||
+            row["invoiceQty"] ||
+            row["receivedQty"] ||
+            row["orderQty"] ||
+            0
+          ),
+
           l1Basic: Number(
             row["L1 Basic"] ||
-              row["l1Basic"] ||
-              0
+            row["l1Basic"] ||
+            0
           ),
+
+          invoiceNo:
+            row["Invoice Number"] ||
+            row["invoiceNo"] ||
+            row["invoice_number"] ||
+            null,
         });
       }
 
@@ -426,8 +472,10 @@ orderQty: Number(
             await generateGRNForPO({
               purchaseOrder,
               lineItems: grouped[soNumber],
-            });
 
+              invoiceNo:
+                grouped[soNumber][0]?.invoiceNo || null,
+            });
           results.push({
             soNumber,
             purchaseOrderNo:
