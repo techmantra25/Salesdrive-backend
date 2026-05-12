@@ -9,9 +9,11 @@ const SERVER_URL = process.env.SERVER_URL || "http://localhost:5000";
 const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
-    const { lineItems = [] } = req.body;
+
+    const { lineItems = [], invoiceNo } = req.body;
 
     console.log("📥 GRN Request:", lineItems);
+    console.log('invoiceNo:', invoiceNo);
 
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
@@ -291,10 +293,44 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     } // =========================
     // 🧾 CREATE INVOICE
     // =========================
-    const invoice = await Invoice.create({
-      distributorId: purchaseOrder.distributorId,
-      invoiceNo: `INV-${Date.now()}`,
-      date: new Date(),
+// =========================
+// 🔢 GENERATE INVOICE NUMBER
+// =========================
+
+let finalInvoiceNo = invoiceNo;
+
+// If frontend did not send invoice number
+if (!finalInvoiceNo || finalInvoiceNo.trim() === "") {
+
+  // Find last invoice
+  const lastInvoice = await Invoice.findOne({})
+    .sort({ createdAt: -1 })
+    .lean();
+
+  let nextSequence = 1;
+
+  if (lastInvoice?.invoiceNo) {
+
+    // Extract number from INV000001
+    const numericPart = lastInvoice.invoiceNo.replace(/\D/g, "");
+
+    if (numericPart) {
+      nextSequence = Number(numericPart) + 1;
+    }
+  }
+
+  // Generate sequential invoice number
+  finalInvoiceNo = `INV${String(nextSequence).padStart(6, "0")}`;
+}
+
+// =========================
+// 🧾 CREATE INVOICE
+// =========================
+
+const invoice = await Invoice.create({
+  distributorId: purchaseOrder.distributorId,
+  invoiceNo: finalInvoiceNo,
+    date: new Date(),
       status: "In-Transit",
       purchaseOrderId: purchaseOrder._id,
       grnDate: new Date(),

@@ -376,11 +376,10 @@ const generateGRNForPO = async ({
     session.endSession();
 
     return {
-      message: `GRN created: ${productSummary.join(", ")}${
-        failedProducts.length
+      message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
           ? ` | Failed: ${failedProducts.join(", ")}`
           : ""
-      }`,
+        }`,
       data: invoice,
     };
   } catch (error) {
