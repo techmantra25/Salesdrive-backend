@@ -2,7 +2,6 @@ const asyncHandler = require("express-async-handler");
 const Bill = require("../../models/bill.model");
 const OutletApproved = require("../../models/outletApproved.model");
 
-
 const paginatedBillList = asyncHandler(async (req, res) => {
   try {
     const {
@@ -58,9 +57,8 @@ const paginatedBillList = asyncHandler(async (req, res) => {
         outletQuery.outletCode = outletCode;
       }
 
-      const matchingOutlets = await OutletApproved
-        .find(outletQuery)
-        .select("_id");
+      const matchingOutlets =
+        await OutletApproved.find(outletQuery).select("_id");
 
       const outletIds = matchingOutlets.map((o) => o._id);
 
@@ -89,7 +87,6 @@ const paginatedBillList = asyncHandler(async (req, res) => {
     if (!retailerPhone && !outletCode && retailerId) {
       query.retailerId = retailerId;
     }
-
 
     const moment = require("moment-timezone");
 
@@ -177,7 +174,11 @@ const paginatedBillList = asyncHandler(async (req, res) => {
           select: "replacementNo replacementType lineItems",
         },
       ])
-      .sort({ _id: -1 }) // Sort by most recent first
+      .sort(
+        distributorId === "69004fa23a9a9343669ef078"
+          ? { createdAt: -1 }
+          : { _id: -1 },
+      )
       .skip((page - 1) * limit)
       .limit(limit);
 

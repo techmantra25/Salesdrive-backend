@@ -1,14 +1,14 @@
 /**
- * If backdate billing is enabled and today is 1st-2nd of a month, then creation of order will take last date of previous month,
+ * If backdate order is enabled and today is 1st-2nd of a month, then creation of order will take last date of previous month,
  * returns the last date of the previous month at 5:30 AM (IST).
  *
- * @param {Boolean} enableBackdateBilling - Whether backdate billing is enabled
+ * @param {Boolean} enableBackdateOrder - Whether backdate order is enabled
  * @param {Date} [now=new Date()] - The current date/time (for testability)
  * @returns {Object} - { billDate, isBackdated }
  */
 function getOrderBackdate(
   orderDate,
-  enableBackdateBilling,
+  enableBackdateOrder,
   orderSource = null,
   now = new Date(),
 ) {
@@ -16,7 +16,7 @@ function getOrderBackdate(
     return { billDate: now, isBackdated: false };
   if (!(now instanceof Date) || isNaN(now)) now = new Date();
 
-  if (!enableBackdateBilling) {
+  if (!enableBackdateOrder) {
     return { billDate: now, isBackdated: false };
   }
 

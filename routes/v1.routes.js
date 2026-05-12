@@ -12,6 +12,7 @@ const brandRoutes = require("./v1Routes/brand.routes");
 const fileUploadRoutes = require("./v1Routes/fileUpload.routes");
 const cloudinaryRoutes = require("./v1Routes/cloudinary.routes");
 const passwordRoutes = require("./v1Routes/password.routes");
+
 const distributorRoutes = require("./v1Routes/distributer.routes");
 const designationRoutes = require("./v1Routes/designation.routes");
 const employeeRoutes = require("./v1Routes/employee.routes");
@@ -73,6 +74,7 @@ const appVersionRoutes = require("./v1Routes/appVersion.routes");
 const notificationRoutes = require("./v1Routes/notification.routes");
 const configureGiftFlowRoutes = require("./v1Routes/configureGiftFlow.routes");
 const rebuildBalanceRoutes = require("./v1Routes/rebuildBalance.routes");
+const billSeriesMonitorRoutes = require("./v1Routes/billSeriesMonitor.routes");
 
 // ============ BILL DELIVERY PORTAL LOCK ROUTES ============
 const adminBillDeliveryRoutes = require("./v1Routes/adminBillDelivery.routes");
@@ -142,6 +144,7 @@ v1Routes.use("/banner", bannerRoutes);
 v1Routes.use("/sub-brand", subBrandRoutes);
 v1Routes.use("/purchase-return", purchaseReturnRoutes);
 v1Routes.use("/district", districtRoutes);
+v1Routes.use("/bill-series-monitor", billSeriesMonitorRoutes);
 v1Routes.use("/plant", plantRoutes);
 v1Routes.use("/external", externalRoutes);
 v1Routes.use("/db-bank", dbBankRoutes);

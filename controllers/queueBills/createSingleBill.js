@@ -13,12 +13,17 @@ const BillDeliverySetting = require("../../models/billDeliverySetting.model");
 const {
   getOrderToBillBackdate,
 } = require("../../utils/backdateOrdertoBillHelper");
-const getOrderStatusToBe = require("./util/getOrderStatusToBe");
-const { billPrintUtil } = require("./util/billPrintUtil");
+const getOrderStatusToBe = require("../bill/util/getOrderStatusToBe");
+const { billPrintUtil } = require("../bill/util/billPrintUtil");
 const CreditNoteModel = require("../../models/creditNote.model");
 const Replacement = require("../../models/replacement.model");
 const Distributor = require("../../models/distributor.model");
 const new_billSeries = require("../../models/new_billseries.model");
+const { billStockQueue, canEnqueue } = require("../../queues/billStockQueue");
+const {
+  allocateBillSeriesNumber,
+  reclaimBillSeriesNumber,
+} = require("./utils/Billseriesallocator");
 
 const createSingleBill = asyncHandler(async (req, res) => {
   try {
@@ -97,17 +102,11 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     // validate lineItems
     if (lineItems.length > 0) {
-      // Validate each line item for product, price, and inventory
       for (const item of lineItems) {
-        console.log({
-          item: item,
-        });
+        console.log({ item: item });
 
         const product = await Product.findById(item?.product);
-
-        console.log({
-          product: product,
-        });
+        console.log({ product: product });
 
         if (!product) {
           return res.status(404).json({
@@ -125,15 +124,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
         }
 
         if (item.inventoryId) {
-          console.log({
-            inventoryId: item.inventoryId,
-          });
+          console.log({ inventoryId: item.inventoryId });
 
           const inventory = await Inventory.findById(item?.inventoryId);
-
-          // console.log({
-          //   inventory: inventory,
-          // });
 
           if (!inventory) {
             return res.status(400).json({
@@ -163,10 +156,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // ─── Reserve stock atomically BEFORE bill creation ────────────────────────
-    // Mirrors the multipleBillCreate pattern: reserve first, then create the bill,
-    // and rollback reservations if the bill save (or any subsequent step) fails.
-    // This closes the window between bill creation and inventory update that the
-    // old post-creation update had.
     const reservedInventories = [];
     try {
       for (const item of lineItems) {
@@ -174,7 +163,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
           const updatedInv = await Inventory.findOneAndUpdate(
             {
               _id: item.inventoryId,
-              availableQty: { $gte: Number(item.billQty) }, // Atomic check ensures sufficient stock
+              availableQty: { $gte: Number(item.billQty) },
             },
             {
               $inc: {
@@ -186,7 +175,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
           );
 
           if (!updatedInv) {
-            // Rollback any reservations already made in this loop before throwing
             for (const r of reservedInventories) {
               await Inventory.findByIdAndUpdate(r.inventoryId, {
                 $inc: { availableQty: r.qty, reservedQty: -r.qty },
@@ -205,12 +193,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
         }
       }
     } catch (reserveErr) {
-      throw reserveErr; // propagate to outer catch
+      throw reserveErr;
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    //    Previously billDate was set in a separate findByIdAndUpdate AFTER create,
-    //    leaving a window where the document had no billDate.
     const billDeliverySetting = await BillDeliverySetting.findOne({
       distributorId,
       isActive: true,
@@ -220,7 +206,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     let isBackdated = false;
 
     if (billDeliverySetting) {
-      // Prefer any epoch fields passed in the request body (e.g., from createOrderEntry)
       if (req.body && req.body._billDateEpoch) {
         billDate = new Date(Number(req.body._billDateEpoch));
         isBackdated = true;
@@ -269,7 +254,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // Create the bill — wrapped in try/catch so we can rollback reserved stock
-    // if the save or any subsequent mutation fails.
     let newBill;
     try {
       newBill = await Bill.create({
@@ -305,7 +289,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         cashDiscountValue: req.body.cashDiscountValue || 0,
         billDate,
         enabledBackDate: isBackdated,
-        // Backdate createdAt/updatedAt when applicable
         ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
       });
     } catch (billSaveErr) {
@@ -318,8 +301,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw billSaveErr;
     }
 
-    // Ensure createdAt/updatedAt persisted correctly even if mongoose timestamps
-    // interfere; use raw collection update for reliability.
     if (isBackdated) {
       await Bill.collection.updateOne(
         { _id: newBill._id },
@@ -330,9 +311,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
     // update the order with the new bill
     await OrderEntry.findByIdAndUpdate(
       orderId,
-      {
-        $push: { billIds: newBill?._id },
-      },
+      { $push: { billIds: newBill?._id } },
       { new: true },
     );
 
@@ -343,68 +322,16 @@ const createSingleBill = asyncHandler(async (req, res) => {
     const billList = orderEntry?.billIds;
     const LineItems = orderEntry?.lineItems;
 
-    const billLineItems = newBill?.lineItems;
-
     const getOrderStatus = getOrderStatusToBe(billList, LineItems);
 
-    // update the Order with the new Order Status
     await OrderEntry.findByIdAndUpdate(
       orderId,
-      {
-        $set: { status: getOrderStatus },
-      },
+      { $set: { status: getOrderStatus } },
       { new: true },
     );
 
-    // OLD CODE (commented out) — inventory was updated AFTER bill creation,
-    // creating a race condition window between bill save and stock decrement.
-    // Also had a secondary race condition within the read-modify-write pattern.
-    // for (const item of billLineItems) {
-    //   if (item.inventoryId && item.billQty > 0) {
-    //     // OLD CODE (commented out - had race condition vulnerability)
-    //     // const inventory = await Inventory.findById(item.inventoryId);
-    //     // if (inventory) {
-    //     //   const updatedAvailableQty =
-    //     //     inventory.availableQty - Number(item.billQty);
-    //     //   const reservedQty = inventory.reservedQty + Number(item.billQty);
-    //     //   // Update the inventory
-    //     //   await Inventory.findOneAndUpdate(
-    //     //     { _id: item.inventoryId },
-    //     //     { availableQty: updatedAvailableQty, reservedQty: reservedQty },
-    //     //     { new: true },
-    //     //   );
-    //     // }
-
-    //     // NEW CODE (also commented out — moved to pre-bill reservation above):
-    //     // Atomic update with stock validation to prevent negative availableQty
-    //     // const updatedInventory = await Inventory.findOneAndUpdate(
-    //     //   {
-    //     //     _id: item.inventoryId,
-    //     //     availableQty: { $gte: Number(item.billQty) },
-    //     //   },
-    //     //   {
-    //     //     $inc: {
-    //     //       availableQty: -Number(item.billQty),
-    //     //       reservedQty: Number(item.billQty),
-    //     //     },
-    //     //   },
-    //     //   { new: true, runValidators: true },
-    //     // );
-
-    //     // If update failed, stock was insufficient (concurrent update or stock exhausted)
-    //     // if (!updatedInventory) {
-    //     //   throw new Error(
-    //     //     `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
-    //     //   );
-    //     // }
-    //   }
-    // }
-    // Inventory was already reserved atomically before bill creation above.
-    // No further inventory updates are required here.
-
     const newBillId = newBill?._id;
 
-    // print the bill
     billPrintUtil([newBillId]);
 
     if (adjustedCreditNoteIds.length) {
@@ -412,7 +339,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         (item) => item.creditNoteId,
       );
 
-      // Fetch all relevant credit notes
       const creditNotes = await CreditNoteModel.find({
         _id: { $in: creditNoteIds },
       });
@@ -420,20 +346,16 @@ const createSingleBill = asyncHandler(async (req, res) => {
       for (const creditNote of creditNotes) {
         const billId = newBill._id;
 
-        // Find the corresponding adjusted amount from adjustedCreditNoteIds
         const adjustedEntry = adjustedCreditNoteIds.find(
           (item) => item.creditNoteId == creditNote._id,
         );
 
-        if (!adjustedEntry) continue; // Skip if no matching credit note
-
-        const adjustedAmount = adjustedEntry.adjustedAmount || 0;
+        if (!adjustedEntry) continue;
 
         const currentCreditNote = await CreditNoteModel.findById(
           creditNote._id,
         );
 
-        // Find the index of the entry that matches orderId and has no billId
         const entryIndex = currentCreditNote.adjustedBillIds.findIndex(
           (entry) =>
             String(entry.orderId) === String(orderId) &&
@@ -441,50 +363,24 @@ const createSingleBill = asyncHandler(async (req, res) => {
         );
 
         if (entryIndex !== -1) {
-          // UPDATE existing entry with billId
           const updatePath = `adjustedBillIds.${entryIndex}.billId`;
-
           await CreditNoteModel.findByIdAndUpdate(
             creditNote._id,
-            {
-              $set: {
-                [updatePath]: billId,
-              },
-            },
+            { $set: { [updatePath]: billId } },
             { new: true },
           );
-
           console.log(
             `✅ Updated credit note ${creditNote._id} - added billId ${billId} to existing entry at index ${entryIndex}`,
           );
         } else {
-          // This shouldn't happen in normal flow, but handle it
           console.warn(
             `⚠️ No matching orderId entry found in credit note ${creditNote._id} - this may indicate an issue`,
           );
         }
 
-        // // OLD LOGIC: This was adding a NEW entry, causing double-adjustment
-        // await CreditNoteModel.findByIdAndUpdate(
-        //   creditNote._id,
-        //   {
-        //     $push: {
-        //       adjustedBillIds: {
-        //         billId,
-        //         adjustedAmount,
-        //         type: "Order_To_Bill",
-        //         collectionId: null,
-        //       },
-        //     },
-        //   },
-        //   { new: true }
-        // );
-
-        // Check if credit note is completely adjusted
         const updatedCreditNote = await CreditNoteModel.findById(
           creditNote._id,
         );
-
         const totalAdjusted = updatedCreditNote.adjustedBillIds.reduce(
           (sum, entry) => sum + entry.adjustedAmount,
           0,
@@ -505,7 +401,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         (item) => item.replacementId,
       );
 
-      // Fetch all relevant credit notes
       const replacements = await Replacement.find({
         _id: { $in: replacementIds },
       });
@@ -521,19 +416,11 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
         const adjustedQty = adjustedEntry.adjustedQty || 0;
 
-        // Update adjustedBillIds array
         await Replacement.findByIdAndUpdate(
-          replacement._id, // Replacement ID
+          replacement._id,
           {
-            $push: {
-              adjustedBillIds: {
-                billId,
-                adjustedQty,
-              },
-            },
-            $set: {
-              status: "Completely Adjusted",
-            },
+            $push: { adjustedBillIds: { billId, adjustedQty } },
+            $set: { status: "Completely Adjusted" },
           },
           { new: true },
         );
@@ -554,4 +441,346 @@ const createSingleBill = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { createSingleBill };
+// --- Direct processing (Redis-down fallback) ----------------------------------
+// This function mirrors what the queue worker does. It allocates the bill
+// series number atomically just before the DB write and reclaims it if the
+// Bill.create fails, ensuring no gap or orphan in the series.
+
+const processDirectSingleBill = async ({
+  billPayload,
+  distributorId,
+  activeBillSeries,
+  billDate,
+  isBackdated,
+}) => {
+  const {
+    _id: preBillId,
+    orderId,
+    orderNo,
+    salesmanName,
+    routeId,
+    retailerId,
+    lineItems,
+    totalLines,
+    totalBasePoints,
+    grossAmount,
+    schemeDiscount,
+    distributorDiscount,
+    taxableAmount,
+    cgst,
+    sgst,
+    igst,
+    invoiceAmount,
+    roundOffAmount,
+    cashDiscount,
+    netAmount,
+    billedType,
+    adjustedCreditNoteIds,
+    creditAmount,
+    cashDiscountApplied,
+    cashDiscountType,
+    cashDiscountValue,
+    adjustedReplacementIds,
+  } = billPayload;
+
+  // --- Server-side tax re-validation (defence in depth) --------------------
+  const distributor = await Distributor.findById(distributorId);
+  if (!distributor) throw new Error("Distributor not found");
+
+  const retailer = await OutletApproved.findById(retailerId);
+  if (!retailer) throw new Error("Retailer not found");
+
+  const serverIsIGST = distributor.state !== retailer.state;
+
+  const sumLine = (field) =>
+    (lineItems || []).reduce((s, it) => s + Number(it[field] || 0), 0);
+
+  let topCgst = typeof cgst === "number" ? cgst : Number(cgst) || 0;
+  let topSgst = typeof sgst === "number" ? sgst : Number(sgst) || 0;
+  let topIgst = typeof igst === "number" ? igst : Number(igst) || 0;
+
+  if (!serverIsIGST) {
+    if (topCgst === 0 && topSgst === 0 && topIgst > 0) {
+      const half = Number((topIgst / 2).toFixed(2));
+      topCgst = half;
+      topSgst = half;
+    }
+    if (topCgst === 0 && topSgst === 0) {
+      topCgst = sumLine("totalCGST");
+      topSgst = sumLine("totalSGST");
+    }
+    topIgst = 0;
+  } else {
+    if (topIgst === 0) topIgst = sumLine("totalIGST");
+    topCgst = 0;
+    topSgst = 0;
+  }
+
+  const validatedCgst = topCgst;
+  const validatedSgst = topSgst;
+  const validatedIgst = topIgst;
+
+  // Guard 1: preBillId idempotency
+  if (preBillId) {
+    const existingById = await Bill.findById(preBillId);
+    if (existingById) {
+      console.warn(
+        `Bill ${preBillId} already exists (duplicate direct request). Returning existing bill.`,
+      );
+      return existingById;
+    }
+  }
+
+  const order = await OrderEntry.findById(orderId);
+  if (!order) throw new Error("Order not found");
+
+  // Generate billNo atomically — right before the DB write.
+  const billNo = await generateBillNo("INV", distributorId);
+  if (!billNo) {
+    throw new Error(
+      `Failed to generate INV bill number for distributor ${distributorId}`,
+    );
+  }
+
+  // Guard 2: billNo + distributorId idempotency
+  const existingByBillNo = await Bill.findOne({ billNo, distributorId });
+  if (existingByBillNo) {
+    console.warn(
+      `Bill with billNo ${billNo} already exists for distributor ${distributorId}. Returning existing bill.`,
+    );
+    return existingByBillNo;
+  }
+
+  // FIX: Allocate the bill series number here, just before the DB write.
+  let newbillNo = null;
+  if (activeBillSeries) {
+    newbillNo = await allocateBillSeriesNumber(activeBillSeries._id);
+  }
+
+  // Reserve stock atomically BEFORE bill creation
+  const reservedInventories = [];
+  for (const item of lineItems) {
+    if (item.inventoryId && item.billQty > 0) {
+      const updatedInv = await Inventory.findOneAndUpdate(
+        {
+          _id: item.inventoryId,
+          availableQty: { $gte: Number(item.billQty) },
+        },
+        {
+          $inc: {
+            availableQty: -Number(item.billQty),
+            reservedQty: Number(item.billQty),
+          },
+        },
+        { new: true, runValidators: true },
+      );
+
+      if (!updatedInv) {
+        // Roll back any reservations already made
+        for (const r of reservedInventories) {
+          await Inventory.findByIdAndUpdate(r.inventoryId, {
+            $inc: { availableQty: r.qty, reservedQty: -r.qty },
+          });
+        }
+        // Also reclaim the series number we just allocated
+        if (newbillNo && activeBillSeries) {
+          await reclaimBillSeriesNumber(activeBillSeries._id, newbillNo);
+        }
+        throw new Error(
+          `Insufficient stock at reservation stage (billQty: ${item.billQty})`,
+        );
+      }
+
+      reservedInventories.push({
+        inventoryId: item.inventoryId,
+        qty: Number(item.billQty),
+      });
+    }
+  }
+
+  // Create bill
+  let newBill;
+  try {
+    newBill = await Bill.create({
+      ...(preBillId && { _id: preBillId }),
+      distributorId,
+      new_billseriesid: activeBillSeries?._id || null,
+      new_billno: newbillNo || null,
+      billNo,
+      orderId,
+      orderNo,
+      salesmanName,
+      routeId,
+      retailerId,
+      lineItems,
+      totalLines: totalLines ?? 0,
+      totalBasePoints: totalBasePoints ?? 0,
+      grossAmount: grossAmount ?? 0,
+      schemeDiscount: schemeDiscount ?? 0,
+      distributorDiscount: distributorDiscount ?? 0,
+      taxableAmount: taxableAmount ?? 0,
+      cgst: validatedCgst ?? 0,
+      sgst: validatedSgst ?? 0,
+      igst: validatedIgst ?? 0,
+      invoiceAmount: invoiceAmount ?? 0,
+      roundOffAmount: roundOffAmount ?? 0,
+      cashDiscount: cashDiscount ?? 0,
+      netAmount: netAmount ?? 0,
+      billedType: billedType ?? "Single",
+      adjustedCreditNoteIds: adjustedCreditNoteIds || [],
+      adjustedReplacementIds: adjustedReplacementIds || [],
+      creditAmount: creditAmount || 0,
+      cashDiscountApplied: cashDiscountApplied || false,
+      cashDiscountType: cashDiscountType || "amount",
+      cashDiscountValue: cashDiscountValue || 0,
+      billDate,
+      enabledBackDate: isBackdated,
+      ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
+    });
+  } catch (billSaveErr) {
+    // Roll back inventory reservations
+    for (const r of reservedInventories) {
+      await Inventory.findByIdAndUpdate(r.inventoryId, {
+        $inc: { availableQty: r.qty, reservedQty: -r.qty },
+      });
+    }
+    // Reclaim the series number since the bill was never saved
+    if (newbillNo && activeBillSeries) {
+      await reclaimBillSeriesNumber(activeBillSeries._id, newbillNo);
+    }
+
+    if (billSaveErr.code === 11000) {
+      console.error(
+        `Duplicate billNo ${billNo} detected at DB save for distributor ${distributorId}:`,
+        billSaveErr.message,
+      );
+      throw new Error(
+        `Duplicate billNo ${billNo} — possible race condition. Safe to retry.`,
+      );
+    }
+
+    throw billSaveErr;
+  }
+
+  if (isBackdated) {
+    await Bill.collection.updateOne(
+      { _id: newBill._id },
+      { $set: { createdAt: billDate, updatedAt: billDate } },
+    );
+  }
+
+  await OrderEntry.findByIdAndUpdate(orderId, {
+    $push: { billIds: newBill._id },
+  });
+
+  return newBill;
+};
+
+// --- Credit note handler ------------------------------------------------------
+
+const handleCreditNotes = async ({
+  savedBill,
+  orderId,
+  adjustedCreditNoteIds,
+}) => {
+  if (!adjustedCreditNoteIds?.length) return;
+
+  const creditNotes = await CreditNoteModel.find({
+    _id: { $in: adjustedCreditNoteIds.map((i) => i.creditNoteId) },
+  });
+
+  for (const creditNote of creditNotes) {
+    try {
+      const adjustedEntry = adjustedCreditNoteIds.find(
+        (i) => String(i.creditNoteId) === String(creditNote._id),
+      );
+      if (!adjustedEntry) continue;
+
+      const current = await CreditNoteModel.findById(creditNote._id);
+      const entryIndex = current.adjustedBillIds.findIndex(
+        (entry) =>
+          String(entry.orderId) === String(orderId) &&
+          (!entry.billId || entry.billId === null),
+      );
+
+      if (entryIndex !== -1) {
+        await CreditNoteModel.findByIdAndUpdate(creditNote._id, {
+          $set: { [`adjustedBillIds.${entryIndex}.billId`]: savedBill._id },
+        });
+      } else {
+        console.warn(
+          `No matching entry in credit note ${creditNote._id} for order ${orderId}`,
+        );
+      }
+
+      const updated = await CreditNoteModel.findById(creditNote._id);
+      const totalAdjusted = updated.adjustedBillIds.reduce(
+        (sum, e) => sum + (e.adjustedAmount || 0),
+        0,
+      );
+      if (totalAdjusted >= updated.amount) {
+        await CreditNoteModel.findByIdAndUpdate(creditNote._id, {
+          $set: { creditNoteStatus: "Completely Adjusted" },
+        });
+      }
+    } catch (err) {
+      console.error(
+        `Credit note update failed for ${creditNote._id}:`,
+        err.message,
+      );
+    }
+  }
+};
+
+// --- Replacement handler ------------------------------------------------------
+
+const handleReplacements = async ({ savedBill, adjustedReplacementIds }) => {
+  if (!adjustedReplacementIds?.length) return;
+
+  const replacements = await Replacement.find({
+    _id: { $in: adjustedReplacementIds.map((i) => i.replacementId) },
+  });
+
+  for (const replacement of replacements) {
+    try {
+      const adjustedEntry = adjustedReplacementIds.find(
+        (i) => String(i.replacementId) === String(replacement._id),
+      );
+      if (!adjustedEntry) continue;
+
+      await Replacement.findByIdAndUpdate(replacement._id, {
+        $push: {
+          adjustedBillIds: {
+            billId: savedBill._id,
+            adjustedQty: adjustedEntry.adjustedQty || 0,
+          },
+        },
+        $set: { status: "Completely Adjusted" },
+      });
+    } catch (err) {
+      console.error(
+        `Replacement update failed for ${replacement._id}:`,
+        err.message,
+      );
+    }
+  }
+};
+
+const getBillJobStatus = asyncHandler(async (req, res) => {
+  const { jobId } = req.params;
+  try {
+    const job = await billStockQueue.getJob(jobId);
+    if (!job) {
+      return res.status(404).json({ status: "not_found" });
+    }
+    const state = await job.getState(); // 'waiting' | 'active' | 'completed' | 'failed' | 'delayed'
+    const result = state === "completed" ? await job.returnvalue : null;
+    const failReason = state === "failed" ? job.failedReason : null;
+
+    return res.json({ status: state, result, failReason });
+  } catch (err) {
+    return res.status(500).json({ status: "error", message: err.message });
+  }
+});
+
+module.exports = { createSingleBill, getBillJobStatus };

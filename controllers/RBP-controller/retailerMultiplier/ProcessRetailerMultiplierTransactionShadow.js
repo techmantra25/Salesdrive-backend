@@ -69,9 +69,10 @@ const normalizeMultiplierType = (value) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Consistency: look at the 3 months BEFORE the requested month (not including it).
+// Consistency: count delivered-bill months including the requested month
+// and the two preceding months (i.e. requested month, -1 month, -2 months).
 //
-// FIX: $lt → $lte on deliveryDate end boundary so that a bill whose
+// FIX: $lte on deliveryDate end boundary so that a bill whose
 //      deliveryDate lands on the exact IST end-of-month millisecond
 //      (e.g. 2026-02-28T18:29:59.999Z) is correctly included.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,16 +84,14 @@ const getRetailersBillMonthConsistency = async (retailerId, month, year) => {
       .tz({ year, month: month - 1, day: 1 }, "Asia/Kolkata")
       .startOf("month");
 
-    for (let i = 0; i < 3; i++) {
+    // Include the requested month (i = 0) and the two months before it (i = 1,2).
+    for (let i = 0; i <= 2; i++) {
       const start = baseMoment
         .clone()
         .subtract(i, "months")
         .startOf("month")
         .toDate();
 
-      // FIX: use endOf("month") and $lte so bills delivered at the very last
-      // millisecond of the month (IST midnight boundary stored as UTC) are
-      // not silently excluded.
       const end = baseMoment
         .clone()
         .subtract(i, "months")
@@ -102,7 +101,7 @@ const getRetailersBillMonthConsistency = async (retailerId, month, year) => {
       const billCount = await Bill.countDocuments({
         retailerId,
         status: "Delivered",
-        "dates.deliveryDate": { $gte: start, $lte: end }, // ← was $lt
+        "dates.deliveryDate": { $gte: start, $lte: end },
       });
 
       if (billCount > 0) {
@@ -119,31 +118,21 @@ const getRetailersBillMonthConsistency = async (retailerId, month, year) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Build the date window for the requested month.
+// Build the date window for the requested month only (inclusive).
 //
-// FIX: endDate is kept as endOf("month") (inclusive), and all callers that
-//      previously used $lt now use $lte to avoid missing edge-boundary bills.
-// Special case: November 2025 window extended to December 3rd (business rule).
+// The processing window strictly covers the selected month: start =
+// 01-<month>-<year> 00:00:00 IST, end = last-day-of-month 23:59:59.999 IST.
 // ─────────────────────────────────────────────────────────────────────────────
 const getProcessingWindow = (month, year) => {
   const startDate = moment
     .tz({ year, month: month - 1, day: 1 }, "Asia/Kolkata")
     .startOf("day")
     .toDate();
-
-  let endDate;
-  if (month === 11 && year === 2025) {
-    // Special business rule: November 2025 window extended to December 3rd
-    endDate = moment
-      .tz({ year: 2025, month: 11, day: 3 }, "Asia/Kolkata")
-      .endOf("day")
-      .toDate();
-  } else {
-    endDate = moment
-      .tz({ year, month: month - 1, day: 1 }, "Asia/Kolkata")
-      .endOf("month")
-      .toDate();
-  }
+  // Processing window covers the requested month (inclusive).
+  const endDate = moment
+    .tz({ year, month: month - 1, day: 1 }, "Asia/Kolkata")
+    .endOf("month")
+    .toDate();
 
   return { startDate, endDate };
 };
@@ -629,11 +618,20 @@ const calculateShadowTransactionsForRetailer = async ({
 
   const [bills, dbTransactions, salesReturnDbTransactions, consistency] =
     await Promise.all([
+      // Previous: select bills by their deliveryDate. Switched to createdAt
+      // selection per request — keep old logic commented for traceability.
+      /*
       Bill.find({
         retailerId,
         status: "Delivered",
-        // FIX 1: $lte instead of $lt — includes bills at the exact end-of-month boundary
-        "dates.deliveryDate": { $gte: startDate, $lte: endDate },
+        "dates.deliveryDate": { $gte: startDate, $lt: endDate },
+      }).lean(),
+      */
+
+      Bill.find({
+        retailerId,
+        status: "Delivered",
+        createdAt: { $gte: startDate, $lte: endDate },
       }).lean(),
 
       DistributorTransaction.find({
@@ -649,7 +647,7 @@ const calculateShadowTransactionsForRetailer = async ({
         retailerId,
         transactionType: "credit",
         transactionFor: "Sales Return",
-        createdAt: { $gte: startDate, $lte: endDate }, // FIX 1: $lte
+        createdAt: { $gte: startDate, $lte: endDate },
       })
         .sort({ createdAt: -1 })
         .populate({
@@ -660,25 +658,20 @@ const calculateShadowTransactionsForRetailer = async ({
 
       getRetailersBillMonthConsistency(retailerId, month, year),
     ]);
-  console.log("Bills:", bills);
   const totalBillAmount = bills.reduce(
     (acc, bill) => acc + (Number(bill?.netAmount) || 0),
     0,
   );
 
-  // FIX 2: Filter sales-return transactions whose linked bill was delivered in
-  // the REQUESTED month/year (original code incorrectly used currentMonth from
-  // closure, causing wrong deductions for historical month runs).
+  // get the sales return transactions that have bills delivered in the current month
   const salesReturnTransactionsForRequestedMonth =
     salesReturnDbTransactions.filter((transaction) => {
       const deliveryDate =
         transaction.salesReturnId?.billId?.dates?.deliveryDate;
       if (!deliveryDate) return false;
-      const billMoment = moment(deliveryDate).tz("Asia/Kolkata");
-      return (
-        billMoment.month() + 1 === Number(month) &&
-        billMoment.year() === Number(year)
-      );
+      const billMonth = moment(deliveryDate).tz("Asia/Kolkata").month() + 1;
+      const billYear = moment(deliveryDate).tz("Asia/Kolkata").year();
+      return billMonth === Number(month) && billYear === Number(year);
     });
 
   const totalPointsDebit = Number(

@@ -155,7 +155,7 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
       .populate([
         {
           path: "distributorId",
-          select: "dbCode name city stateId",
+          select: "",
           populate: {
             path: "stateId",
             select: "name zoneId",
@@ -167,7 +167,7 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
         },
         {
           path: "salesmanName",
-          select: "empId name empMappingId",
+          select: "",
           populate: {
             path: "empMappingId",
             select: "rmEmpId",
@@ -177,18 +177,29 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
             },
           },
         },
-        { path: "routeId", select: "code name" },
+        { path: "routeId", select: "" },
         { path: "orderId", select: "" },
         { path: "retailerId", select: "" },
         {
           path: "lineItems.product",
-          select:
-            "product_code name sku_group_id sku_group__name brand subBrand cat_id size product_hsn_code",
+          select: "",
           populate: [
-            { path: "cat_id", select: "name" },
-            { path: "collection_id", select: "" },
-            { path: "brand", select: "name" },
-            { path: "subBrand", select: "name" },
+            {
+              path: "cat_id",
+              select: "",
+            },
+            {
+              path: "collection_id",
+              select: "",
+            },
+            {
+              path: "brand",
+              select: "name",
+            },
+            {
+              path: "subBrand",
+              select: "name",
+            },
           ],
         },
         { path: "lineItems.price", select: "" },

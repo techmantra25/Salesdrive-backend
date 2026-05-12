@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const mongoose = require("mongoose");
+const moment = require("moment-timezone");
 
 const RetailerMultiplierTransaction = require("../../../models/retailerMultiplierTransaction.model");
 const RetailerMultiplierTransactionShadow = require("../../../models/retailerMultiplierTransactionShadow.model");
@@ -8,15 +9,24 @@ const OutletApproved = require("../../../models/outletApproved.model");
 const {
   retailerOutletTransactionCode,
 } = require("../../../utils/codeGenerator");
-const moment = require("moment-timezone");
+const {
+  calculateNetPoints,
+  calculateNewBalance,
+} = require("../../../utils/balanceCalculator");
 
-// Fields we compare/update
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants & Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 const COMPARE_FIELDS = ["slabPercentage", "monthTotalPoints", "point"];
 
 const buildAggregatedMap = (docs) => {
   const grouped = new Map();
+  // Group by retailerId + transactionFor
   for (const doc of docs) {
-    const key = `${doc.retailerId?._id ?? doc.retailerId}|${doc.transactionFor}`;
+    const retailerId = String(doc.retailerId?._id ?? doc.retailerId ?? "");
+    const txFor = doc.transactionFor ?? "";
+    const key = `${retailerId}|${txFor}`;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(doc);
   }
@@ -24,414 +34,492 @@ const buildAggregatedMap = (docs) => {
   const result = new Map();
   for (const [key, group] of grouped) {
     const first = group[0];
-    const retailerRef = first.retailerId;
+
+    // Use utility function to calculate net points (debits subtract from credits)
+    const netPoint = calculateNetPoints(group);
+
     const entry = {
-      retailerId: String(retailerRef?._id ?? retailerRef),
+      retailerId: String(first.retailerId?._id ?? first.retailerId ?? ""),
       transactionFor: first.transactionFor,
-      slabPercentage: group.reduce(
-        (s, d) => s + (Number(d.slabPercentage) || 0),
-        0,
-      ),
+      slabPercentage: first.slabPercentage ?? 0,
       monthTotalPoints: group.reduce(
         (s, d) => s + (Number(d.monthTotalPoints) || 0),
         0,
       ),
-      point: group.reduce((s, d) => s + (Number(d.point) || 0), 0),
+      point: netPoint,
       docs: group,
     };
     result.set(key, entry);
   }
-
   return result;
 };
 
 const getFieldDiffs = (mainAgg, shadowAgg) => {
   return COMPARE_FIELDS.reduce((acc, field) => {
-    const mainVal = mainAgg[field] ?? null;
-    const shadowVal = shadowAgg[field] ?? null;
-    if (Number(mainVal) !== Number(shadowVal)) {
+    const mainVal = Number(mainAgg[field] ?? 0);
+    const shadowVal = Number(shadowAgg[field] ?? 0);
+    if (mainVal !== shadowVal) {
       acc.push({
         field,
         mainValue: mainVal,
         shadowValue: shadowVal,
-        delta: Number(shadowVal) - Number(mainVal),
+        delta: shadowVal - mainVal,
       });
     }
     return acc;
   }, []);
 };
 
-const rebuildRetailerBalance = async (retailerId) => {
-  // Rebuild balance for a single retailer (mirrors rebuildAllRetailerBalances)
-  const txns = await RetailerOutletTransaction.find({
-    retailerId,
-    status: "Success",
-  }).sort({ createdAt: 1, _id: 1 });
-  if (!txns.length) return;
-
-  let runningBalance = 0;
-  for (const txn of txns) {
-    if (txn.transactionType === "credit")
-      runningBalance += Number(txn.point || 0);
-    else if (txn.transactionType === "debit")
-      runningBalance -= Number(txn.point || 0);
-
-    await RetailerOutletTransaction.updateOne(
-      { _id: txn._id },
-      { $set: { balance: runningBalance } },
-      { timestamps: false },
-    );
-  }
-
-  await OutletApproved.updateOne(
-    { _id: retailerId },
-    { $set: { currentPointBalance: runningBalance } },
-    { timestamps: false },
-  );
+/**
+ * Generate desired timestamp: 4th day of given month at 05:30 IST.
+ */
+const getDesiredTimestamp = (month, year) => {
+  return moment
+    .tz(
+      {
+        year: Number(year),
+        month: Number(month) - 1,
+        day: 4,
+        hour: 5,
+        minute: 30,
+      },
+      "Asia/Kolkata",
+    )
+    .toDate();
 };
 
 /**
- * Controller: fixShadowVsMainMultiplier
- * - Accepts pagination params (`page`, `limit`) to select the page of main-table
- *   transactions to consider for fixes.
- * - Filters by month/year/transactionFor etc (same shape as paginated endpoint).
- * - Compares main vs shadow for the selected page and applies fixes to main
- *   so that numeric fields match shadow values. Also updates linked outlet
- *   transactions and remarks. After each retailer is fixed, rebuilds that
- *   retailer's balance.
+ * Rebuild running balance for a retailer's outlet transactions.
+ */
+const rebuildRetailerBalance = async (retailerId) => {
+  try {
+    const txns = await RetailerOutletTransaction.find({
+      retailerId,
+      status: "Success",
+    })
+      .sort({ createdAt: 1, _id: 1 })
+      .lean();
+
+    let runningBalance = 0;
+    for (const txn of txns) {
+      // Use utility function for consistent balance calculation
+      runningBalance = calculateNewBalance(
+        runningBalance,
+        txn.transactionType,
+        txn.point,
+      );
+
+      await RetailerOutletTransaction.updateOne(
+        { _id: txn._id },
+        { $set: { balance: runningBalance } },
+        { timestamps: false },
+      );
+    }
+
+    // Update outlet snapshot
+    await OutletApproved.updateOne(
+      { _id: retailerId },
+      { $set: { currentPointBalance: runningBalance } },
+      { timestamps: false },
+    );
+  } catch (err) {
+    throw new Error(
+      `Failed to rebuild balance for ${retailerId}: ${err.message}`,
+    );
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Controller
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /fix-shadow-vs-main
+ *
+ * Fix discrepancies between main and shadow tables:
+ * - Update main fields (slabPercentage, monthTotalPoints, point) to match shadow
+ * - Create missing main entries from shadow (when shadow exists but main doesn't)
+ * - Update linked outlet transactions with proper remarks
+ * - Rebuild retailer balance after fixes
+ *
+ * Request body:
+ *   month, year (required)
+ *   retailerId, retailerIds, selectAll (optional)
+ *   transactionFor (optional)
+ *   page, limit (optional, ignored if selectAll=true)
  */
 const fixShadowVsMainMultiplier = asyncHandler(async (req, res) => {
+  const src = req.body || req.query;
   let {
-    page = 1,
-    limit = 50,
     month,
     year,
-    transactionFor,
-    multiplierType,
     retailerId,
     retailerIds,
-  } = req.body || req.query;
-  page = Number(page) || 1;
-  limit = Number(limit) || 50;
+    transactionFor,
+    page = 1,
+    limit = 50,
+    selectAll = false,
+  } = src;
+
+  // Validate required params
+  if (!month || !year) {
+    return res.status(400).json({
+      success: false,
+      message: "month and year are required",
+      received: { month, year },
+    });
+  }
+
+  // Parse and validate numeric params
+  month = parseInt(month, 10);
+  year = parseInt(year, 10);
+  page = parseInt(page, 10) || 1;
+  limit = parseInt(limit, 10) || 50;
+
+  // Additional validation for valid month/year
+  if (isNaN(month) || isNaN(year) || month < 1 || month > 12) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid month (1-12) or year value",
+      received: { month, year },
+    });
+  }
+
   const skip = (page - 1) * limit;
 
-  if (!month || !year) {
-    res.status(400);
-    throw new Error("month and year are required");
-  }
-
-  const baseFilter = { month: Number(month), year: Number(year) };
-  if (transactionFor) baseFilter.transactionFor = transactionFor;
-
-  // If caller supplied retailer selection, prefer that for base filter
-  let requestedRetailerIds = [];
-  if (retailerIds && Array.isArray(retailerIds) && retailerIds.length) {
-    requestedRetailerIds = retailerIds.map(String);
-    baseFilter.retailerId = { $in: requestedRetailerIds };
-  } else if (retailerId) {
-    requestedRetailerIds = [String(retailerId)];
-    baseFilter.retailerId = retailerId;
-  }
-  // Determine if caller explicitly asked to process ALL retailers. UI may send
-  // `selectAll=true` or pass a special 'all' retailer id in `retailerId`/`retailerIds`.
-  const rawSelectAll =
-    (req.body && (req.body.selectAll ?? req.body.allRetailers)) ??
-    (req.query && (req.query.selectAll ?? req.query.allRetailers));
-  const retailerIdsArray = Array.isArray(retailerIds)
-    ? retailerIds.map(String)
-    : [];
-  const selectAll =
-    rawSelectAll === true ||
-    retailerIdsArray.some((r) => String(r).toLowerCase() === "all") ||
-    String(retailerId).toLowerCase() === "all";
-
-  // When `selectAll` is true we should ignore retailer filter and process all
-  // matching main/shadow docs for the month/year (pagination is ignored).
+  // Determine retailer selection
+  let selectedRetailerIds = [];
   if (selectAll) {
-    // remove any retailerId constraint from baseFilter
-    delete baseFilter.retailerId;
+    selectedRetailerIds = [];
+  } else if (Array.isArray(retailerIds) && retailerIds.length > 0) {
+    selectedRetailerIds = retailerIds
+      .map(String)
+      .filter((id) => id && id.toLowerCase() !== "all");
+  } else if (retailerId && String(retailerId).toLowerCase() !== "all") {
+    selectedRetailerIds = [String(retailerId)];
   }
 
-  // Fetch main-table transactions: either the page requested, or all when selectAll
-  let mainQuery = RetailerMultiplierTransaction.find(baseFilter).lean();
-  if (!selectAll) {
-    mainQuery = mainQuery.skip(skip).limit(limit);
-  }
-  const mainDocs = await mainQuery;
+  // Build filters
+  const mainFilter = { month, year };
+  const shadowFilter = { month, year };
 
-  // Determine targeted retailers: explicit list (when provided and not selectAll),
-  // otherwise derive from fetched main docs.
-  let targetedRetailerIds = [];
-  if (!selectAll && requestedRetailerIds.length) {
-    targetedRetailerIds = requestedRetailerIds;
-  } else {
-    targetedRetailerIds = [
-      ...new Set(mainDocs.map((d) => String(d.retailerId))),
-    ];
+  if (transactionFor) {
+    mainFilter.transactionFor = transactionFor;
+    shadowFilter.transactionFor = transactionFor;
   }
 
-  const shadowFilter = { month: Number(month), year: Number(year) };
-  if (transactionFor) shadowFilter.transactionFor = transactionFor;
-  if (!selectAll) shadowFilter.retailerId = { $in: targetedRetailerIds };
+  if (!selectAll && selectedRetailerIds.length > 0) {
+    mainFilter.retailerId = { $in: selectedRetailerIds };
+    shadowFilter.retailerId = { $in: selectedRetailerIds };
+  }
 
+  // CRITICAL FIX: For fix operations, we MUST fetch ALL records to detect ALL mismatches
+  // Pagination is not compatible with mismatch detection - we need the full dataset
+  // to compare main vs shadow and identify what needs fixing.
+  // Apply pagination only to DISPLAY results, not to PROCESSING data.
+  const mainDocs = await RetailerMultiplierTransaction.find(mainFilter).lean();
   const shadowDocs =
     await RetailerMultiplierTransactionShadow.find(shadowFilter).lean();
 
-  // Nothing to do if neither main nor shadow returned any docs
-  if (
-    (!mainDocs || mainDocs.length === 0) &&
-    (!shadowDocs || shadowDocs.length === 0)
-  ) {
+  if (!mainDocs.length && !shadowDocs.length) {
     return res.status(200).json({
       success: true,
-      message: "No retailers found for requested page/filters",
-      modified: 0,
+      message: "No transactions found for requested filters",
+      modifications: [],
+      rebuiltRetailers: [],
     });
   }
 
   const mainMap = buildAggregatedMap(mainDocs);
   const shadowMap = buildAggregatedMap(shadowDocs);
 
-  const modifiedRetailers = new Set();
   const modifications = [];
+  const modifiedRetailerIds = new Set();
 
-  // Compute exact keys that need fixing: either field mismatches or shadow-only
-  const keysToFix = new Set();
+  // ── PART 1: Fix mismatched fields in main to match shadow ──────────────────
   for (const [key, mainAgg] of mainMap) {
     const shadowAgg = shadowMap.get(key);
-    if (shadowAgg) {
-      const diffs = getFieldDiffs(mainAgg, shadowAgg);
-      if (diffs.length) keysToFix.add(key);
-    }
-  }
-  for (const [key, shadowAgg] of shadowMap) {
-    if (!mainMap.has(key)) keysToFix.add(key);
-  }
-
-  for (const [key, mainAgg] of mainMap) {
-    if (!keysToFix.has(key)) continue; // only process keys reported as diffs/missing
-    const shadowAgg = shadowMap.get(key);
-    if (!shadowAgg) continue; // nothing to sync (shouldn't happen because keysToFix filtered)
+    if (!shadowAgg) continue; // No shadow entry; skip
 
     const diffs = getFieldDiffs(mainAgg, shadowAgg);
-    if (!diffs.length) continue; // already matching
+    if (!diffs.length) continue; // Already matching
 
-    // Apply changes: update all matching main documents for this retailer+tx
-    const [rid, txType] = key.split("|");
-    const newValues = {
-      slabPercentage: shadowAgg.slabPercentage,
-      monthTotalPoints: shadowAgg.monthTotalPoints,
-      point: shadowAgg.point,
-      isEdited: true,
-    };
+    const [retailerId, txType] = key.split("|");
+    const desiredTs = getDesiredTimestamp(month, year);
 
-    // Update documents and linked outlet transactions
-    const docsToUpdate = await RetailerMultiplierTransaction.find({
-      retailerId: rid,
+    // Convert retailerId to ObjectId if needed
+    const retailerIdToQuery = mongoose.Types.ObjectId.isValid(retailerId)
+      ? new mongoose.Types.ObjectId(retailerId)
+      : retailerId;
+
+    // Update all main docs matching this retailer + transactionFor
+    const mainDocsToUpdate = await RetailerMultiplierTransaction.find({
+      retailerId: retailerIdToQuery,
       transactionFor: txType,
-      month: Number(month),
-      year: Number(year),
+      month,
+      year,
     });
 
-    for (const doc of docsToUpdate) {
-      const oldPoint = Number(doc.point || 0);
-      const newPoint = Number(shadowAgg.point || 0);
-
-      // desired timestamp: 4th day of the transaction month at 05:30 IST
-      const desiredTs = moment
-        .tz(
-          {
-            year: Number(month) || Number(doc.year) || new Date().getFullYear(),
-            month: Number(month) ? Number(month) : Number(doc.month) || 1,
-            day: 4,
-            hour: 5,
-            minute: 30,
-          },
-          "Asia/Kolkata",
-        )
-        .toDate();
-
-      // Update linked outlet transaction if present
-      if (doc.retailerOutletTransactionId) {
-        await RetailerOutletTransaction.updateOne(
-          { _id: doc.retailerOutletTransactionId },
-          {
-            $set: {
-              point: newPoint,
-              updatedAt: desiredTs,
-              createdAt: desiredTs,
-            },
-          },
-          { timestamps: false },
-        );
-      }
-
-      // Update document fields without modifying the existing remark.
-      await RetailerMultiplierTransaction.updateOne(
-        { _id: doc._id },
-        { $set: { ...newValues, updatedAt: desiredTs, createdAt: desiredTs } },
-        { timestamps: false },
-      );
+    if (mainDocsToUpdate.length === 0) {
+      console.warn(`No docs found to update for key ${key}`);
+      continue;
     }
 
-    modifiedRetailers.add(rid);
-    modifications.push({ retailerId: rid, transactionFor: txType, diffs });
+    for (const doc of mainDocsToUpdate) {
+      try {
+        const oldPoint = Number(doc.point || 0);
+        const newPoint = Number(shadowAgg.point || 0);
+        const pointDelta = newPoint - oldPoint;
+
+        // Build updated remark tracking the fix
+        const remarkParts = [];
+        if (doc.remark) remarkParts.push(doc.remark);
+        // remarkParts.push(
+        //   `[FIXED ${new Date().toISOString().split("T")[0]}] slabPct: ${doc.slabPercentage}→${shadowAgg.slabPercentage}, mtp: ${doc.monthTotalPoints}→${shadowAgg.monthTotalPoints}, pt: ${oldPoint}→${newPoint}`,
+        // );
+
+        const updatePayload = {
+          slabPercentage: shadowAgg.slabPercentage,
+          monthTotalPoints: shadowAgg.monthTotalPoints,
+          point: newPoint,
+          remark: remarkParts.join(" | "),
+          isEdited: true,
+          updatedAt: desiredTs,
+        };
+
+        // Update main doc (don't override createdAt)
+        await RetailerMultiplierTransaction.updateOne(
+          { _id: doc._id },
+          { $set: updatePayload },
+          { timestamps: false },
+        );
+
+        // Update linked outlet transaction if exists
+        if (doc.retailerOutletTransactionId) {
+          await RetailerOutletTransaction.updateOne(
+            { _id: doc.retailerOutletTransactionId },
+            {
+              $set: {
+                point: newPoint,
+                remark: updatePayload.remark,
+                updatedAt: desiredTs,
+              },
+            },
+            { timestamps: false },
+          );
+
+          // Update outlet balance if point changed
+          if (pointDelta !== 0) {
+            const txnType = doc.transactionType || "credit";
+            const delta = txnType === "credit" ? pointDelta : -pointDelta;
+            await OutletApproved.updateOne(
+              { _id: retailerIdToQuery },
+              {
+                $inc: { currentPointBalance: delta },
+                $set: { updatedAt: desiredTs },
+              },
+              { timestamps: false },
+            );
+          }
+        }
+      } catch (err) {
+        console.error(
+          `Error updating doc ${doc._id} for retailer ${retailerId}:`,
+          err.message,
+        );
+        modifications.push({
+          type: "UPDATE_FAILED",
+          docId: String(doc._id),
+          retailerId,
+          error: err.message,
+        });
+      }
+    }
+
+    modifiedRetailerIds.add(retailerId);
+    modifications.push({
+      type: "UPDATED",
+      retailerId,
+      transactionFor: txType,
+      diffs,
+      count: mainDocsToUpdate.length,
+    });
   }
 
-  // Handle shadow-only entries: create main entries so main reflects shadow
+  // ── PART 2: Create missing main entries from shadow ─────────────────────────
   for (const [key, shadowAgg] of shadowMap) {
-    // process only shadow-only keys that were identified as diffs by compare
-    if (!keysToFix.has(key)) continue;
-    if (mainMap.has(key)) continue;
-    // Create one main doc per shadow aggregated key using the shadow's first doc as template
-    const template =
-      shadowDocs.find((d) => `${d.retailerId}|${d.transactionFor}` === key) ||
-      null;
-    if (!template) continue;
-    // If the shadow template doesn't include a transactionFor, skip creating
-    // a main-table document — avoid inserting an empty/placeholder row.
-    if (!template.transactionFor) continue;
+    if (mainMap.has(key)) continue; // Main entry already exists
 
-    // Avoid creating a duplicate if a main doc already exists for this retailer+tx+month+year
+    const [retailerId, txType] = key.split("|");
+    const desiredTs = getDesiredTimestamp(month, year);
+
+    // Get shadow template doc
+    const template = shadowDocs.find(
+      (d) => `${d.retailerId}|${d.transactionFor}` === key,
+    );
+    if (!template || !template.transactionFor) continue; // Invalid template
+
+    // Check if main already exists (redundant but safe)
+    // Convert retailerId to ObjectId if needed for comparison
+    const retailerIdToQuery = mongoose.Types.ObjectId.isValid(retailerId)
+      ? new mongoose.Types.ObjectId(retailerId)
+      : retailerId;
+
     const exists = await RetailerMultiplierTransaction.findOne({
-      retailerId: template.retailerId,
-      transactionFor: template.transactionFor,
-      month: template.month,
-      year: template.year,
+      retailerId: retailerIdToQuery,
+      transactionFor: txType,
+      month,
+      year,
     }).lean();
     if (exists) continue;
 
-    // desired timestamp: 4th day of the transaction month at 05:30 IST
-    const desiredTs = moment
-      .tz(
-        {
-          year:
-            Number(template.year) || Number(year) || new Date().getFullYear(),
-          month: Number(template.month) ? Number(template.month) : 0,
-          day: 4,
-          hour: 5,
-          minute: 30,
-        },
-        "Asia/Kolkata",
-      )
-      .toDate();
-
+    // Create new main doc from shadow
     const newDoc = {
-      retailerId: template.retailerId,
+      retailerId: retailerIdToQuery,
       retailerCode: template.retailerCode || "",
       retailerName: template.retailerName || "",
       transactionType: template.transactionType || "credit",
       transactionFor: template.transactionFor,
-      point: template.point || 0,
-      slabPercentage: template.slabPercentage ?? 0,
-      monthTotalPoints: template.monthTotalPoints || 0,
-      month: template.month,
-      year: template.year,
-      // New inserted main docs should be marked Success so points are applied
+      point: Number(template.point || 0),
+      slabPercentage: Number(template.slabPercentage || 0),
+      monthTotalPoints: Number(template.monthTotalPoints || 0),
+      month,
+      year,
       status: "Success",
-      // keep original remark from shadow (do not append INSERTED_FROM_SHADOW)
-      remark: template.remark || "",
+      remark:
+        `[INSERTED_FROM_SHADOW ${desiredTs.toISOString().split("T")[0]}] ${template.remark || ""}`.trim(),
       createdAt: desiredTs,
       updatedAt: desiredTs,
     };
 
-    // Create main doc and, if it's a Success, create linked outlet txn and
-    // update retailer snapshot balance so points reflect immediately.
-    const created = await RetailerMultiplierTransaction.create(newDoc);
-
-    // If created doc is successful and has points, create outlet transaction
-    // and update retailer balance.
     try {
-      if (
-        String(created.status).toLowerCase() === "success" &&
-        Number(created.point) !== 0
-      ) {
-        const lastRetailerTxn = await RetailerOutletTransaction.findOne({
-          retailerId: created.retailerId,
-        }).sort({ createdAt: -1 });
-        const prevBalance = lastRetailerTxn
-          ? Number(lastRetailerTxn.balance)
-          : Number(
-              (await OutletApproved.findById(created.retailerId))
-                ?.currentPointBalance,
-            ) || 0;
+      const createdDoc = await RetailerMultiplierTransaction.create(newDoc);
 
-        const retailerTxn = await RetailerOutletTransaction.create({
-          retailerId: created.retailerId,
+      // If points > 0, create outlet transaction
+      if (
+        Number(createdDoc.point) > 0 &&
+        mongoose.Types.ObjectId.isValid(createdDoc.retailerId)
+      ) {
+        const lastTxn = await RetailerOutletTransaction.findOne({
+          retailerId: createdDoc.retailerId,
+        })
+          .sort({ createdAt: -1 })
+          .lean();
+        const prevBalance = lastTxn
+          ? Number(lastTxn.balance)
+          : (await OutletApproved.findById(createdDoc.retailerId).lean())
+              ?.currentPointBalance || 0;
+
+        // Use utility function for consistent balance calculation
+        const newBalance = calculateNewBalance(
+          prevBalance,
+          createdDoc.transactionType,
+          createdDoc.point,
+        );
+
+        const outletTxn = await RetailerOutletTransaction.create({
+          retailerId: createdDoc.retailerId,
           distributorId: req.user?._id,
           transactionId: await retailerOutletTransactionCode("RTO"),
-          transactionType: created.transactionType || "credit",
-          transactionFor: created.transactionFor,
-          point: Number(created.point) || 0,
-          balance:
-            created.transactionType === "credit"
-              ? prevBalance + Number(created.point)
-              : prevBalance - Number(created.point),
+          transactionType: createdDoc.transactionType,
+          transactionFor: createdDoc.transactionFor,
+          point: Number(createdDoc.point),
+          balance: newBalance,
           status: "Success",
-          remark: created.remark || "",
+          remark: createdDoc.remark,
           createdAt: desiredTs,
           updatedAt: desiredTs,
         });
 
-        // Persist retailerOutletTransactionId back to main doc
+        // Link outlet txn back to main doc
         await RetailerMultiplierTransaction.updateOne(
-          { _id: created._id },
-          { $set: { retailerOutletTransactionId: retailerTxn._id } },
+          { _id: createdDoc._id },
+          { $set: { retailerOutletTransactionId: outletTxn._id } },
           { timestamps: false },
         );
 
-        // Update OutletApproved currentPointBalance snapshot and set updatedAt
+        // Update outlet balance snapshot
         await OutletApproved.updateOne(
-          { _id: created.retailerId },
+          { _id: createdDoc.retailerId },
           {
             $inc: {
               currentPointBalance:
-                created.transactionType === "credit"
-                  ? Number(created.point)
-                  : -Number(created.point),
+                createdDoc.transactionType === "credit"
+                  ? Number(createdDoc.point)
+                  : -Number(createdDoc.point),
             },
             $set: { updatedAt: desiredTs },
           },
           { timestamps: false },
         );
       }
+
+      modifiedRetailerIds.add(String(retailerId));
+      modifications.push({
+        type: "INSERTED",
+        retailerId,
+        transactionFor: txType,
+        point: shadowAgg.point,
+        remark: newDoc.remark,
+      });
     } catch (err) {
-      // Don't block overall operation on a snapshot update failure; record modification nonetheless
       console.error(
-        "Error creating outlet txn or updating balance:",
+        `Error creating main transaction from shadow for retailer ${retailerId}:`,
         err.message,
       );
+      modifications.push({
+        type: "INSERT_FAILED",
+        retailerId,
+        transactionFor: txType,
+        error: err.message,
+      });
+      // Continue: attempt to fix remaining entries
     }
-
-    modifiedRetailers.add(String(template.retailerId));
-    modifications.push({
-      retailerId: String(template.retailerId),
-      transactionFor: template.transactionFor,
-      diffs: [
-        { field: "inserted", mainValue: null, shadowValue: template.point },
-      ],
-    });
   }
 
-  // Rebuild balance for each modified retailer
-  const modifiedList = Array.from(modifiedRetailers);
-  for (const rId of modifiedList) {
-    if (!mongoose.Types.ObjectId.isValid(rId)) continue;
+  // ── PART 3: Rebuild balance for all modified retailers ─────────────────────
+  const rebuiltRetailers = [];
+  const rebuildErrors = [];
+
+  for (const rid of modifiedRetailerIds) {
+    if (!mongoose.Types.ObjectId.isValid(rid)) {
+      console.warn(`Skipping invalid retailerId: ${rid}`);
+      continue;
+    }
     try {
-      // rebuild in background but await to ensure consistency
-      await rebuildRetailerBalance(rId);
+      await rebuildRetailerBalance(rid);
+      rebuiltRetailers.push(rid);
     } catch (err) {
-      // continue with others
-      console.error(`Error rebuilding balance for ${rId}:`, err.message);
+      console.error(`Balance rebuild error for ${rid}:`, err.message);
+      rebuildErrors.push({
+        retailerId: rid,
+        error: err.message,
+      });
+      // Continue with other retailers
     }
   }
 
-  return res.status(200).json({
+  const successCount = modifications.filter(
+    (m) => m.type === "UPDATED" || m.type === "INSERTED",
+  ).length;
+
+  const response = {
     success: true,
-    modifiedCount: modifications.length,
+    message:
+      successCount > 0
+        ? `Fixed ${successCount} transaction(s)`
+        : "No mismatches found to fix",
     modifications,
-    rebuiltRetailers: modifiedList,
-  });
+    rebuiltRetailers,
+    modificationCount: successCount,
+  };
+
+  // Add errors if any occurred
+  if (rebuildErrors.length > 0) {
+    response.rebuildErrors = rebuildErrors;
+  }
+
+  return res.status(200).json(response);
 });
 
 module.exports = { fixShadowVsMainMultiplier };

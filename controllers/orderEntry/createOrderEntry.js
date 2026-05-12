@@ -124,7 +124,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
         isActive: true,
       });
       const enableBackdate = billDeliverySetting
-        ? billDeliverySetting.enableBackdateBilling
+        ? billDeliverySetting.enableBackdateOrder
         : false;
 
       const backdateResult = getOrderBackdate(
@@ -296,7 +296,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
                 const backdateResult = getOrderBackdate(
                   createdAtDate,
                   billDeliverySetting
-                    ? billDeliverySetting.enableBackdateBilling
+                    ? billDeliverySetting.enableBackdateOrder
                     : false,
                   orderEntryDetails.orderSource,
                   new Date(),
@@ -330,9 +330,10 @@ const createOrderEntry = asyncHandler(async (req, res) => {
               orderSource: orderEntryDetails.orderSource,
             });
 
-            // Create bill
+            // ─── After axios.post to /create-bulk-bill ────────────────────────────────
+
             const response = await axios.post(
-              SERVER_URL + "/api/v1/bill/create-bulk-bill",
+              SERVER_URL + "/api/v3/bill/create-bulk-bill",
               data,
               {
                 headers: {
@@ -342,12 +343,64 @@ const createOrderEntry = asyncHandler(async (req, res) => {
               },
             );
 
+            billData = response.data;
+
+            // ─── NEW: If bill was queued (async Redis path), poll until billIds populate ──
+            // The queue worker processes bills asynchronously, so billIds on the order
+            // won't be set yet when this response returns. Poll for up to 8s.
+            if (billData?.jobId && !billData?.bills?.length) {
+              const POLL_INTERVAL_MS = 800;
+              const POLL_TIMEOUT_MS = 8000;
+              const pollStart = Date.now();
+
+              console.log(
+                `⏳ Bill queued (jobId: ${billData.jobId}), polling order for billIds...`,
+              );
+
+              await new Promise((resolve) => {
+                const poll = async () => {
+                  try {
+                    const updatedOrder = await OrderEntry.findById(
+                      savedOrderEntry._id,
+                    ).lean();
+
+                    if (updatedOrder?.billIds?.length > 0) {
+                      // Merge the populated billIds back so the response is useful
+                      billData = {
+                        ...billData,
+                        bills: updatedOrder.billIds.map((id) => ({ _id: id })),
+                        processedCount: updatedOrder.billIds.length,
+                      };
+                      savedOrderEntry.billIds = updatedOrder.billIds;
+                      console.log(
+                        `✅ billIds populated after ${Date.now() - pollStart}ms:`,
+                        updatedOrder.billIds,
+                      );
+                      return resolve();
+                    }
+
+                    if (Date.now() - pollStart >= POLL_TIMEOUT_MS) {
+                      console.warn(
+                        `⚠️ Poll timeout after ${POLL_TIMEOUT_MS}ms — billIds still empty`,
+                      );
+                      return resolve();
+                    }
+
+                    setTimeout(poll, POLL_INTERVAL_MS);
+                  } catch (e) {
+                    console.warn("Poll error:", e.message);
+                    resolve(); // don't block the response on poll errors
+                  }
+                };
+
+                setTimeout(poll, POLL_INTERVAL_MS); // first check after initial delay
+              });
+            }
+            // ─────────────────────────────────────────────────────────────────────────────
+
             if (response?.data?.skippedRows?.length > 0) {
               billError = "Bill creation partially failed with skipped rows";
             }
-
-            // Assign billData based on response structure
-            billData = response.data;
 
             // Update credit notes with billId after bill creation
             if (
