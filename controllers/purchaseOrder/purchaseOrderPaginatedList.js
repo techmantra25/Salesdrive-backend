@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
+const Invoice = require("../../models/invoice.model");
 
 // Paginated Purchase Order Entry Report with Filters
 const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
@@ -99,6 +100,61 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       },
     ]);
 
+    const updatedOrders = await Promise.all(
+  populatedOrders.map(async (po) => {
+    // =========================
+    // BUILD RECEIVED MAP
+    // =========================
+    const invoices = await Invoice.find({
+      purchaseOrderId: po._id,
+    });
+
+    const receivedMap = {};
+
+    for (const inv of invoices) {
+      for (const li of inv.lineItems) {
+        const key = String(li.product);
+
+        receivedMap[key] =
+          (receivedMap[key] || 0) + Number(li.qty || 0);
+      }
+    }
+
+    // =========================
+    // PROCESS LINE ITEMS
+    // =========================
+    const updatedLineItems = po.lineItems.map((item) => {
+      const productId = item?.product?._id;
+
+      const alreadyReceived =
+        receivedMap[String(productId)] || 0;
+
+      const remainingQty = Math.max(
+        (item.orderQty || 0) - alreadyReceived,
+        0
+      );
+
+      const piecesPerBox = Number(
+        item?.product?.no_of_pieces_in_a_box || 1
+      );
+
+      const remainingBoxQty = Math.floor(
+        remainingQty / piecesPerBox
+      );
+
+      return {
+        ...item.toObject(),
+        existorderqty: remainingQty,
+        existboxorderqty: remainingBoxQty,
+      };
+    });
+
+    return {
+      ...po.toObject(),
+      lineItems: updatedLineItems,
+    };
+  })
+);
     const filteredCount = await PurchaseOrder.countDocuments(query);
     totalQuery = {};
     if (distributorId) {
@@ -109,7 +165,7 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
     res.status(200).json({
       status: 200,
       message: "Purchase orders list",
-      data: populatedOrders,
+      data: updatedOrders,
       pagination: {
         currentPage: Number(page),
         limit: Number(limit),

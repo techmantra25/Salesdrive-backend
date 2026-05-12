@@ -76,6 +76,7 @@ const generateInvoiceNumber = async (session) => {
     "0"
   )}`;
 };
+
 const generateGRNForPO = async ({
   purchaseOrder,
   lineItems,
@@ -375,10 +376,11 @@ const generateGRNForPO = async ({
     session.endSession();
 
     return {
-      message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
-        ? ` | Failed: ${failedProducts.join(", ")}`
-        : ""
-        }`,
+      message: `GRN created: ${productSummary.join(", ")}${
+        failedProducts.length
+          ? ` | Failed: ${failedProducts.join(", ")}`
+          : ""
+      }`,
       data: invoice,
     };
   } catch (error) {
@@ -397,6 +399,7 @@ const importGrnforPoOrder = asyncHandler(
     try {
       const rows = req.body.data;
       console.log("Received rows:", rows);
+
       if (
         !rows ||
         !Array.isArray(rows) ||
@@ -426,17 +429,31 @@ const importGrnforPoOrder = asyncHandler(
           grouped[soNumber] = [];
         }
 
+        // ✅ ONLY CHANGE: SO Qty correction
+        const product = await Product.findOne({
+          product_code: String(productCode).trim(),
+        });
+
+        if (!product) {
+          continue;
+        }
+
+        const boxOrderQty = Number(
+          row["Order Qty (UOM)"] || 0
+        );
+
+        const pcsPerBox = Number(
+          product.no_of_pieces_in_a_box || 0
+        );
+
+        // ✅ Final PCS Qty
+        const finalQty =
+          boxOrderQty * pcsPerBox;
+
         grouped[soNumber].push({
           productCode: String(productCode).trim(),
 
-          orderQty: Number(
-            row["SO Qty (PCS)"] ||
-            row["Invoice Qty"] ||
-            row["invoiceQty"] ||
-            row["receivedQty"] ||
-            row["orderQty"] ||
-            0
-          ),
+          orderQty: finalQty,
 
           l1Basic: Number(
             row["L1 Basic"] ||
@@ -476,6 +493,7 @@ const importGrnforPoOrder = asyncHandler(
               invoiceNo:
                 grouped[soNumber][0]?.invoiceNo || null,
             });
+
           results.push({
             soNumber,
             purchaseOrderNo:
