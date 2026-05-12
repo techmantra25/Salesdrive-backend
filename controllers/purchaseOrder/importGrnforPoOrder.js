@@ -116,32 +116,66 @@ const generateGRNForPO = async ({
 
     const invoiceLineItems = [];
     const failedProducts = [];
+    const validationErrors = [];
     const productSummary = [];
 
+
+
+
+
+
+
+
+
+
     for (const item of lineItems) {
-      const cleanCode = String(item.productCode).trim();
+      const cleanCode = String(
+        item.productCode
+      ).trim();
+
+      const currentErrors = [];
 
       const product = await Product.findOne({
         product_code: cleanCode,
       }).session(session);
 
+      // ❌ Product not found
       if (!product) {
-        console.log("❌ Product not found:", cleanCode);
+        currentErrors.push(
+          `Invalid Product Code: ${cleanCode}`
+        );
 
-        failedProducts.push(`Invalid Code: ${cleanCode}`);
+        validationErrors.push({
+          ...item,
+          reason: currentErrors.join(" | "),
+        });
+
         continue;
       }
 
       const poItem = purchaseOrder.lineItems.find(
-        (p) => String(p.product) === String(product._id)
+        (p) =>
+          String(p.product) ===
+          String(product._id)
       );
 
+      // ❌ Product not in PO
       if (!poItem) {
-        failedProducts.push(`${product.name} (Not in PO)`);
+        currentErrors.push(
+          `${product.name} not mapped in SO`
+        );
+
+        validationErrors.push({
+          ...item,
+          reason: currentErrors.join(" | "),
+        });
+
         continue;
       }
 
-      const requestedQty = Number(item.orderQty || 0);
+      const requestedQty = Number(
+        item.orderQty || 0
+      );
 
       const alreadyReceived =
         receivedMap[String(product._id)] || 0;
@@ -149,27 +183,36 @@ const generateGRNForPO = async ({
       const remainingQty =
         poItem.orderQty - alreadyReceived;
 
-      // ❌ validations
-      if (remainingQty <= 0 && requestedQty > 0) {
-        failedProducts.push(`${product.name} (No qty left)`);
-        continue;
+      // ❌ qty validations
+      if (
+        remainingQty <= 0 &&
+        requestedQty > 0
+      ) {
+        currentErrors.push(
+          `${product.name} no qty left`
+        );
       }
 
       if (requestedQty > remainingQty) {
-        failedProducts.push(
-          `${product.name} (Only ${remainingQty} left)`
+        currentErrors.push(
+          `Only ${remainingQty} qty left for ${product.name}`
         );
-        continue;
       }
 
-      if (!requestedQty || requestedQty <= 0) {
-        continue;
+      if (
+        !requestedQty ||
+        requestedQty <= 0
+      ) {
+        currentErrors.push(
+          `Invalid qty for ${product.name}`
+        );
       }
 
       // 💰 price
       let priceDoc = await Price.findOne({
         productId: product._id,
-        distributorId: purchaseOrder.distributorId,
+        distributorId:
+          purchaseOrder.distributorId,
         status: true,
       })
         .sort({ createdAt: -1 })
@@ -186,26 +229,54 @@ const generateGRNForPO = async ({
       }
 
       if (!priceDoc) {
-        failedProducts.push(`${product.name} (No price)`);
+        currentErrors.push(
+          `${product.name} no price found`
+        );
+      }
+
+      // ❌ if any validation failed
+      if (currentErrors.length > 0) {
+        failedProducts.push(
+          currentErrors.join(" | ")
+        );
+
+        validationErrors.push({
+          ...item,
+          reason: currentErrors.join(" | "),
+        });
+
         continue;
       }
 
-      const mrp = Number(priceDoc.mrp_price || 0);
+      const mrp = Number(
+        priceDoc.mrp_price || 0
+      );
 
       const l1 = Number(
-        item.l1Basic ?? poItem.l1Basic ?? 0
+        item.l1Basic ??
+        poItem.l1Basic ??
+        0
       );
 
       let basicRate = mrp;
 
       if (l1 > 0) {
-        basicRate = mrp - (mrp * l1) / 100;
+        basicRate =
+          mrp - (mrp * l1) / 100;
       }
 
       // 🧾 tax
-      let cgstPercent = Number(product?.cgst || 0);
-      let sgstPercent = Number(product?.sgst || 0);
-      let igstPercent = Number(product?.igst || 0);
+      let cgstPercent = Number(
+        product?.cgst || 0
+      );
+
+      let sgstPercent = Number(
+        product?.sgst || 0
+      );
+
+      let igstPercent = Number(
+        product?.igst || 0
+      );
 
       if (
         !cgstPercent &&
@@ -224,14 +295,24 @@ const generateGRNForPO = async ({
       let igst = 0;
 
       if (igstPercent > 0) {
-        igst = (grossAmount * igstPercent) / 100;
+        igst =
+          (grossAmount * igstPercent) /
+          100;
       } else {
-        cgst = (grossAmount * cgstPercent) / 100;
-        sgst = (grossAmount * sgstPercent) / 100;
+        cgst =
+          (grossAmount * cgstPercent) /
+          100;
+
+        sgst =
+          (grossAmount * sgstPercent) /
+          100;
       }
 
       const netAmount =
-        grossAmount + cgst + sgst + igst;
+        grossAmount +
+        cgst +
+        sgst +
+        igst;
 
       // ➕ totals
       totalGross += grossAmount;
@@ -249,7 +330,8 @@ const generateGRNForPO = async ({
         basicRate,
         qty: requestedQty,
         receivedQty: requestedQty,
-        poNumber: purchaseOrder.purchaseOrderNo,
+        poNumber:
+          purchaseOrder.purchaseOrderNo,
         grossAmount,
         taxableAmount: grossAmount,
         cgst,
@@ -264,13 +346,47 @@ const generateGRNForPO = async ({
       );
     }
 
+
+
+    // If ANY error exists then FULL PO cancel
+    if (validationErrors.length > 0) {
+      const fullPoErrors = lineItems.map((item) => {
+
+        // find matching validation errors
+        const matchedErrors = validationErrors
+          .filter(
+            (v) =>
+              String(v.productCode).trim() ===
+              String(item.productCode).trim()
+          )
+          .map((v) => v.reason);
+
+        return {
+          ...item,
+
+          originalRow: item.originalRow,
+
+          reason:
+            matchedErrors.length > 0
+              ? matchedErrors.join(" | ")
+              : "Cancelled because another product in same SO failed",
+        };
+      });
+
+      throw {
+        message:
+          "Full PO cancelled due to validation errors",
+
+        validationErrors: fullPoErrors,
+      };
+    }
+
     // ❌ no valid items
     if (!invoiceLineItems.length) {
-      throw new Error(
-        failedProducts.length
-          ? failedProducts.join(", ")
-          : "No valid quantity"
-      );
+      throw {
+        message: "No valid quantity",
+        validationErrors,
+      };
     }
 
     // 🧾 create invoice
@@ -377,8 +493,8 @@ const generateGRNForPO = async ({
 
     return {
       message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
-          ? ` | Failed: ${failedProducts.join(", ")}`
-          : ""
+        ? ` | Failed: ${failedProducts.join(", ")}`
+        : ""
         }`,
       data: invoice,
     };
@@ -386,7 +502,14 @@ const generateGRNForPO = async ({
     await session.abortTransaction();
     session.endSession();
 
-    throw error;
+    throw {
+      message:
+        error.message ||
+        "GRN creation failed",
+
+      validationErrors:
+        error.validationErrors || [],
+    };
   }
 };
 
@@ -465,11 +588,14 @@ const importGrnforPoOrder = asyncHandler(
             row["invoiceNo"] ||
             row["invoice_number"] ||
             null,
+
+          originalRow: row,
         });
       }
 
       const results = [];
       const errors = [];
+      const errorCsvRows = [];
 
       for (const soNumber of Object.keys(grouped)) {
         try {
@@ -504,15 +630,42 @@ const importGrnforPoOrder = asyncHandler(
             soNumber,
             message: err.message,
           });
+
+          // ✅ error csv rows
+          if (
+            err.validationErrors &&
+            Array.isArray(
+              err.validationErrors
+            )
+          ) {
+            err.validationErrors.forEach(
+              (item) => {
+                errorCsvRows.push({
+                  ...item.originalRow,
+
+                  Reason: item.reason,
+                });
+              }
+            );
+          }
         }
       }
 
       return res.status(200).json({
         message: "Bulk GRN processed",
+
         successCount: results.length,
+
         failedCount: errors.length,
+
         results,
+
         errors,
+
+        errorCsv:
+          errorCsvRows.length > 0
+            ? errorCsvRows
+            : [],
       });
     } catch (error) {
       return res.status(500).json({
