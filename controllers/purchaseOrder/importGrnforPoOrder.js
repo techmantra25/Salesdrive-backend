@@ -624,10 +624,10 @@ const generateGRNForPO = async ({
       message: `GRN created: ${productSummary.join(
         ", "
       )}${failedProducts.length
-          ? ` | Failed: ${failedProducts.join(
-            ", "
-          )}`
-          : ""
+        ? ` | Failed: ${failedProducts.join(
+          ", "
+        )}`
+        : ""
         }`,
 
       data: invoice,
@@ -761,6 +761,36 @@ const importGrnforPoOrder = asyncHandler(
         grouped
       )) {
         try {
+          /**
+ * ❌ Same SO must have same invoice number
+ */
+          const invoiceNumbers = [
+            ...new Set(
+              grouped[soNumber]
+                .map((item) =>
+                  String(item.invoiceNo || "").trim()
+                )
+                .filter(Boolean)
+            ),
+          ];
+
+          if (invoiceNumbers.length > 1) {
+            throw {
+              message:
+                "Multiple invoice numbers found for same SO",
+
+              validationErrors:
+                grouped[soNumber].map((item) => ({
+                  ...item,
+
+                  originalRow:
+                    item.originalRow,
+
+                  reason:
+                    "All products of same SO must have same Invoice Number",
+                })),
+            };
+          }
           const purchaseOrder =
             await PurchaseOrder.findOne({
               soNumber: soNumber,
