@@ -293,46 +293,47 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     } // =========================
     // 🧾 CREATE INVOICE
     // =========================
-// =========================
-// 🔢 GENERATE INVOICE NUMBER
-// =========================
+    // =========================
+    // 🔢 GENERATE INVOICE NUMBER
+    // =========================
 
-let finalInvoiceNo = invoiceNo;
+    let finalInvoiceNo = invoiceNo;
 
-// If frontend did not send invoice number
-if (!finalInvoiceNo || finalInvoiceNo.trim() === "") {
+    // If frontend did not send invoice number
+    if (!finalInvoiceNo || finalInvoiceNo.trim() === "") {
 
-  // Find last invoice
-  const lastInvoice = await Invoice.findOne({})
-    .sort({ createdAt: -1 })
-    .lean();
+      // Find last invoice
+      const lastInvoice = await Invoice.findOne({})
+        .sort({ createdAt: -1 })
+        .lean();
 
-  let nextSequence = 1;
+      let nextSequence = 1;
 
-  if (lastInvoice?.invoiceNo) {
+      if (lastInvoice?.invoiceNo) {
 
-    // Extract number from INV000001
-    const numericPart = lastInvoice.invoiceNo.replace(/\D/g, "");
+        // Extract number from INV000001
+        const numericPart = lastInvoice.invoiceNo.replace(/\D/g, "");
 
-    if (numericPart) {
-      nextSequence = Number(numericPart) + 1;
+        if (numericPart) {
+          nextSequence = Number(numericPart) + 1;
+        }
+      }
+
+      // Generate sequential invoice number
+      finalInvoiceNo = `INV${String(nextSequence).padStart(6, "0")}`;
     }
-  }
 
-  // Generate sequential invoice number
-  finalInvoiceNo = `INV${String(nextSequence).padStart(6, "0")}`;
-}
+    // =========================
+    // 🧾 CREATE INVOICE
+    // =========================
 
-// =========================
-// 🧾 CREATE INVOICE
-// =========================
-
-const invoice = await Invoice.create({
-  distributorId: purchaseOrder.distributorId,
-  invoiceNo: finalInvoiceNo,
-    date: new Date(),
+    const invoice = await Invoice.create({
+      distributorId: purchaseOrder.distributorId,
+      invoiceNo: finalInvoiceNo,
+      date: new Date(),
       status: "In-Transit",
       purchaseOrderId: purchaseOrder._id,
+      soNumber: purchaseOrder.soNumber || "",
       grnDate: new Date(),
       grnNumber,
       lineItems: invoiceLineItems,
@@ -356,42 +357,42 @@ const invoice = await Invoice.create({
     // =========================
     // 🔥 UPDATE PURCHASE ORDER INVOICE STATUS (ONLY THIS CHANGE)
     // =========================
-await PurchaseOrder.findByIdAndUpdate(
-  purchaseOrder._id,
-  {
-    $push: { invoiceIds: invoice._id }
-  }
-);
+    await PurchaseOrder.findByIdAndUpdate(
+      purchaseOrder._id,
+      {
+        $push: { invoiceIds: invoice._id }
+      }
+    );
 
 
 
 
-console.log("🚀 AUTO CALLING INVOICE UPDATE API");
+    console.log("🚀 AUTO CALLING INVOICE UPDATE API");
 
-console.log("TOKEN:", req.headers.authorization);
+    console.log("TOKEN:", req.headers.authorization);
 
-try {
+    try {
 
-const updateResponse = await axios.patch(
-  `${SERVER_URL}/api/v1/invoice/update-invoice-internal/${invoice._id}`,
-  {
-    status: "Confirmed",
-  },
-);
+      const updateResponse = await axios.patch(
+        `${SERVER_URL}/api/v1/invoice/update-invoice-internal/${invoice._id}`,
+        {
+          status: "Confirmed",
+        },
+      );
 
-  console.log("✅ AUTO INVOICE UPDATED");
+      console.log("✅ AUTO INVOICE UPDATED");
 
-  console.log(updateResponse.data);
+      console.log(updateResponse.data);
 
-} catch (autoError) {
+    } catch (autoError) {
 
-  console.log("❌ AUTO UPDATE FAILED");
+      console.log("❌ AUTO UPDATE FAILED");
 
-  console.log(
-    autoError?.response?.data || autoError.message
-  );
+      console.log(
+        autoError?.response?.data || autoError.message
+      );
 
-}
+    }
 
 
 

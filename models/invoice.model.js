@@ -89,6 +89,10 @@ const invoiceSchema = new mongoose.Schema(
       ref: "PurchaseOrder",
       required: true
     },
+    soNumber: {
+      type: String,
+      trim: true,
+    },
     targetIds: {
       type: [
         {
@@ -118,9 +122,9 @@ const invoiceSchema = new mongoose.Schema(
     roundOff: { type: Number, default: 0 }, // round off amount
     totalInvoiceAmount: { type: Number }, // invoiceAmount + roundOff
     totalBasePoints: { type: Number, default: null },
-    invoicetype   : {
+    invoicetype: {
       type: String,
-      enum: ["Complete-Invoiced", "Partially-Invoiced","All"],
+      enum: ["Complete-Invoiced", "Partially-Invoiced", "All"],
       default: "All",
     },
 

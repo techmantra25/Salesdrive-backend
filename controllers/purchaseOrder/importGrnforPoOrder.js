@@ -725,6 +725,7 @@ const generateGRNForPO = async ({
           grnNumber,
 
           purchaseOrderId: purchaseOrder._id,
+          soNumber: purchaseOrder.soNumber || "",
 
           lineItems: invoiceLineItems,
 
@@ -849,8 +850,8 @@ const generateGRNForPO = async ({
 
     return {
       message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
-          ? ` | Failed: ${failedProducts.join(", ")}`
-          : ""
+        ? ` | Failed: ${failedProducts.join(", ")}`
+        : ""
         }`,
       data: invoice,
     };
