@@ -88,29 +88,29 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-   invoiceIds: [
-  {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Invoice",
-    default: [],
-  },
-],
-      invoicestatus: {
-    type: String,
-    enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
-    default: "Pending",
-  },
+    invoiceIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Invoice",
+        default: [],
+      },
+    ],
+    invoicestatus: {
+      type: String,
+      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
+      default: "Pending",
+    },
 
     supplierId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
     },
     soNumber: {
-  type: String,
-  unique: true,
-  sparse: true,
-  trim: true,
-},
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     expectedDeliveryDate: {
       type: Date,
     },
@@ -167,12 +167,12 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
 
     totalBasePoints: { type: Number, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const PurchaseOrderEntry = mongoose.model(
   "PurchaseOrderEntry",
-  PurchasOrderEntrySchema
+  PurchasOrderEntrySchema,
 );
 
 module.exports = PurchaseOrderEntry;

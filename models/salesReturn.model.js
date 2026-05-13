@@ -12,6 +12,12 @@ const LineItemSchema = new mongoose.Schema({
       message: "values allowed pcs/box",
     },
   },
+  l1Basic: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100,
+  },
   price: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Price",

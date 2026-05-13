@@ -99,6 +99,10 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
     (sum, item) => sum + Number(getBoxQty(item?.product, item?.oderQty)),
     0,
   );
+  const totalL1Basic = validLineItems.reduce(
+    (sum, item) => sum + (Number(item?.l1Basic) || 0),
+    0,
+  );
   const linkedBills = Array.isArray(orderEntry?.billIds)
     ? orderEntry.billIds
         .map((bill) => bill?.new_billno || bill?.billNo)
@@ -446,7 +450,7 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <th style="width: 8%;">Basic Rate</th>
                 <th style="width: 9%;">Gross Amt</th>
                 <th style="width: 8%;">Scheme Amt</th>
-                <th style="width: 9%;">Disc Amt</th>
+                 <th style="width: 9%;">L1 Basic</th>
                 <th style="width: 7%;">Tax Amt</th>
                 <th style="width: 7%;">Net Amt</th>
               </tr>
@@ -477,9 +481,9 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <td class="text-right">${escapeHtml(
                   formatCurrency(item?.schemeDisc),
                 )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.distributorDisc),
-                )}</td>
+                 <td class="text-right">${escapeHtml(
+                   formatCurrency(item?.l1Basic),
+                 )}</td>
                 <td class="text-right">${escapeHtml(
                   formatCurrency(getTaxAmount(item)),
                 )}</td>
@@ -580,11 +584,11 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         )}</td>
                       </tr>
                       <tr>
-                        <td>Distributor Discount</td>
+                         <td>L1 Basic Total</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.distributorDiscount),
-                        )}</td>
+                         <td class="text-right">${escapeHtml(
+                           formatCurrency(totalL1Basic),
+                         )}</td>
                       </tr>
                       <tr>
                         <td>Taxable Amount</td>
