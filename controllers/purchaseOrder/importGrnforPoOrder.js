@@ -284,8 +284,8 @@ const generateGRNForPO = async ({
 
       const l1 = Number(
         item.l1Basic ??
-          poItem.l1Basic ??
-          0
+        poItem.l1Basic ??
+        0
       );
 
       let basicRate = mrp;
@@ -435,6 +435,32 @@ const generateGRNForPO = async ({
     }
 
     /**
+ * ❌ Duplicate Invoice Validation
+ */
+    if (invoiceNo) {
+      const existingInvoice =
+        await Invoice.findOne({
+          invoiceNo: String(invoiceNo).trim(),
+        }).session(session);
+
+      if (existingInvoice) {
+        throw {
+          message: `Invoice Number ${invoiceNo} already exists`,
+
+          validationErrors: lineItems.map(
+            (item) => ({
+              ...item,
+
+              originalRow:
+                item.originalRow,
+
+              reason: `Invoice Number ${invoiceNo} already exists`,
+            })
+          ),
+        };
+      }
+    }
+    /**
      * 🧾 Create Invoice
      */
     const [invoice] = await Invoice.create(
@@ -543,7 +569,7 @@ const generateGRNForPO = async ({
     for (const poItem of purchaseOrder.lineItems) {
       const received =
         totalReceivedMap[
-          String(poItem.product)
+        String(poItem.product)
         ] || 0;
 
       const product = await Product.findById(
@@ -552,7 +578,7 @@ const generateGRNForPO = async ({
 
       const pcsPerBox = Number(
         product?.no_of_pieces_in_a_box ||
-          0
+        0
       );
 
       const poQtyInPcs =
@@ -597,13 +623,12 @@ const generateGRNForPO = async ({
     return {
       message: `GRN created: ${productSummary.join(
         ", "
-      )}${
-        failedProducts.length
+      )}${failedProducts.length
           ? ` | Failed: ${failedProducts.join(
-              ", "
-            )}`
+            ", "
+          )}`
           : ""
-      }`,
+        }`,
 
       data: invoice,
     };
@@ -696,7 +721,7 @@ const importGrnforPoOrder = asyncHandler(
 
         const pcsPerBox = Number(
           product.no_of_pieces_in_a_box ||
-            0
+          0
         );
 
         const finalQty =
@@ -711,8 +736,8 @@ const importGrnforPoOrder = asyncHandler(
 
           l1Basic: Number(
             row["L1 Basic"] ||
-              row["l1Basic"] ||
-              0
+            row["l1Basic"] ||
+            0
           ),
 
           invoiceNo:
