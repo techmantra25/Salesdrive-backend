@@ -49,7 +49,7 @@ const generateGRNNumber = async (session) => {
 };
 
 /**
- * 🔥 CORE GRN GENERATOR
+ * 🔥 Generate Invoice Number
  */
 const generateInvoiceNumber = async (session) => {
   const year = new Date().getFullYear().toString().slice(-2);
@@ -77,12 +77,16 @@ const generateInvoiceNumber = async (session) => {
   )}`;
 };
 
+/**
+ * 🔥 CORE GRN CREATION
+ */
 const generateGRNForPO = async ({
   purchaseOrder,
   lineItems,
   invoiceNo,
 }) => {
   const session = await mongoose.startSession();
+
   session.startTransaction();
 
   try {
@@ -105,7 +109,9 @@ const generateGRNForPO = async ({
       }
     }
 
-    const grnNumber = await generateGRNNumber(session);
+    const grnNumber = await generateGRNNumber(
+      session
+    );
 
     let totalGross = 0;
     let totalTaxable = 0;
@@ -119,15 +125,6 @@ const generateGRNForPO = async ({
     const validationErrors = [];
     const productSummary = [];
 
-
-
-
-
-
-
-
-
-
     for (const item of lineItems) {
       const cleanCode = String(
         item.productCode
@@ -139,7 +136,9 @@ const generateGRNForPO = async ({
         product_code: cleanCode,
       }).session(session);
 
-      // ❌ Product not found
+      /**
+       * ❌ Product not found
+       */
       if (!product) {
         currentErrors.push(
           `Invalid Product Code: ${cleanCode}`
@@ -153,13 +152,15 @@ const generateGRNForPO = async ({
         continue;
       }
 
+      /**
+       * ❌ Product not mapped in PO
+       */
       const poItem = purchaseOrder.lineItems.find(
         (p) =>
           String(p.product) ===
           String(product._id)
       );
 
-      // ❌ Product not in PO
       if (!poItem) {
         currentErrors.push(
           `${product.name} not mapped in SO`
@@ -173,17 +174,39 @@ const generateGRNForPO = async ({
         continue;
       }
 
+      /**
+       * ✅ Requested Qty
+       */
       const requestedQty = Number(
         item.orderQty || 0
       );
 
+      /**
+       * ✅ Already received qty
+       */
       const alreadyReceived =
         receivedMap[String(product._id)] || 0;
 
-      const remainingQty =
-        poItem.orderQty - alreadyReceived;
+      /**
+       * ✅ PO Qty in PCS
+       */
+      const pcsPerBox = Number(
+        product.no_of_pieces_in_a_box || 0
+      );
 
-      // ❌ qty validations
+      const poQtyInPcs =
+        Number(poItem.boxOrderQty || 0) *
+        pcsPerBox;
+
+      /**
+       * ✅ Remaining Qty
+       */
+      const remainingQty =
+        poQtyInPcs - alreadyReceived;
+
+      /**
+       * ❌ Qty validations
+       */
       if (
         remainingQty <= 0 &&
         requestedQty > 0
@@ -208,7 +231,9 @@ const generateGRNForPO = async ({
         );
       }
 
-      // 💰 price
+      /**
+       * 💰 Price Validation
+       */
       let priceDoc = await Price.findOne({
         productId: product._id,
         distributorId:
@@ -234,7 +259,9 @@ const generateGRNForPO = async ({
         );
       }
 
-      // ❌ if any validation failed
+      /**
+       * ❌ Validation failed
+       */
       if (currentErrors.length > 0) {
         failedProducts.push(
           currentErrors.join(" | ")
@@ -248,14 +275,17 @@ const generateGRNForPO = async ({
         continue;
       }
 
+      /**
+       * 💵 Pricing
+       */
       const mrp = Number(
         priceDoc.mrp_price || 0
       );
 
       const l1 = Number(
         item.l1Basic ??
-        poItem.l1Basic ??
-        0
+          poItem.l1Basic ??
+          0
       );
 
       let basicRate = mrp;
@@ -265,7 +295,9 @@ const generateGRNForPO = async ({
           mrp - (mrp * l1) / 100;
       }
 
-      // 🧾 tax
+      /**
+       * 🧾 Tax
+       */
       let cgstPercent = Number(
         product?.cgst || 0
       );
@@ -314,7 +346,9 @@ const generateGRNForPO = async ({
         sgst +
         igst;
 
-      // ➕ totals
+      /**
+       * ➕ Totals
+       */
       totalGross += grossAmount;
       totalTaxable += grossAmount;
       totalCGST += cgst;
@@ -322,6 +356,9 @@ const generateGRNForPO = async ({
       totalIGST += igst;
       totalNet += netAmount;
 
+      /**
+       * ✅ Invoice Line
+       */
       invoiceLineItems.push({
         product: product._id,
         plant: poItem.plant || null,
@@ -346,32 +383,38 @@ const generateGRNForPO = async ({
       );
     }
 
-
-
-    // If ANY error exists then FULL PO cancel
+    /**
+     * ❌ FULL PO FAIL
+     */
     if (validationErrors.length > 0) {
-      const fullPoErrors = lineItems.map((item) => {
+      const fullPoErrors = lineItems.map(
+        (item) => {
+          const matchedErrors =
+            validationErrors
+              .filter(
+                (v) =>
+                  String(
+                    v.productCode
+                  ).trim() ===
+                  String(
+                    item.productCode
+                  ).trim()
+              )
+              .map((v) => v.reason);
 
-        // find matching validation errors
-        const matchedErrors = validationErrors
-          .filter(
-            (v) =>
-              String(v.productCode).trim() ===
-              String(item.productCode).trim()
-          )
-          .map((v) => v.reason);
+          return {
+            ...item,
 
-        return {
-          ...item,
+            originalRow:
+              item.originalRow,
 
-          originalRow: item.originalRow,
-
-          reason:
-            matchedErrors.length > 0
-              ? matchedErrors.join(" | ")
-              : "Cancelled because another product in same SO failed",
-        };
-      });
+            reason:
+              matchedErrors.length > 0
+                ? matchedErrors.join(" | ")
+                : "Cancelled because another product in same SO failed",
+          };
+        }
+      );
 
       throw {
         message:
@@ -381,7 +424,9 @@ const generateGRNForPO = async ({
       };
     }
 
-    // ❌ no valid items
+    /**
+     * ❌ No valid items
+     */
     if (!invoiceLineItems.length) {
       throw {
         message: "No valid quantity",
@@ -389,43 +434,77 @@ const generateGRNForPO = async ({
       };
     }
 
-    // 🧾 create invoice
+    /**
+     * 🧾 Create Invoice
+     */
     const [invoice] = await Invoice.create(
       [
         {
-          distributorId: purchaseOrder.distributorId,
+          distributorId:
+            purchaseOrder.distributorId,
+
           invoiceNo:
             invoiceNo ||
-            (await generateInvoiceNumber(session)),
+            (await generateInvoiceNumber(
+              session
+            )),
+
           date: new Date(),
+
           status: "Confirmed",
+
           grnDate: new Date(),
+
           grnNumber,
-          purchaseOrderId: purchaseOrder._id,
+
+          purchaseOrderId:
+            purchaseOrder._id,
+
           lineItems: invoiceLineItems,
+
           grossAmount: totalGross,
+
           taxableAmount: totalTaxable,
+
           cgst: totalCGST,
+
           sgst: totalSGST,
+
           igst: totalIGST,
+
           invoiceAmount: totalNet,
-          totalInvoiceAmount: totalNet,
-          GRNLogId: new mongoose.Types.ObjectId(),
+
+          totalInvoiceAmount:
+            totalNet,
+
+          GRNLogId:
+            new mongoose.Types.ObjectId(),
+
           GRNFKDATE: new Date(),
+
           grnStatus: "success",
+
           adjustmentSummary: {
-            totalProducts: invoiceLineItems.length,
+            totalProducts:
+              invoiceLineItems.length,
+
             successfulAdjustments:
               invoiceLineItems.length,
+
             failedAdjustments:
               failedProducts.length,
-            lastRetryAttempt: new Date(),
+
+            lastRetryAttempt:
+              new Date(),
           },
         },
       ],
       { session }
     );
 
+    /**
+     * 🔗 Update PO invoice ids
+     */
     await PurchaseOrder.findByIdAndUpdate(
       purchaseOrder._id,
       {
@@ -436,9 +515,12 @@ const generateGRNForPO = async ({
       { session }
     );
 
-    // 🔄 update PO status
+    /**
+     * 🔄 Update PO Invoice Status
+     */
     const allInvoices = await Invoice.find({
-      purchaseOrderId: purchaseOrder._id,
+      purchaseOrderId:
+        purchaseOrder._id,
     }).session(session);
 
     const totalReceivedMap = {};
@@ -449,7 +531,9 @@ const generateGRNForPO = async ({
 
         totalReceivedMap[key] =
           (totalReceivedMap[key] || 0) +
-          Number(li.receivedQty || li.qty || 0);
+          Number(
+            li.receivedQty || li.qty || 0
+          );
       }
     }
 
@@ -458,11 +542,29 @@ const generateGRNForPO = async ({
 
     for (const poItem of purchaseOrder.lineItems) {
       const received =
-        totalReceivedMap[String(poItem.product)] || 0;
+        totalReceivedMap[
+          String(poItem.product)
+        ] || 0;
+
+      const product = await Product.findById(
+        poItem.product
+      );
+
+      const pcsPerBox = Number(
+        product?.no_of_pieces_in_a_box ||
+          0
+      );
+
+      const poQtyInPcs =
+        Number(
+          poItem.boxOrderQty || 0
+        ) * pcsPerBox;
 
       if (received === 0) {
         isComplete = false;
-      } else if (received < poItem.orderQty) {
+      } else if (
+        received < poQtyInPcs
+      ) {
         isComplete = false;
         isPartial = true;
       } else {
@@ -489,17 +591,25 @@ const generateGRNForPO = async ({
     );
 
     await session.commitTransaction();
+
     session.endSession();
 
     return {
-      message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
-        ? ` | Failed: ${failedProducts.join(", ")}`
-        : ""
-        }`,
+      message: `GRN created: ${productSummary.join(
+        ", "
+      )}${
+        failedProducts.length
+          ? ` | Failed: ${failedProducts.join(
+              ", "
+            )}`
+          : ""
+      }`,
+
       data: invoice,
     };
   } catch (error) {
     await session.abortTransaction();
+
     session.endSession();
 
     throw {
@@ -514,12 +624,13 @@ const generateGRNForPO = async ({
 };
 
 /**
- * 🚀 BULK API
+ * 🚀 BULK IMPORT API
  */
 const importGrnforPoOrder = asyncHandler(
   async (req, res) => {
     try {
       const rows = req.body.data;
+
       console.log("Received rows:", rows);
 
       if (
@@ -534,6 +645,9 @@ const importGrnforPoOrder = asyncHandler(
 
       const grouped = {};
 
+      /**
+       * 📦 Group by SO Number
+       */
       for (const row of rows) {
         const soNumber =
           row["SO Number"] ||
@@ -551,12 +665,28 @@ const importGrnforPoOrder = asyncHandler(
           grouped[soNumber] = [];
         }
 
-        // ✅ ONLY CHANGE: SO Qty correction
-        const product = await Product.findOne({
-          product_code: String(productCode).trim(),
-        });
+        const product =
+          await Product.findOne({
+            product_code: String(
+              productCode
+            ).trim(),
+          });
 
         if (!product) {
+          grouped[soNumber].push({
+            productCode: String(
+              productCode
+            ).trim(),
+
+            orderQty: 0,
+
+            invoiceNo:
+              row["Invoice Number"] ||
+              null,
+
+            originalRow: row,
+          });
+
           continue;
         }
 
@@ -565,22 +695,24 @@ const importGrnforPoOrder = asyncHandler(
         );
 
         const pcsPerBox = Number(
-          product.no_of_pieces_in_a_box || 0
+          product.no_of_pieces_in_a_box ||
+            0
         );
 
-        // ✅ Final PCS Qty
         const finalQty =
           boxOrderQty * pcsPerBox;
 
         grouped[soNumber].push({
-          productCode: String(productCode).trim(),
+          productCode: String(
+            productCode
+          ).trim(),
 
           orderQty: finalQty,
 
           l1Basic: Number(
             row["L1 Basic"] ||
-            row["l1Basic"] ||
-            0
+              row["l1Basic"] ||
+              0
           ),
 
           invoiceNo:
@@ -597,7 +729,12 @@ const importGrnforPoOrder = asyncHandler(
       const errors = [];
       const errorCsvRows = [];
 
-      for (const soNumber of Object.keys(grouped)) {
+      /**
+       * 🚀 Process Each SO
+       */
+      for (const soNumber of Object.keys(
+        grouped
+      )) {
         try {
           const purchaseOrder =
             await PurchaseOrder.findOne({
@@ -613,16 +750,21 @@ const importGrnforPoOrder = asyncHandler(
           const result =
             await generateGRNForPO({
               purchaseOrder,
-              lineItems: grouped[soNumber],
+
+              lineItems:
+                grouped[soNumber],
 
               invoiceNo:
-                grouped[soNumber][0]?.invoiceNo || null,
+                grouped[soNumber][0]
+                  ?.invoiceNo || null,
             });
 
           results.push({
             soNumber,
+
             purchaseOrderNo:
               purchaseOrder.purchaseOrderNo,
+
             message: result.message,
           });
         } catch (err) {
@@ -631,19 +773,42 @@ const importGrnforPoOrder = asyncHandler(
             message: err.message,
           });
 
-          // ✅ error csv rows
+          /**
+           * ✅ Validation Error CSV
+           */
           if (
             err.validationErrors &&
             Array.isArray(
               err.validationErrors
-            )
+            ) &&
+            err.validationErrors.length > 0
           ) {
             err.validationErrors.forEach(
               (item) => {
                 errorCsvRows.push({
                   ...item.originalRow,
 
-                  Reason: item.reason,
+                  Reason:
+                    item.reason ||
+                    err.message ||
+                    "Validation failed",
+                });
+              }
+            );
+          }
+
+          /**
+           * ✅ ANY OTHER ERROR CSV
+           */
+          else {
+            grouped[soNumber].forEach(
+              (item) => {
+                errorCsvRows.push({
+                  ...item.originalRow,
+
+                  Reason:
+                    err.message ||
+                    "Unknown error",
                 });
               }
             );
