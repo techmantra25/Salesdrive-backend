@@ -121,9 +121,6 @@ async function generateBillHTML(bill, options = {}) {
           ${formatCurrency(item.grossAmt)}
         </td>
         <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-          ${formatCurrency(item.schemeDisc)}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
           ${formatCurrency(item.distributorDisc)}
         </td>
         <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
@@ -519,16 +516,7 @@ async function generateBillHTML(bill, options = {}) {
                   text-align: center;
                 "
               >
-                Scheme<br />Amount
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Distributor<br />Disc Amt
+                Disc Amt
               </th>
               <th
                 style="
@@ -645,13 +633,7 @@ async function generateBillHTML(bill, options = {}) {
                       </td>
                     </tr>
                     <tr>
-                      <td>Scheme Discount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.schemeDiscount)}
-                      </td>
-                    </tr>
-                    <tr>
+                      <tr>
                       <td>Discount</td>
                       <td style="text-align: center">:</td>
                       <td style="text-align: right">

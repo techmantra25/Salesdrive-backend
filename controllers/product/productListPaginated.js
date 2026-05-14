@@ -3,8 +3,8 @@ const Product = require("../../models/product.model");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
 const Inventory = require("../../models/inventory.model");
-const { getBatchProductPricing } = require("../product/utils/pricing.utils")
-const { getBatchInventoryStock } =require("../product/utils/inventory.utils")
+const { getBatchProductPricing } = require("../product/utils/pricing.utils");
+const { getBatchInventoryStock } = require("../product/utils/inventory.utils");
 
 // console.time("API_TOTAL");
 const productListPaginated = asyncHandler(async (req, res) => {
@@ -19,17 +19,25 @@ const productListPaginated = asyncHandler(async (req, res) => {
     // Get product IDs from inventory in which available quantity is greater than 0
 
     console.time("INVENTORY_QUERY");
+    // const inventoryIds = await Inventory.find(
+    //   {
+    //     distributorId,
+    //     availableQty: { $gt: 0 },
+    //   },
+    //   {
+    //     productId: 1,
+    //     _id: 0,
+    //   }
+    // ).lean();
     const inventoryIds = await Inventory.find(
       {
         distributorId,
-        availableQty: { $gt: 0 },
       },
       {
         productId: 1,
         _id: 0,
-      }
+      },
     ).lean();
-    console.timeEnd("INVENTORY_QUERY");
 
     if (!inventoryIds.length) {
       res.status(404);
@@ -58,7 +66,7 @@ const productListPaginated = asyncHandler(async (req, res) => {
       query.$or = [
         { product_code: { $regex: search, $options: "i" } },
         { name: { $regex: search, $options: "i" } },
-        { ean11: { $regex: search, $options: "i" } },// added ean code search functionality
+        { ean11: { $regex: search, $options: "i" } }, // added ean code search functionality
       ];
     }
 
@@ -82,10 +90,10 @@ const productListPaginated = asyncHandler(async (req, res) => {
           product_code: 1,
         })
         .skip(skip)
-        .limit(limit).lean()
+        .limit(limit)
+        .lean(),
     ]);
     console.timeEnd("PRODUCT_DB");
-
 
     // Batch API calls for pricing and inventory
     const productIds_batch = productList.map((p) => p._id.toString());
@@ -99,7 +107,7 @@ const productListPaginated = asyncHandler(async (req, res) => {
       //     )
       //   )
       // ),
-      getBatchProductPricing(productIds_batch,distributorId),
+      getBatchProductPricing(productIds_batch, distributorId),
 
       // Promise.allSettled(
       //   productIds_batch.map((id) =>
@@ -109,14 +117,12 @@ const productListPaginated = asyncHandler(async (req, res) => {
       //   )
       // ),
       getBatchInventoryStock(productIds_batch, distributorId),
-
     ]);
     console.timeEnd("EXTERNAL_APIS");
 
     // Map results with pricing and inventory data
     console.time("DATA_MAPPING");
     const resultProductList = productList.map((product) => {
-
       const productId = product._id.toString();
       // const pricingResult = pricingResponses[index];
       // const inventoryResult = inventoryResponses[index];
@@ -127,7 +133,7 @@ const productListPaginated = asyncHandler(async (req, res) => {
       //     ? pricingResult.value.data.data[0]
       //     : null;
       const priceArray = pricingByProduct[productId] || [];
-      const price = priceArray.length >0 ? priceArray[0] :null;
+      const price = priceArray.length > 0 ? priceArray[0] : null;
 
       // const inventory =
       //   inventoryResult.status === "fulfilled" &&
@@ -136,7 +142,6 @@ const productListPaginated = asyncHandler(async (req, res) => {
       //     : null;
 
       const inventory = inventoryByProduct[productId] || null;
-
 
       return {
         ...product,
