@@ -445,10 +445,9 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <th style="width: 8%;">Qty BOX</th>
                 <th style="width: 8%;">Basic Rate</th>
                 <th style="width: 9%;">Gross Amt</th>
-                <th style="width: 8%;">Scheme Amt</th>
                 <th style="width: 9%;">Disc Amt</th>
-                <th style="width: 7%;">Tax Amt</th>
-                <th style="width: 7%;">Net Amt</th>
+                <th style="width: 8%;">Tax Amt</th>
+                <th style="width: 8%;">Net Amt</th>
               </tr>
             </thead>
             <tbody>
@@ -475,9 +474,6 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                   formatCurrency(item?.grossAmt),
                 )}</td>
                 <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.schemeDisc),
-                )}</td>
-                <td class="text-right">${escapeHtml(
                   formatCurrency(item?.distributorDisc),
                 )}</td>
                 <td class="text-right">${escapeHtml(
@@ -495,7 +491,6 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                   () => `
               <tr>
                 <td class="text-center">-</td>
-                <td></td>
                 <td></td>
                 <td></td>
                 <td></td>
@@ -570,13 +565,6 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         <td style="width: 10%;" class="text-center">:</td>
                         <td style="width: 30%;" class="text-right">${escapeHtml(
                           formatCurrency(orderEntry?.grossAmount),
-                        )}</td>
-                      </tr>
-                      <tr>
-                        <td>Scheme Discount</td>
-                        <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.schemeDiscount),
                         )}</td>
                       </tr>
                       <tr>

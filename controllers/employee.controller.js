@@ -1201,6 +1201,7 @@ const getEmployeeByDistributor = asyncHandler(async (req, res) => {
 
     const employees = await Employee.find({
       distributorId: did,
+      status: true,
     })
       .populate([
         {
