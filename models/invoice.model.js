@@ -102,6 +102,16 @@ const invoiceSchema = new mongoose.Schema(
       ],
       default: [],
     },
+    invoiceDate: {
+  type: Date,
+  default: null,
+},
+
+vehicleNumber: {
+  type: String,
+  trim: true,
+  default: "",
+},
     grnDate: { type: Date, default: null }, // GRN Date generated after confirmation
     grnNumber: { type: String, default: null }, // GRN Number generated after confirmation
     shipping: {

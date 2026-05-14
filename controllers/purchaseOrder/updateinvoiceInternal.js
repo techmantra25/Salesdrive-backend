@@ -283,8 +283,13 @@ const updateinvoiceInternal = asyncHandler(async (req, res) => {
       });
     }
 
-    req.body.grnDate = new Date();
-    req.body.grnNumber = await invoiceNumberGenerator("GRN", distributorId);
+req.body.grnDate = req.body.grnDate
+  ? new Date(req.body.grnDate)
+  : existingInvoice.grnDate || new Date();
+
+req.body.grnNumber =
+  existingInvoice.grnNumber ||
+  await invoiceNumberGenerator("GRN", distributorId);
   }
 
   // SAVE BASIC UPDATE

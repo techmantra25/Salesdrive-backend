@@ -88,6 +88,10 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    foreclose: {
+  type: Boolean,
+  default: false,
+},
    invoiceIds: [
   {
     type: mongoose.Schema.Types.ObjectId,

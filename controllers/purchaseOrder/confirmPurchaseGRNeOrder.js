@@ -10,15 +10,38 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
 
-    const { lineItems = [], invoiceNo } = req.body;
+    const {
+      lineItems = [],
+      invoiceNo,
+      invoiceDate,
+      grnDate,
+      vehicleNumber,
+      foreclose,
+    } = req.body;
 
-    console.log("📥 GRN Request:", lineItems);
-    console.log('invoiceNo:', invoiceNo);
+    console.log("invoiceDate from frontend:", invoiceDate);
 
+    console.log("grnDate from frontend:", grnDate);
+
+    console.log("FULL BODY:", req.body);
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
     if (!purchaseOrder) {
-      return res.status(404).json({ message: "Purchase Order not found" });
+      return res.status(404).json({
+        message: "Purchase Order not found",
+      });
+    }
+
+    if (foreclose === true) {
+
+      purchaseOrder.foreclose = true;
+
+      await purchaseOrder.save();
+
+      return res.status(200).json({
+        message: "Purchase Order Foreclosed Successfully",
+        data: purchaseOrder,
+      });
     }
 
     // =========================
@@ -330,13 +353,21 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     const invoice = await Invoice.create({
       distributorId: purchaseOrder.distributorId,
       invoiceNo: finalInvoiceNo,
-      date: new Date(),
+      date: invoiceDate
+        ? new Date(invoiceDate)
+        : new Date(),
       status: "In-Transit",
       purchaseOrderId: purchaseOrder._id,
       soNumber: purchaseOrder.soNumber || "",
-      grnDate: new Date(),
+      invoiceDate: invoiceDate
+        ? new Date(invoiceDate)
+        : new Date(),
+      grnDate: grnDate
+        ? new Date(`${grnDate}T00:00:00.000Z`)
+        : new Date(),
       grnNumber,
       lineItems: invoiceLineItems,
+      vehicleNumber: vehicleNumber || "",
       grossAmount: totalGross,
       taxableAmount: totalTaxable,
       cgst: totalCGST,
@@ -377,6 +408,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         `${SERVER_URL}/api/v1/invoice/update-invoice-internal/${invoice._id}`,
         {
           status: "Confirmed",
+          grnDate: invoice.grnDate,
         },
       );
 
