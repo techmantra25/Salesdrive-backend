@@ -10,16 +10,16 @@ const { getBatchInventoryStock } = require("../product/utils/inventory.utils")
 console.time("API_TOTAL");
 const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
   try {
-    
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 5;
     const skip = (page - 1) * limit;
 
     const distributorId = req?.user?._id;
-
     const search = req?.query?.search;
     const size = req?.query?.size;
     const color = req?.query?.color;
+    const productType = req?.query?.productType;
 
     const distributor = await Distributor.findById(distributorId);
 
@@ -48,7 +48,7 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
       ],
     }).distinct("productId");
     console.timeEnd("Price_find")
-    
+
     // If no products found, handle error
     if (!productHavePricingIds || productHavePricingIds.length === 0) {
       res.status(404);
@@ -112,6 +112,16 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     if (color && color !== "undefined" && color !== "null") {
       query.color = { $regex: color, $options: "i" };
     }
+    if (
+      productType &&
+      productType !== "undefined" &&
+      productType !== "null"
+    ) {
+      query.product_type = {
+        $regex: `^${productType}$`,
+        $options: "i",
+      };
+    }
 
     // Optional: only filter by supplier if explicitly required
     // query.supplier = { $exists: true, $ne: null };
@@ -138,7 +148,7 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     // Fetch paginated products
 
     console.time("PRODUCT_LIST")
-    console.log(query,'query')
+    console.log(query, 'query')
     const productList = await Product.find(query)
       .populate([
         {
@@ -161,10 +171,15 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
       .sort({ product_code: 1 })
       .skip(skip)
       .limit(limit);
-      console.log(productList,'productList')
-      console.timeEnd("PRODUCT_LIST")
+    console.log(productList, 'productList')
+    console.timeEnd("PRODUCT_LIST")
 
     const totalPages = Math.ceil(totalFilteredCount / limit);
+    const allProductTypes = await Product.distinct("product_type", {
+      status: true,
+      product_type: { $nin: [null, ""] },
+      brand: { $in: dbBrandIds },
+    });
 
     let resultProductList = [...productList];
 
@@ -199,15 +214,15 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     //   })
     // );
 
-    const productIds = resultProductList.map(p=>p._doc?._id.toString() ||p._id?.toString() );
-    const batchPrices = await getBatchProductPricing(productIds,distributorId);
-    resultProductList = resultProductList.map((product) =>{
+    const productIds = resultProductList.map(p => p._doc?._id.toString() || p._id?.toString());
+    const batchPrices = await getBatchProductPricing(productIds, distributorId);
+    resultProductList = resultProductList.map((product) => {
       const productId = product._doc?.id?.toString() || product._id?.toString();
       const prices = batchPrices[productId] || [];
 
-      return{
+      return {
         ...product._doc,
-        price:prices.length > 0 ? prices[0] : null,
+        price: prices.length > 0 ? prices[0] : null,
       }
     })
     console.timeEnd("RESULTPRODUCT_LIST_PRICING")
@@ -241,16 +256,16 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     //     }
     //   })
     // );
-    const productIdsForInventory = resultProductList.map(p=>p._id?.toString());
-    const batchInventory = await getBatchInventoryStock(productIdsForInventory,distributorId);
+    const productIdsForInventory = resultProductList.map(p => p._id?.toString());
+    const batchInventory = await getBatchInventoryStock(productIdsForInventory, distributorId);
 
-    resultProductList = resultProductList.map((product) =>{
+    resultProductList = resultProductList.map((product) => {
       const productId = product._id?.toString();
       const inventory = batchInventory[productId] || null;
       return {
         ...product,
-        inventory:inventory,
-      } 
+        inventory: inventory,
+      }
     })
     console.timeEnd("RESULTPRODUCT_LIST_INVENTORY")
 
@@ -295,6 +310,8 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
         totalCount: totalCount,
         filteredCount: totalFilteredCount,
       },
+
+      productTypes: allProductTypes.sort(),
     };
     console.timeEnd("API_TOTAL");
 
