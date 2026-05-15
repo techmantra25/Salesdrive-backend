@@ -36,6 +36,9 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
       purchaseOrder.foreclose = true;
 
+      purchaseOrder.forecloseReason =
+        req.body.forecloseReason || "";
+
       await purchaseOrder.save();
 
       return res.status(200).json({

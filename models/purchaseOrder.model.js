@@ -89,32 +89,36 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       required: true,
     },
     foreclose: {
-  type: Boolean,
-  default: false,
-},
-   invoiceIds: [
-  {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Invoice",
-    default: [],
-  },
-],
-      invoicestatus: {
-    type: String,
-    enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
-    default: "Pending",
-  },
+      type: Boolean,
+      default: false,
+    },
+    forecloseReason: {
+      type: String,
+      default: "",
+    },
+    invoiceIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Invoice",
+        default: [],
+      },
+    ],
+    invoicestatus: {
+      type: String,
+      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
+      default: "Pending",
+    },
 
     supplierId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
     },
     soNumber: {
-  type: String,
-  unique: true,
-  sparse: true,
-  trim: true,
-},
+      type: String,
+      unique: true,
+      sparse: true,
+      trim: true,
+    },
     expectedDeliveryDate: {
       type: Date,
     },

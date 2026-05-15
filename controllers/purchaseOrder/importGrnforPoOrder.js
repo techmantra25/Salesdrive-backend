@@ -1,6 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const mongoose = require("mongoose");
-
+const moment = require("moment");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Invoice = require("../../models/invoice.model");
 const Price = require("../../models/price.model");
@@ -378,6 +378,9 @@ const generateGRNForPO = async ({
   purchaseOrder,
   lineItems,
   invoiceNo,
+  invoiceDate,
+  grnDate,
+  vehicleNumber,
 }) => {
   const session = await mongoose.startSession();
 
@@ -457,41 +460,7 @@ const generateGRNForPO = async ({
 
         continue;
       }
-
-      /**
-       * ✅ Requested Qty
-       */
       const requestedQty = Number(item.orderQty || 0);
-
-      /**
-       * ✅ Already received qty
-       */
-      const alreadyReceived = receivedMap[String(product._id)] || 0;
-
-      /**
-       * ✅ PO Qty in PCS
-       */
-      const pcsPerBox = Number(product.no_of_pieces_in_a_box || 0);
-
-      const poQtyInPcs = Number(poItem.boxOrderQty || 0) * pcsPerBox;
-
-      /**
-       * ✅ Remaining Qty
-       */
-      const remainingQty = poQtyInPcs - alreadyReceived;
-
-      /**
-       * ❌ Qty validations
-       */
-      if (remainingQty <= 0 && requestedQty > 0) {
-        currentErrors.push(`${product.name} no qty left`);
-      }
-
-      if (requestedQty > remainingQty) {
-        currentErrors.push(
-          `Only ${remainingQty} qty left for ${product.name}`
-        );
-      }
 
       if (!requestedQty || requestedQty <= 0) {
         currentErrors.push(`Invalid qty for ${product.name}`);
@@ -716,11 +685,22 @@ const generateGRNForPO = async ({
             invoiceNo ||
             (await generateInvoiceNumber(session)),
 
-          date: new Date(),
+          date: invoiceDate
+            ? moment(invoiceDate, "DD-MM-YYYY")
+              .format("YYYY-MM-DD")
+            : new Date(),
 
-          status: "Confirmed",
+          invoiceDate: invoiceDate
+            ? moment(invoiceDate, "DD-MM-YYYY")
+              .format("YYYY-MM-DD")
+            : null,
 
-          grnDate: new Date(),
+          grnDate: grnDate
+            ? moment(grnDate, "DD-MM-YYYY")
+              .format("YYYY-MM-DD")
+            : new Date(),
+
+          vehicleNumber: vehicleNumber || "",
 
           grnNumber,
 
@@ -914,7 +894,7 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
-      const boxOrderQty = Number(row["Order Qty (UOM)"] || 0);
+      const boxOrderQty = Number(row["GRN Qty (UOM)"] || 0);
 
       const pcsPerBox = Number(
         product.no_of_pieces_in_a_box || 0
@@ -924,17 +904,32 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
 
       grouped[soNumber].push({
         productCode: String(productCode).trim(),
+
         orderQty: finalQty,
+
         l1Basic: Number(
           row["L1 Basic"] || row["l1Basic"] || 0
         ),
+
         invoiceNo:
           row["Invoice Number"] ||
           row["invoiceNo"] ||
           row["invoice_number"] ||
           null,
+
+        invoiceDate:
+          row["Invoice Date"] || null,
+
+        grnDate:
+          row["GRN Date"] || null,
+
+        vehicleNumber:
+          row["Vehicle Number"] || "",
+
         originalRow: row,
       });
+
+
     }
 
     const results = [];
@@ -980,8 +975,20 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
 
         const result = await generateGRNForPO({
           purchaseOrder,
+
           lineItems: grouped[soNumber],
-          invoiceNo: grouped[soNumber][0]?.invoiceNo || null,
+
+          invoiceNo:
+            grouped[soNumber][0]?.invoiceNo || null,
+
+          invoiceDate:
+            grouped[soNumber][0]?.invoiceDate || null,
+
+          grnDate:
+            grouped[soNumber][0]?.grnDate || null,
+
+          vehicleNumber:
+            grouped[soNumber][0]?.vehicleNumber || "",
         });
 
         results.push({

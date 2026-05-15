@@ -80,8 +80,13 @@ const invoiceSchema = new mongoose.Schema(
     date: { type: Date, required: true },
     status: {
       type: String,
-      enum: ["In-Transit", "Confirmed", "Ignored", "Partially-Adjusted"],
-      default: "All",
+      enum: [
+        "In-Transit",
+        "Confirmed",
+        "Ignored",
+        "Partially-Adjusted"
+      ],
+      default: "Confirmed",
       required: true,
     },
     purchaseOrderId: {
@@ -103,15 +108,15 @@ const invoiceSchema = new mongoose.Schema(
       default: [],
     },
     invoiceDate: {
-  type: Date,
-  default: null,
-},
+      type: Date,
+      default: null,
+    },
 
-vehicleNumber: {
-  type: String,
-  trim: true,
-  default: "",
-},
+    vehicleNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     grnDate: { type: Date, default: null }, // GRN Date generated after confirmation
     grnNumber: { type: String, default: null }, // GRN Number generated after confirmation
     shipping: {
