@@ -471,7 +471,7 @@ function generateInvoiceHTML(invoice, options = {}) {
                         )}</td>
                       </tr>
                       <tr style="font-weight: bold">
-                        <td>Net Amount</td>
+                        <td>Net Amount (Incl. GST)</td>
                         <td style="text-align: center">:</td>
                         <td style="text-align: right">${formatCurrency(
                           invoice.totalInvoiceAmount

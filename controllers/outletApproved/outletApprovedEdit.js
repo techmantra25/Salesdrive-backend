@@ -176,7 +176,8 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "shipToAddress",
       "shipToPincode",
       "competitorBrands",
-      "massistRefIds", 
+      "massistRefIds",
+      "googleMapLink", 
     ];
 
  allowedFields.forEach((field) => {

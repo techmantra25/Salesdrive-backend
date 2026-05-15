@@ -195,6 +195,9 @@ const outletApprovedSchema = new mongoose.Schema(
     shipToPincode: {
       type: String,
     },
+    googleMapLink: {
+      type: String,
+    },
     // Additional fields for tracking
     createdFromLead: {
       type: mongoose.Schema.Types.ObjectId,
