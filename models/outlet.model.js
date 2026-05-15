@@ -219,6 +219,9 @@ const outletSchema = new mongoose.Schema(
     shipToPincode: {
       type: String,
     },
+    googleMapLink: {
+      type: String,
+    },
   },
   {
     timestamps: true,

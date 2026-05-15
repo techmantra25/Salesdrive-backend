@@ -690,7 +690,7 @@ async function generateBillHTML(bill, options = {}) {
                       </td>
                     </tr>
                     <tr style="font-weight: bold">
-                      <td>Net Amount</td>
+                      <td>Net Amount (Incl. GST)</td>
                       <td style="text-align: center">:</td>
                       <td style="text-align: right">
                         ${formatCurrency(bill?.netAmount)}

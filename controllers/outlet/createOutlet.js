@@ -52,6 +52,7 @@ const createOutlet = asyncHandler(async (req, res) => {
     enrolledStatus,
     shipToAddress,
     shipToPincode,
+    googleMapLink,
   } = req.body;
 
   // Generate unique lead ID
@@ -126,6 +127,7 @@ const createOutlet = asyncHandler(async (req, res) => {
     enrolledStatus,
     shipToAddress,
     shipToPincode,
+    googleMapLink,
   };
 
   const newOutlet = await Outlet.create(outletData);
