@@ -568,7 +568,7 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         )}</td>
                       </tr>
                       <tr>
-                        <td>Distributor Discount</td>
+                        <td>Special Discount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
                           formatCurrency(orderEntry?.distributorDiscount),
