@@ -3,6 +3,9 @@ const {
   createOrderEntry,
 } = require("../../controllers/orderEntry/createOrderEntry.js");
 const {
+  importSalesOrder,
+} = require("../../controllers/orderEntry/importSalesOrder.js");
+const {
   paginatedOrderEntry,
 } = require("../../controllers/orderEntry/paginatedOederEntry.js");
 
@@ -32,6 +35,10 @@ const {
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/create").post(protectDisRoute, createOrderEntry);
+orderEntryRoutes
+  .route("/import-sales-order")
+  .post(protectDisRoute, importSalesOrder);
+
 orderEntryRoutes
   .route("/paginated-list")
   .get(protectDisRoute, paginatedOrderEntry);

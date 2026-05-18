@@ -38,6 +38,10 @@ const priceSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    customBasicDiscountPercentage: {
+      type: Number,
+      default: 0,
+    },
     effective_date: {
       type: Date,
       default: null,
