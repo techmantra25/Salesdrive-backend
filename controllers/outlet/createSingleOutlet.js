@@ -16,6 +16,7 @@ const { generateCode } = require("../../utils/codeGenerator");
 const createSingleOutlet = asyncHandler(async (req, res) => {
   try {
     const data = req.body;
+    console.log("CREATE SINGLE OUTLET - DATA RECEIVED", data);
 
     // =========================
     // MOBILE HELPERS
