@@ -17,6 +17,7 @@ const addPrice = asyncHandler(async (req, res) => {
       mrp_price,
       dlp_price,
       rlp_price,
+      customBasicDiscountPercentage,
       effective_date,
       distributorId,
     } = req.body;
@@ -95,6 +96,7 @@ const addPrice = asyncHandler(async (req, res) => {
       mrp_price,
       dlp_price,
       rlp_price,
+      customBasicDiscountPercentage,
       distributorId: price_type === "distributor" ? distributorId : null,
       effective_date,
       createdBy: userId,
@@ -124,6 +126,7 @@ const addDBPriceByDB = asyncHandler(async (req, res) => {
       mrp_price,
       dlp_price,
       rlp_price,
+      customBasicDiscountPercentage,
       effective_date,
       distributorId,
     } = req.body;
@@ -193,6 +196,7 @@ const addDBPriceByDB = asyncHandler(async (req, res) => {
       mrp_price,
       dlp_price,
       rlp_price,
+      customBasicDiscountPercentage,
       distributorId: price_type === "distributor" ? distributorId : null,
       effective_date,
     });
@@ -293,6 +297,9 @@ const updatePrice = asyncHandler(async (req, res) => {
         mrp_price: req.body.mrp_price ?? priceData.mrp_price,
         dlp_price: req.body.dlp_price ?? priceData.dlp_price,
         rlp_price: req.body.rlp_price ?? priceData.rlp_price,
+        customBasicDiscountPercentage:
+          req.body.customBasicDiscountPercentage ??
+          priceData.customBasicDiscountPercentage,
         distributorId: distributorId,
         effective_date: req.body.effective_date ?? priceData.effective_date,
         status: req.body.status ?? priceData.status,
