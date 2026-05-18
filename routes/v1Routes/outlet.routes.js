@@ -1,10 +1,11 @@
 const express = require("express");
-const { protectRoute, isAdmin ,authorizeRoles} = require("../../middlewares/protectRoute.js");
+const { protectRoute, isAdmin, authorizeRoles } = require("../../middlewares/protectRoute.js");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const { createOutlet } = require("../../controllers/outlet/createOutlet.js");
 const { outletList } = require("../../controllers/outlet/outletList.js");
 const { outletDetail } = require("../../controllers/outlet/outletDetail.js");
 const { updateOutlet } = require("../../controllers/outlet/updateOutlet.js");
+const { createSingleOutlet } = require("../../controllers/outlet/createSingleOutlet.js");
 const {
   allOutletsPaginated,
 } = require("../../controllers/outlet/allOutletsPaginated.js");
@@ -21,12 +22,12 @@ const {
 } = require("../../controllers/outlet/outletBulkApproveReject.js");
 const outletRoutes = express.Router();
 
-outletRoutes.route("/create").post(protectRoute,  authorizeRoles(), createOutlet);
+outletRoutes.route("/create").post(protectRoute, authorizeRoles(), createOutlet);
 outletRoutes.route("/list").get(protect, outletList); // incorrect
 outletRoutes.route("/detail/:outletId").get(protect, outletDetail);
 outletRoutes
   .route("/update/:outletId")
-  .patch(protectRoute,  authorizeRoles(), updateOutlet); // incorrect
+  .patch(protectRoute, authorizeRoles(), updateOutlet); // incorrect
 outletRoutes.route("/paginated-outlet-list").get(protect, allOutletsPaginated);
 outletRoutes
   .route("/bulk-approve-reject-outlet-template")
@@ -34,10 +35,18 @@ outletRoutes
 outletRoutes.route("/bulk-approve-reject-outlet").post(protect, bulkApproveRejectOutlet); // incorrect
 outletRoutes
   .route("/status-update/:outletId")
-  .patch(protectRoute,  authorizeRoles(), statusUpdate); // incorrect
+  .patch(protectRoute, authorizeRoles(), statusUpdate); // incorrect
 
 outletRoutes
   .route("/outlet-approve-reject")
-  .post(protectRoute,  authorizeRoles(), outletBulkApproveReject);
+  .post(protectRoute, authorizeRoles(), outletBulkApproveReject);
+
+outletRoutes
+  .route("/create-single-outlet")
+  .post(
+    protectRoute,
+    authorizeRoles(),
+    createSingleOutlet
+  );
 
 module.exports = outletRoutes;
