@@ -773,7 +773,316 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               break;
             }
 
-            case "Price": {
+            // case "Price": {
+            //   console.log("Processing Price CSV");
+
+            //   // 1. Collect unique codes for batch DB queries (trimmed)
+            //   const regionCodes = new Set();
+            //   const productCodes = new Set();
+            //   const distributorCodes = new Set();
+
+            //   for (const row of results) {
+            //     if (row["Region Code"])
+            //       regionCodes.add(row["Region Code"].trim());
+            //     if (row["Product Code"])
+            //       productCodes.add(row["Product Code"].trim());
+            //     if (row["Distributor Code"])
+            //       distributorCodes.add(row["Distributor Code"].trim());
+            //   }
+
+            //   // 2. Fetch all required docs in parallel
+            //   const [regions, products, distributors] = await Promise.all([
+            //     Region.find({ code: { $in: Array.from(regionCodes) } })
+            //       .select("code _id")
+            //       .lean(),
+            //     Product.find({
+            //       product_code: { $in: Array.from(productCodes) },
+            //     })
+            //       .select("product_code _id")
+            //       .lean(),
+            //     Distributor.find({
+            //       dbCode: { $in: Array.from(distributorCodes) },
+            //     })
+            //       .select("dbCode _id")
+            //       .lean(),
+            //   ]);
+
+            //   // 3. Create lookup maps for quick access
+            //   const regionMap = new Map(
+            //     regions.map((r) => [r.code.trim(), r._id])
+            //   );
+            //   const productMap = new Map(
+            //     products.map((p) => [p.product_code.trim(), p._id])
+            //   );
+            //   const distributorMap = new Map(
+            //     distributors.map((d) => [d.dbCode.trim(), d._id])
+            //   );
+
+            //   // 4. Pre-validate rows and collect valid combinations for existing price lookup
+            //   const skippedRowsForPrice = [];
+            //   const preValidatedRows = [];
+            //   const dateToday = new Date();
+            //   const validCombinations = [];
+
+            //   for (const row of results) {
+            //     const regionCode = row["Region Code"]?.trim();
+            //     const productCode = row["Product Code"]?.trim();
+            //     const distributorCode = row["Distributor Code"]?.trim();
+            //     const mrp = row["MRP"]?.trim();
+            //     const effectiveDate = row["Effective Date"]?.trim();
+
+            //     // Basic field validation - for national pricing, region and distributor are not required
+            //     const isNationalPricing = !regionCode && !distributorCode;
+            //     if (!productCode || !mrp || !effectiveDate) {
+            //       skippedRowsForPrice.push({
+            //         ...row,
+            //         reason:
+            //           "Missing required fields (Product Code, MRP, Effective Date)",
+            //       });
+            //       continue;
+            //     }
+
+            //     // Entity existence validation
+            //     const regionId = regionCode ? regionMap.get(regionCode) : null;
+            //     const productId = productMap.get(productCode);
+            //     const distributorId = distributorCode
+            //       ? distributorMap.get(distributorCode)
+            //       : null;
+
+            //     if (!productId) {
+            //       skippedRowsForPrice.push({
+            //         ...row,
+            //         reason: "Product not found",
+            //       });
+            //       continue;
+            //     }
+
+            //     // For regional/distributor pricing, region is required
+            //     if (!isNationalPricing && !regionId) {
+            //       skippedRowsForPrice.push({
+            //         ...row,
+            //         reason:
+            //           "Region not found (required for regional/distributor pricing)",
+            //       });
+            //       continue;
+            //     }
+
+            //     // For distributor pricing, distributor must exist
+            //     if (distributorCode && !distributorId) {
+            //       skippedRowsForPrice.push({
+            //         ...row,
+            //         reason: "Distributor not found",
+            //       });
+            //       continue;
+            //     }
+
+            //     // Date validation
+            //     const parsedDate = moment(effectiveDate, "DD-MM-YYYY");
+            //     if (!parsedDate.isValid()) {
+            //       skippedRowsForPrice.push({
+            //         ...row,
+            //         reason: "Invalid Effective Date",
+            //       });
+            //       continue;
+            //     }
+            //     const effectiveDateParsed = moment
+            //       .tz(
+            //         parsedDate.format("YYYY-MM-DD"),
+            //         "YYYY-MM-DD",
+            //         "Asia/Kolkata"
+            //       )
+            //       .startOf("day")
+            //       .toDate();
+
+            //     // Note: Date validation will be done later after checking existing prices
+            //     // For now, just store the parsed date
+
+            //     // Determine price type based on what's provided
+            //     let priceType;
+            //     if (distributorCode) {
+            //       priceType = "distributor";
+            //     } else if (regionCode) {
+            //       priceType = "regional";
+            //     } else {
+            //       priceType = "national";
+            //     }
+
+            //     // Store pre-validated row
+            //     const validatedRow = {
+            //       ...row,
+            //       regionId,
+            //       productId,
+            //       distributorId,
+            //       priceType: priceType,
+            //       effectiveDate: effectiveDateParsed,
+            //     };
+
+            //     preValidatedRows.push(validatedRow);
+
+            //     // Collect combination for batch existing price lookup
+            //     validCombinations.push({
+            //       productId,
+            //       regionId: regionId || null,
+            //       distributorId,
+            //     });
+            //   }
+            //   console.log(
+            //     `Pre-validation complete: ${preValidatedRows.length} valid, ${skippedRowsForPrice.length} skipped (basic validation)`
+            //   );
+
+            //   // 5. Batch fetch all existing prices for valid combinations
+            //   let existingPricesMap = new Map();
+            //   if (validCombinations.length > 0) {
+            //     const existingPricesQuery = validCombinations.map((combo) => ({
+            //       productId: combo.productId,
+            //       regionId: combo.regionId,
+            //       distributorId: combo.distributorId,
+            //       status: true,
+            //     }));
+
+            //     const existingPrices = await Price.find({
+            //       $or: existingPricesQuery,
+            //     })
+            //       .select("productId regionId distributorId effective_date _id")
+            //       .sort({ effective_date: -1 })
+            //       .lean();
+
+            //     // Group existing prices by combination key
+            //     existingPrices.forEach((price) => {
+            //       const key = `${price.productId}_${price.regionId || "null"}_${price.distributorId || "null"
+            //         }`;
+            //       if (!existingPricesMap.has(key)) {
+            //         existingPricesMap.set(key, []);
+            //       }
+            //       existingPricesMap.get(key).push(price);
+            //     });
+            //   }
+
+            //   console.log(
+            //     `Found ${existingPricesMap.size} existing price combinations`
+            //   ); // 6. Final validation with existing price checks and date validation
+            //   const validRows = [];
+
+            //   for (const row of preValidatedRows) {
+            //     const combinationKey = `${row.productId}_${row.regionId || "null"
+            //       }_${row.distributorId || "null"}`;
+            //     const existingPrices =
+            //       existingPricesMap.get(combinationKey) || [];
+
+            //     // Date validation based on existing prices
+            //     if (existingPrices.length > 0) {
+            //       // If existing prices found, validate against latest price date
+            //       const latestPrice = existingPrices[0]; // Already sorted by effective_date desc
+
+            //       // Validate that new effective date is greater than latest existing price
+            //       if (
+            //         moment(latestPrice.effective_date)
+            //           .tz("Asia/Kolkata")
+            //           .isSameOrAfter(row.effectiveDate) &&
+            //         row.SkipEffectiveDateCheck == "1"
+            //       ) {
+            //         skippedRowsForPrice.push({
+            //           ...row,
+            //           reason:
+            //             "Price effective date should be greater than the latest existing price effective date",
+            //         });
+            //         continue;
+            //       }
+            //     } else {
+            //       // No existing prices found for this combination
+            //       // Allow effective date to be in the past, but still validate it's not too far in the future
+            //       // Only skip if the effective date is more than 1 year in the future (optional business rule)
+            //       const oneYearFromNow = moment(dateToday)
+            //         .add(1, "year")
+            //         .toDate();
+            //       if (row.effectiveDate > oneYearFromNow) {
+            //         skippedRowsForPrice.push({
+            //           ...row,
+            //           reason:
+            //             "Price effective date cannot be more than 1 year in the future",
+            //         });
+            //         continue;
+            //       }
+            //       // For new price combinations, effective date can be in the past or future (within reason)
+            //     }
+
+            //     // Add existing prices for later processing
+            //     validRows.push({
+            //       ...row,
+            //       existingPrices: existingPrices,
+            //     });
+            //   }
+            //   console.log(
+            //     `Final validation complete: ${validRows.length} valid for insertion, ${skippedRowsForPrice.length} total skipped`
+            //   ); // 7. Process valid rows and handle existing price expiration
+            //   let insertedPrices = [];
+            //   if (validRows.length > 0) {
+            //     // Generate all codes in batch for better performance
+            //     const codes = await generateCodesInBatch(
+            //       "PR",
+            //       validRows.length
+            //     );
+
+            //     const priceDocs = validRows.map((row, idx) => ({
+            //       code: codes[idx],
+            //       productId: row.productId,
+            //       price_type: row.priceType,
+            //       regionId: row.regionId,
+            //       mrp_price: row["MRP"],
+            //       dlp_price: row["DLP"] || null,
+            //       rlp_price: row["RLP"] || null,
+            //       effective_date: row.effectiveDate,
+            //       distributorId: row.distributorId || null,
+            //       createdBy: req.user._id,
+            //     }));
+
+            //     // Insert new prices
+            //     insertedPrices = await Price.insertMany(priceDocs);
+            //     console.log(`Inserted ${insertedPrices.length} new prices`);
+
+            //     // Prepare bulk updates for existing prices with expiration dates
+            //     const priceUpdates = [];
+            //     for (const row of validRows) {
+            //       if (row.existingPrices && row.existingPrices.length > 0) {
+            //         const expiresAt = moment(row.effectiveDate)
+            //           .tz("Asia/Kolkata")
+            //           .subtract(1, "day")
+            //           .endOf("day")
+            //           .toDate();
+
+            //         for (const existingPrice of row.existingPrices) {
+            //           priceUpdates.push({
+            //             updateOne: {
+            //               filter: { _id: existingPrice._id },
+            //               update: {
+            //                 $set: {
+            //                   expiresAt: existingPrice.expiresAt ?? expiresAt,
+            //                 },
+            //               },
+            //             },
+            //           });
+            //         }
+            //       }
+            //     }
+
+            //     // Execute bulk update for existing prices
+            //     if (priceUpdates.length > 0) {
+            //       await Price.bulkWrite(priceUpdates);
+            //       console.log(
+            //         `Updated ${priceUpdates.length} existing prices with expiration dates`
+            //       );
+            //     }
+            //   } else {
+            //     console.warn("No valid results to save after filtering");
+            //   }
+
+            //   // 8. Return results
+            //   resp = insertedPrices || [];
+            //   skippedRows = skippedRowsForPrice || [];
+
+            //   break;
+            // }
+             case "Price": {
               console.log("Processing Price CSV");
 
               // 1. Collect unique codes for batch DB queries (trimmed)
@@ -825,19 +1134,47 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validCombinations = [];
 
               for (const row of results) {
-                const regionCode = row["Region Code"]?.trim();
+                const regionCode = null;
                 const productCode = row["Product Code"]?.trim();
-                const distributorCode = row["Distributor Code"]?.trim();
-                const mrp = row["MRP"]?.trim();
-                const effectiveDate = row["Effective Date"]?.trim();
+                const distributorCode = null;
+                const mrp = row["MRP"];
+                const customBasicDiscountPercentage =
+                  row["Customer Basic Discount Percentage"];
+                const effectiveDate = row["Effective Date"]
+                  ? String(row["Effective Date"]).trim()
+                  : "";
+                const mrpNumber = Number(mrp);
+                const customBasicDiscountPercentageNumber = Number(
+                  customBasicDiscountPercentage || 0
+                );
 
-                // Basic field validation - for national pricing, region and distributor are not required
+                // Basic field validation - Price CSV is always national now
                 const isNationalPricing = !regionCode && !distributorCode;
-                if (!productCode || !mrp || !effectiveDate) {
+                if (!productCode || mrp === undefined || mrp === null || !effectiveDate) {
                   skippedRowsForPrice.push({
                     ...row,
                     reason:
                       "Missing required fields (Product Code, MRP, Effective Date)",
+                  });
+                  continue;
+                }
+
+                if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid MRP",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(customBasicDiscountPercentageNumber) ||
+                  customBasicDiscountPercentageNumber < 0 ||
+                  customBasicDiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid Customer Basic Discount Percentage",
                   });
                   continue;
                 }
@@ -914,6 +1251,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   productId,
                   distributorId,
                   priceType: priceType,
+                  mrpNumber,
+                  customBasicDiscountPercentageNumber,
                   effectiveDate: effectiveDateParsed,
                 };
 
@@ -1028,9 +1367,18 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   productId: row.productId,
                   price_type: row.priceType,
                   regionId: row.regionId,
-                  mrp_price: row["MRP"],
-                  dlp_price: row["DLP"] || null,
-                  rlp_price: row["RLP"] || null,
+                  mrp_price: row.mrpNumber,
+                  dlp_price: row.mrpNumber,
+                  rlp_price: Number(
+                    (
+                      row.mrpNumber -
+                      (row.mrpNumber *
+                        row.customBasicDiscountPercentageNumber) /
+                        100
+                    ).toFixed(2)
+                  ),
+                  customBasicDiscountPercentage:
+                    row.customBasicDiscountPercentageNumber,
                   effective_date: row.effectiveDate,
                   distributorId: row.distributorId || null,
                   createdBy: req.user._id,
