@@ -336,80 +336,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       });
     }
 
-    // =========================
-    // OUTLET UID
-    // =========================
 
-// =========================
-// OUTLET UID
-// =========================
-
-let outletUID = data.outletUID?.trim();
-
-if (!outletUID) {
-
-  // Find latest RMS UID from both collections
-  const latestOutlet = await Outlet.findOne({
-    outletUID: { $regex: /^RMS-\d+$/ }
-  })
-    .sort({ createdAt: -1 })
-    .select("outletUID");
-
-  const latestApprovedOutlet = await OutletApproved.findOne({
-    outletUID: { $regex: /^RMS-\d+$/ }
-  })
-    .sort({ createdAt: -1 })
-    .select("outletUID");
-
-  let latestNumber = 0;
-
-  const extractNumber = (uid) => {
-    if (!uid) return 0;
-
-    const parts = uid.split("-");
-
-    return parseInt(parts[1]) || 0;
-  };
-
-  const outletNumber = extractNumber(
-    latestOutlet?.outletUID
-  );
-
-  const approvedNumber = extractNumber(
-    latestApprovedOutlet?.outletUID
-  );
-
-  latestNumber = Math.max(
-    outletNumber,
-    approvedNumber
-  );
-
-  const nextNumber = latestNumber + 1;
-
-  outletUID = `RMS-${String(nextNumber).padStart(5, "0")}`;
-}
-
-    const existingOutletUID = await Outlet.findOne({
-      outletUID,
-    });
-
-    if (existingOutletUID) {
-      return res.status(400).json({
-        status: false,
-        message: "Outlet UID already exists",
-      });
-    }
-
-    const existingApprovedOutletUID = await OutletApproved.findOne({
-      outletUID,
-    });
-
-    if (existingApprovedOutletUID) {
-      return res.status(400).json({
-        status: false,
-        message: "Outlet UID already exists in approved outlets",
-      });
-    }
 
     // =========================
     // BRAND VALIDATION
@@ -533,59 +460,123 @@ if (!outletUID) {
       });
     }
 
-// =========================
-// OUTLET UID
-// =========================
+    // =========================
+    // OUTLET UID
+    // =========================
 
-let outletUID = data.outletUID?.trim();
+    let outletUID = data.outletUID?.trim();
 
-if (!outletUID) {
+    if (!outletUID) {
 
-  // Find latest RMS UID from both collections
-  const latestOutlet = await Outlet.findOne({
-    outletUID: { $regex: /^RMS-\d+$/ }
-  })
-    .sort({ createdAt: -1 })
-    .select("outletUID");
+      // Get latest outlet UID from Outlet collection
+      const latestOutlet = await Outlet.findOne({
+        outletUID: {
+          $regex: /^RMS-\d+$/
+        }
+      })
+        .sort({ outletUID: -1 })
+        .select("outletUID");
 
-  const latestApprovedOutlet = await OutletApproved.findOne({
-    outletUID: { $regex: /^RMS-\d+$/ }
-  })
-    .sort({ createdAt: -1 })
-    .select("outletUID");
+      // Get latest outlet UID from Approved collection
+      const latestApprovedOutlet =
+        await OutletApproved.findOne({
+          outletUID: {
+            $regex: /^RMS-\d+$/
+          }
+        })
+          .sort({ outletUID: -1 })
+          .select("outletUID");
 
-  let latestNumber = 0;
+      let highestNumber = 0;
 
-  const extractNumber = (uid) => {
-    if (!uid) return 0;
+      const extractNumber = (uid) => {
 
-    const parts = uid.split("-");
+        if (!uid) return 0;
 
-    return parseInt(parts[1]) || 0;
-  };
+        const parts = uid.split("-");
 
-  const outletNumber = extractNumber(
-    latestOutlet?.outletUID
-  );
+        return parseInt(parts[1]) || 0;
+      };
 
-  const approvedNumber = extractNumber(
-    latestApprovedOutlet?.outletUID
-  );
+      const outletNumber = extractNumber(
+        latestOutlet?.outletUID
+      );
 
-  latestNumber = Math.max(
-    outletNumber,
-    approvedNumber
-  );
+      const approvedNumber = extractNumber(
+        latestApprovedOutlet?.outletUID
+      );
 
-  const nextNumber = latestNumber + 1;
+      highestNumber = Math.max(
+        outletNumber,
+        approvedNumber
+      );
 
-  outletUID = `RMS-${String(nextNumber).padStart(5, "0")}`;
-}
+      const nextNumber = highestNumber + 1;
+
+      outletUID =
+        `RMS-${String(nextNumber).padStart(4, "0")}`;
+    }
+
+    const existingOutletUID =
+      await Outlet.findOne({
+        outletUID,
+      });
+
+    if (existingOutletUID) {
+      return res.status(400).json({
+        status: false,
+        message:
+          "Outlet UID already exists",
+      });
+    }
+
+    const existingApprovedOutletUID =
+      await OutletApproved.findOne({
+        outletUID,
+      });
+
+    if (existingApprovedOutletUID) {
+      return res.status(400).json({
+        status: false,
+        message:
+          "Outlet UID already exists in approved outlets",
+      });
+    }
+
+
+    // =========================
+    // LEAD ID
+    // =========================
+
+    const latestLead = await Outlet.findOne({
+      leadId: {
+        $regex: /^LD-\d+$/
+      }
+    })
+      .sort({ leadId: -1 })
+      .select("leadId");
+
+    let leadId = "LD-0001";
+
+    if (latestLead?.leadId) {
+
+      const parts =
+        latestLead.leadId.split("-");
+
+      const number =
+        parseInt(parts[1]) || 0;
+
+      const nextNumber =
+        number + 1;
+
+      leadId =
+        `LD-${String(nextNumber).padStart(4, "0")}`;
+    }
     // =========================
     // CREATE OUTLET
     // =========================
 
-    const outlet = await Outlet.create({
+    const outlet = await OutletApproved.create({
       leadId,
 
       employeeId: employee._id,
@@ -654,7 +645,7 @@ if (!outletUID) {
       existingRetailer:
         existingRetailerBool,
 
-      outletStatus: "Pending",
+      outletStatus: "Approved",
 
       outletSource: "Admin",
 
