@@ -14,6 +14,15 @@ const safeNumber = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const safeOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
 const DEFAULT_ORDER_TYPE = "Normal-Sale";
 const DEFAULT_PAYMENT_MODE = "Cash";
@@ -100,13 +109,28 @@ const buildLineItem = ({
   price,
   inventory,
   qty,
+  effectivePrice,
   specialDiscount,
   isIgst,
 }) => {
-  const grossAmt = toTwoDecimal(qty * safeNumber(price.rlp_price));
-  const distributorDiscountPercent = Math.min(
-    Math.max(safeNumber(specialDiscount), 0),
-    100,
+  const rlpPrice = safeNumber(price.rlp_price);
+  const grossAmt = toTwoDecimal(qty * rlpPrice);
+  const effectivePriceDiscount =
+    effectivePrice !== null && rlpPrice > 0
+      ? ((rlpPrice - effectivePrice) / rlpPrice) * 100
+      : null;
+  const distributorDiscountPercent = toTwoDecimal(
+    Math.min(
+      Math.max(
+        safeNumber(
+          effectivePriceDiscount !== null
+            ? effectivePriceDiscount
+            : specialDiscount,
+        ),
+        0,
+      ),
+      100,
+    ),
   );
   const distributorDiscount = toTwoDecimal(
     grossAmt * (distributorDiscountPercent / 100),
@@ -160,9 +184,18 @@ const mergeRowsByProduct = (rows) => {
               safeNumber(row.specialDiscount) * newQty) /
             totalQty
           : 0;
+      const weightedEffectivePrice =
+        totalQty > 0 &&
+        map[productCode].effectivePrice !== null &&
+        row.effectivePrice !== null
+          ? (safeNumber(map[productCode].effectivePrice) * existingQty +
+              safeNumber(row.effectivePrice) * newQty) /
+            totalQty
+          : null;
 
       map[productCode].orderQty += row.orderQty;
       map[productCode].specialDiscount = weightedDiscount;
+      map[productCode].effectivePrice = weightedEffectivePrice;
     }
   }
 
@@ -239,6 +272,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
         price,
         inventory,
         qty: item.orderQty,
+        effectivePrice: item.effectivePrice,
         specialDiscount: item.specialDiscount,
         isIgst,
       }),
@@ -335,10 +369,14 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   const createdOrder = await OrderEntry.create(orderData);
 
   if (orderDate) {
-    await OrderEntry.findByIdAndUpdate(createdOrder._id, {
-      createdAt: orderDate,
-      updatedAt: orderDate,
-    });
+    await OrderEntry.findByIdAndUpdate(
+      createdOrder._id,
+      {
+        createdAt: orderDate,
+        updatedAt: orderDate,
+      },
+      { timestamps: false },
+    );
     createdOrder.createdAt = orderDate;
     createdOrder.updatedAt = orderDate;
   }
@@ -381,6 +419,9 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       );
       const orderType = DEFAULT_ORDER_TYPE;
       const paymentMode = DEFAULT_PAYMENT_MODE;
+      const effectivePrice = safeOptionalNumber(
+        getFirstValue(row, ["Effective Price", "effectivePrice"]),
+      );
       const specialDiscount = safeNumber(
         getFirstValue(row, [
           "Special Discount (%)",
@@ -421,6 +462,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       grouped[groupKey].rows.push({
         productCode,
         orderQty,
+        effectivePrice,
         specialDiscount,
         originalRow: row,
       });
