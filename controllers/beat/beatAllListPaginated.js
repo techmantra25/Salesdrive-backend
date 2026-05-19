@@ -40,6 +40,12 @@ const beatAllListPaginated = asyncHandler(async (req, res) => {
         {
           path: "regionId",
           select: "",
+          populate: [
+            {
+              path: "stateId",
+              select: "name code slug",
+            },
+          ],
         },
         {
           path: "distributorId",

@@ -340,11 +340,54 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // OUTLET UID
     // =========================
 
-    let outletUID = data.outletUID?.trim();
+// =========================
+// OUTLET UID
+// =========================
 
-    if (!outletUID) {
-      outletUID = await generateCode("OUT");
-    }
+let outletUID = data.outletUID?.trim();
+
+if (!outletUID) {
+
+  // Find latest RMS UID from both collections
+  const latestOutlet = await Outlet.findOne({
+    outletUID: { $regex: /^RMS-\d+$/ }
+  })
+    .sort({ createdAt: -1 })
+    .select("outletUID");
+
+  const latestApprovedOutlet = await OutletApproved.findOne({
+    outletUID: { $regex: /^RMS-\d+$/ }
+  })
+    .sort({ createdAt: -1 })
+    .select("outletUID");
+
+  let latestNumber = 0;
+
+  const extractNumber = (uid) => {
+    if (!uid) return 0;
+
+    const parts = uid.split("-");
+
+    return parseInt(parts[1]) || 0;
+  };
+
+  const outletNumber = extractNumber(
+    latestOutlet?.outletUID
+  );
+
+  const approvedNumber = extractNumber(
+    latestApprovedOutlet?.outletUID
+  );
+
+  latestNumber = Math.max(
+    outletNumber,
+    approvedNumber
+  );
+
+  const nextNumber = latestNumber + 1;
+
+  outletUID = `RMS-${String(nextNumber).padStart(5, "0")}`;
+}
 
     const existingOutletUID = await Outlet.findOne({
       outletUID,
@@ -490,12 +533,54 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       });
     }
 
-    // =========================
-    // LEAD ID
-    // =========================
+// =========================
+// OUTLET UID
+// =========================
 
-    const leadId = await generateCode("LD");
+let outletUID = data.outletUID?.trim();
 
+if (!outletUID) {
+
+  // Find latest RMS UID from both collections
+  const latestOutlet = await Outlet.findOne({
+    outletUID: { $regex: /^RMS-\d+$/ }
+  })
+    .sort({ createdAt: -1 })
+    .select("outletUID");
+
+  const latestApprovedOutlet = await OutletApproved.findOne({
+    outletUID: { $regex: /^RMS-\d+$/ }
+  })
+    .sort({ createdAt: -1 })
+    .select("outletUID");
+
+  let latestNumber = 0;
+
+  const extractNumber = (uid) => {
+    if (!uid) return 0;
+
+    const parts = uid.split("-");
+
+    return parseInt(parts[1]) || 0;
+  };
+
+  const outletNumber = extractNumber(
+    latestOutlet?.outletUID
+  );
+
+  const approvedNumber = extractNumber(
+    latestApprovedOutlet?.outletUID
+  );
+
+  latestNumber = Math.max(
+    outletNumber,
+    approvedNumber
+  );
+
+  const nextNumber = latestNumber + 1;
+
+  outletUID = `RMS-${String(nextNumber).padStart(5, "0")}`;
+}
     // =========================
     // CREATE OUTLET
     // =========================
