@@ -2331,7 +2331,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                             .filter((brand) => brand.length > 0)
                           : [],
                         existingRetailer: existingRetailerBool,
-                        outletStatus: "Pending",
+                        outletStatus: "Approved",
                         outletSource: "Admin",
                         remarks: row["Remarks"]?.trim() || null,
                         contactPerson: row["Contact Person"]?.trim() || null,
@@ -2364,7 +2364,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   // Step 5: Bulk insert outlets
                   if (outletsToInsert.length > 0) {
                     try {
-                      const insertResult = await Outlet.insertMany(
+                      const insertResult = await OutletApproved.insertMany(
                         outletsToInsert,
                         {
                           ordered: false,
