@@ -15,6 +15,8 @@ const safeNumber = (value) => {
 };
 
 const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
+const DEFAULT_ORDER_TYPE = "Normal-Sale";
+const DEFAULT_PAYMENT_MODE = "Cash";
 
 const getFirstValue = (row, keys) => {
   for (const key of keys) {
@@ -24,34 +26,6 @@ const getFirstValue = (row, keys) => {
   }
 
   return "";
-};
-
-const normalizeOrderType = (value) => {
-  const type = String(value || "Normal-Sale").trim();
-
-  if (!type || /^normal$/i.test(type) || /^normal sale$/i.test(type)) {
-    return "Normal-Sale";
-  }
-
-  if (/^counter$/i.test(type)) {
-    return "Counter";
-  }
-
-  return type;
-};
-
-const normalizePaymentMode = (value) => {
-  const mode = String(value || "Credit").trim();
-
-  if (/^cash$/i.test(mode)) {
-    return "Cash";
-  }
-
-  if (/^credit$/i.test(mode)) {
-    return "Credit";
-  }
-
-  return mode;
 };
 
 const parseOrderDate = (value) => {
@@ -405,12 +379,8 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const orderQty = safeNumber(
         getFirstValue(row, ["Order Quantity", "orderQuantity", "orderQty"]),
       );
-      const orderType = normalizeOrderType(
-        getFirstValue(row, ["Order Type", "orderType"]),
-      );
-      const paymentMode = normalizePaymentMode(
-        getFirstValue(row, ["Payment Mode", "paymentMode"]),
-      );
+      const orderType = DEFAULT_ORDER_TYPE;
+      const paymentMode = DEFAULT_PAYMENT_MODE;
       const specialDiscount = safeNumber(
         getFirstValue(row, [
           "Special Discount (%)",
@@ -425,24 +395,6 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         errorCsv.push({
           ...row,
           Reason: "Salesman Code, Retailer Code and Product Code are required",
-        });
-        continue;
-      }
-
-      if (!["Counter", "Normal-Sale"].includes(orderType)) {
-        skippedRowCount += 1;
-        errorCsv.push({
-          ...row,
-          Reason: `Invalid Order Type ${orderType}`,
-        });
-        continue;
-      }
-
-      if (!["Cash", "Credit"].includes(paymentMode)) {
-        skippedRowCount += 1;
-        errorCsv.push({
-          ...row,
-          Reason: `Invalid Payment Mode ${paymentMode}`,
         });
         continue;
       }
