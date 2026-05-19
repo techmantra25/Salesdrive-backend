@@ -14,7 +14,23 @@ const safeNumber = (value) => {
   return Number.isFinite(number) ? number : 0;
 };
 
+const safeOptionalNumber = (value) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+const safeOptionalPositiveNumber = (value) => {
+  const number = safeOptionalNumber(value);
+  return number && number > 0 ? number : null;
+};
+
 const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
+const DEFAULT_ORDER_TYPE = "Normal-Sale";
+const DEFAULT_PAYMENT_MODE = "Cash";
 
 const getFirstValue = (row, keys) => {
   for (const key of keys) {
@@ -26,32 +42,32 @@ const getFirstValue = (row, keys) => {
   return "";
 };
 
-const normalizeOrderType = (value) => {
-  const type = String(value || "Normal-Sale").trim();
+const isBlankRow = (row) =>
+  Object.values(row || {}).every(
+    (value) => value === undefined || value === null || String(value).trim() === "",
+  );
 
-  if (!type || /^normal$/i.test(type) || /^normal sale$/i.test(type)) {
-    return "Normal-Sale";
+const getStateIdentity = (state) => {
+  if (!state) {
+    return "";
   }
 
-  if (/^counter$/i.test(type)) {
-    return "Counter";
+  if (typeof state === "object") {
+    return String(state.code || state.slug || state._id || state).trim();
   }
 
-  return type;
+  return String(state).trim();
 };
 
-const normalizePaymentMode = (value) => {
-  const mode = String(value || "Credit").trim();
+const getIsIgst = ({ distributor, retailer }) => {
+  const distributorState = getStateIdentity(distributor?.stateId);
+  const retailerState = getStateIdentity(retailer?.stateId);
 
-  if (/^cash$/i.test(mode)) {
-    return "Cash";
-  }
-
-  if (/^credit$/i.test(mode)) {
-    return "Credit";
-  }
-
-  return mode;
+  return (
+    distributorState &&
+    retailerState &&
+    distributorState !== retailerState
+  );
 };
 
 const parseOrderDate = (value) => {
@@ -126,13 +142,28 @@ const buildLineItem = ({
   price,
   inventory,
   qty,
+  effectivePrice,
   specialDiscount,
   isIgst,
 }) => {
-  const grossAmt = toTwoDecimal(qty * safeNumber(price.rlp_price));
-  const distributorDiscountPercent = Math.min(
-    Math.max(safeNumber(specialDiscount), 0),
-    100,
+  const rlpPrice = safeNumber(price.rlp_price);
+  const grossAmt = toTwoDecimal(qty * rlpPrice);
+  const effectivePriceDiscount =
+    effectivePrice !== null && rlpPrice > 0
+      ? ((rlpPrice - effectivePrice) / rlpPrice) * 100
+      : null;
+  const distributorDiscountPercent = toTwoDecimal(
+    Math.min(
+      Math.max(
+        safeNumber(
+          effectivePriceDiscount !== null
+            ? effectivePriceDiscount
+            : specialDiscount,
+        ),
+        0,
+      ),
+      100,
+    ),
   );
   const distributorDiscount = toTwoDecimal(
     grossAmt * (distributorDiscountPercent / 100),
@@ -186,9 +217,18 @@ const mergeRowsByProduct = (rows) => {
               safeNumber(row.specialDiscount) * newQty) /
             totalQty
           : 0;
+      const weightedEffectivePrice =
+        totalQty > 0 &&
+        map[productCode].effectivePrice !== null &&
+        row.effectivePrice !== null
+          ? (safeNumber(map[productCode].effectivePrice) * existingQty +
+              safeNumber(row.effectivePrice) * newQty) /
+            totalQty
+          : null;
 
       map[productCode].orderQty += row.orderQty;
       map[productCode].specialDiscount = weightedDiscount;
+      map[productCode].effectivePrice = weightedEffectivePrice;
     }
   }
 
@@ -204,12 +244,10 @@ const buildErrorRows = (items, reason) =>
 const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   const validationErrors = [];
   const lineItems = [];
-  const distributorStateId = distributor?.stateId;
-  const retailerStateId = orderMeta.retailer?.stateId;
-  const isIgst =
-    distributorStateId &&
-    retailerStateId &&
-    String(distributorStateId) !== String(retailerStateId);
+  const isIgst = getIsIgst({
+    distributor,
+    retailer: orderMeta.retailer,
+  });
 
   for (const item of mergeRowsByProduct(rows)) {
     const product = await Product.findOne({
@@ -265,6 +303,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
         price,
         inventory,
         qty: item.orderQty,
+        effectivePrice: item.effectivePrice,
         specialDiscount: item.specialDiscount,
         isIgst,
       }),
@@ -361,10 +400,10 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   const createdOrder = await OrderEntry.create(orderData);
 
   if (orderDate) {
-    await OrderEntry.findByIdAndUpdate(createdOrder._id, {
-      createdAt: orderDate,
-      updatedAt: orderDate,
-    });
+    await OrderEntry.collection.updateOne(
+      { _id: createdOrder._id },
+      { $set: { createdAt: orderDate, updatedAt: orderDate } },
+    );
     createdOrder.createdAt = orderDate;
     createdOrder.updatedAt = orderDate;
   }
@@ -381,7 +420,9 @@ const importSalesOrder = asyncHandler(async (req, res) => {
     }
 
     const distributorId = req.user.id;
-    const distributor = await Distributor.findById(distributorId);
+    const distributor = await Distributor.findById(distributorId).populate(
+      "stateId",
+    );
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
@@ -392,6 +433,10 @@ const importSalesOrder = asyncHandler(async (req, res) => {
     let skippedRowCount = 0;
 
     for (const row of rows) {
+      if (isBlankRow(row)) {
+        continue;
+      }
+
       const salesmanCode = String(
         getFirstValue(row, ["Salesman Code", "salesmanCode", "empId"]),
       ).trim();
@@ -405,11 +450,10 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const orderQty = safeNumber(
         getFirstValue(row, ["Order Quantity", "orderQuantity", "orderQty"]),
       );
-      const orderType = normalizeOrderType(
-        getFirstValue(row, ["Order Type", "orderType"]),
-      );
-      const paymentMode = normalizePaymentMode(
-        getFirstValue(row, ["Payment Mode", "paymentMode"]),
+      const orderType = DEFAULT_ORDER_TYPE;
+      const paymentMode = DEFAULT_PAYMENT_MODE;
+      const effectivePrice = safeOptionalPositiveNumber(
+        getFirstValue(row, ["Effective Price", "effectivePrice"]),
       );
       const specialDiscount = safeNumber(
         getFirstValue(row, [
@@ -425,24 +469,6 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         errorCsv.push({
           ...row,
           Reason: "Salesman Code, Retailer Code and Product Code are required",
-        });
-        continue;
-      }
-
-      if (!["Counter", "Normal-Sale"].includes(orderType)) {
-        skippedRowCount += 1;
-        errorCsv.push({
-          ...row,
-          Reason: `Invalid Order Type ${orderType}`,
-        });
-        continue;
-      }
-
-      if (!["Cash", "Credit"].includes(paymentMode)) {
-        skippedRowCount += 1;
-        errorCsv.push({
-          ...row,
-          Reason: `Invalid Payment Mode ${paymentMode}`,
         });
         continue;
       }
@@ -469,6 +495,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       grouped[groupKey].rows.push({
         productCode,
         orderQty,
+        effectivePrice,
         specialDiscount,
         originalRow: row,
       });
@@ -500,13 +527,13 @@ const importSalesOrder = asyncHandler(async (req, res) => {
             { outletUID: group.retailerCode },
           ],
           status: true,
-        });
+        }).populate("stateId");
 
         if (!retailer) {
           retailer = await OutletApproved.findOne({
             massistRefIds: group.retailerCode,
             status: true,
-          });
+          }).populate("stateId");
         }
 
         if (!retailer) {
