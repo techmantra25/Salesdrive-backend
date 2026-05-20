@@ -214,16 +214,16 @@ const mergeRowsByProduct = (rows) => {
       const weightedDiscount =
         totalQty > 0
           ? (safeNumber(map[productCode].specialDiscount) * existingQty +
-              safeNumber(row.specialDiscount) * newQty) /
-            totalQty
+            safeNumber(row.specialDiscount) * newQty) /
+          totalQty
           : 0;
       const weightedEffectivePrice =
         totalQty > 0 &&
-        map[productCode].effectivePrice !== null &&
-        row.effectivePrice !== null
+          map[productCode].effectivePrice !== null &&
+          row.effectivePrice !== null
           ? (safeNumber(map[productCode].effectivePrice) * existingQty +
-              safeNumber(row.effectivePrice) * newQty) /
-            totalQty
+            safeNumber(row.effectivePrice) * newQty) /
+          totalQty
           : null;
 
       map[productCode].orderQty += row.orderQty;
@@ -437,38 +437,64 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
+
+
+
+
+
+
       const salesmanCode = String(
-        getFirstValue(row, ["Salesman Code", "salesmanCode", "empId"]),
+        getFirstValue(row, ["Salesman Code"]),
       ).trim();
+
       const retailerCode = String(
-        getFirstValue(row, ["Retailer Code", "retailerCode", "outletCode"]),
+        getFirstValue(row, ["Retailer Code"]),
       ).trim();
-      const orderDate = getFirstValue(row, ["Order Date", "orderDate"]);
+
+      const retailerName = String(
+        getFirstValue(row, ["Retailer Name"]),
+      ).trim();
+
+      const orderDate = getFirstValue(row, ["Order Date"]);
+
       const productCode = String(
-        getFirstValue(row, ["Product Code", "productCode"]),
+        getFirstValue(row, ["Product Code"]),
       ).trim();
+
       const orderQty = safeNumber(
-        getFirstValue(row, ["Order Quantity", "orderQuantity", "orderQty"]),
-      );
-      const orderType = DEFAULT_ORDER_TYPE;
-      const paymentMode = DEFAULT_PAYMENT_MODE;
-      const effectivePrice = safeOptionalPositiveNumber(
-        getFirstValue(row, ["Effective Price", "effectivePrice"]),
-      );
-      const specialDiscount = safeNumber(
-        getFirstValue(row, [
-          "Special Discount (%)",
-          "Special Discount",
-          "specialDiscount",
-          "special_discount",
-        ]),
+        getFirstValue(row, ["Order Quantity"]),
       );
 
-      if (!salesmanCode || !retailerCode || !productCode) {
+      const orderType = DEFAULT_ORDER_TYPE;
+
+      const paymentMode = DEFAULT_PAYMENT_MODE;
+
+      const effectivePrice = safeOptionalPositiveNumber(
+        getFirstValue(row, ["Effective Price"]),
+      );
+
+      const netAmount = safeOptionalPositiveNumber(
+        getFirstValue(row, ["Net Amt ( Incl. GST)"]),
+      );
+
+      const specialDiscount = undefined;
+
+
+
+
+
+
+      if (
+        !salesmanCode ||
+        !retailerCode ||
+        !retailerName ||
+        !productCode
+      ) {
         skippedRowCount += 1;
         errorCsv.push({
           ...row,
-          Reason: "Salesman Code, Retailer Code and Product Code are required",
+          Reason:
+            "Salesman Code, Retailer Code, Retailer Name and Product Code are required",
         });
         continue;
       }
@@ -497,6 +523,8 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         orderQty,
         effectivePrice,
         specialDiscount,
+        retailerName,
+        netAmount,
         originalRow: row,
       });
     }
