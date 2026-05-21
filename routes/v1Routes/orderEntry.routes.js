@@ -32,6 +32,7 @@ const { generateSalesOrderReport } = require("../../controllers/orderEntry/gener
 const {
   salesOrderPrintPDF,
 } = require("../../controllers/orderEntry/salesOrderPrintPDF.js");
+const {dayBookReport }= require("../../controllers/orderEntry/dayBookReport.js");
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/create").post(protectDisRoute, createOrderEntry);
@@ -66,5 +67,9 @@ orderEntryRoutes
 orderEntryRoutes
   .route("/sales-order-print-pdf/:orderEntryId")
   .get(protect, salesOrderPrintPDF);
+
+orderEntryRoutes
+  .route("/day-book-report")
+  .get(protectDisRoute, dayBookReport);
 
 module.exports = orderEntryRoutes;
