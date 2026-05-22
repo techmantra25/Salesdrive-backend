@@ -19,11 +19,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       foreclose,
     } = req.body;
 
-    console.log("invoiceDate from frontend:", invoiceDate);
-
-    console.log("grnDate from frontend:", grnDate);
-
-    console.log("FULL BODY:", req.body);
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
     if (!purchaseOrder) {
@@ -31,22 +26,52 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         message: "Purchase Order not found",
       });
     }
-
     if (foreclose === true) {
 
-      purchaseOrder.foreclose = true;
+      const {
+        productIds = [],
+        forecloseReason = "",
+        forecloseUom = [],
+      } = req.body;
 
-      purchaseOrder.forecloseReason =
-        req.body.forecloseReason || "";
+      console.log("🔍 Foreclose Request:", {
+        productIds,
+        forecloseReason,
+        forecloseUom
+      });
+
+      if (!productIds.length) {
+        return res.status(400).json({
+          message: "No products selected",
+        });
+      }
+
+      purchaseOrder.lineItems.forEach((item) => {
+
+        const currentProductId = String(item.product);
+
+        if (productIds.includes(currentProductId)) {
+
+          const matchedQty = forecloseUom.find(
+            (q) => String(q.productId) === currentProductId
+          );
+
+          item.foreclose = true;
+
+          item.forecloseReason = forecloseReason;
+
+          item.forecloseUom = Number(matchedQty?.forecloseUom || 0);
+        }
+
+      });
 
       await purchaseOrder.save();
 
       return res.status(200).json({
-        message: "Purchase Order Foreclosed Successfully",
+        message: "Products Shortclosed Successfully",
         data: purchaseOrder,
       });
     }
-
     // =========================
     // 🔥 FETCH PREVIOUS INVOICES
     // =========================
@@ -137,25 +162,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       const alreadyReceived =
         receivedMap[String(item.productId)] || 0;
 
-      const remainingQty = poItem.orderQty - alreadyReceived;
 
-      // ❌ Case 1: user entered qty but nothing available
-      if (remainingQty <= 0 && requestedQty > 0) {
-        failedProducts.push(
-          `${productName} (No qty available)`
-        );
-        hasValidationError = true;
-        continue;
-      }
 
-      // ❌ Case 2: user exceeded remaining qty
-      if (requestedQty > remainingQty) {
-        failedProducts.push(
-          `${productName} (Only ${remainingQty} qty left)`
-        );
-        hasValidationError = true;
-        continue;
-      }
+
+
 
       // ✅ Case 3: ignore zero qty (important)
       if (!requestedQty || requestedQty <= 0) {

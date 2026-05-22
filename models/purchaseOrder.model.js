@@ -67,6 +67,19 @@ const LineItemSchema = new mongoose.Schema({
     default: 0,
   },
   usedBasePoint: { type: Number, default: null },
+  foreclose: {
+  type: Boolean,
+  default: false,
+},
+forecloseUom: {
+  type: Number,
+  default: 0,
+},
+
+forecloseReason: {
+  type: String,
+  default: "",
+},
 });
 
 const PurchasOrderEntrySchema = new mongoose.Schema(
@@ -87,14 +100,6 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
     purchaseOrderNo: {
       type: String,
       required: true,
-    },
-    foreclose: {
-      type: Boolean,
-      default: false,
-    },
-    forecloseReason: {
-      type: String,
-      default: "",
     },
     invoiceIds: [
       {

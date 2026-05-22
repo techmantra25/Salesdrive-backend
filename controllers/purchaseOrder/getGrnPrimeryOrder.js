@@ -37,9 +37,6 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
 
     const distributorId = purchaseOrder?.distributorId?._id;
 
-    // =========================
-    // ✅ BUILD RECEIVED MAP
-    // =========================
     const invoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
     });
@@ -56,15 +53,12 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
 
     let lineItems = purchaseOrder?.lineItems;
 
-    // =========================
-    // ✅ PROCESS LINE ITEMS
-    // =========================
     lineItems = await Promise.all(
       lineItems.map(async (item) => {
         try {
           const productId = item?.product?._id;
 
-          // ✅ remaining calculation
+      
           const alreadyReceived =
             receivedMap[String(productId)] || 0;
 
@@ -80,9 +74,6 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
             remainingQty / piecesPerBox
           );
 
-          // =========================
-          // ✅ IN-TRANSIT
-          // =========================
           const inTransitInvoices = await Invoice.find({
             distributorId: distributorId,
             status: "In-Transit",
@@ -96,16 +87,22 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
           return {
             ...item,
 
-            // ✅ NEW FIELDS (ONLY ADDITION)
+           
             existorderqty: remainingQty,
-            existboxorderqty: remainingBoxQty,
+            existboxorderqty: remainingBoxQty,      
+            grnQty: alreadyReceived,
+            grnBoxQty: Math.floor(
+              alreadyReceived / piecesPerBox
+            ),
+            forecloseUomQty: Number(item?.forecloseUom || 0),
 
             inventoryId: item?.inventoryId
               ? {
-                  ...item?.inventoryId,
-                  intransitQty: intransitQty,
-                }
+                ...item?.inventoryId,
+                intransitQty: intransitQty,
+              }
               : null,
+
           };
         } catch (error) {
           console.error("Error processing item:", error);
@@ -116,18 +113,16 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
             existboxorderqty: 0,
             inventoryId: item?.inventoryId
               ? {
-                  ...item?.inventoryId,
-                  intransitQty: 0,
-                }
+                ...item?.inventoryId,
+                intransitQty: 0,
+              }
               : null,
           };
         }
       })
     );
 
-    // =========================
-    // ✅ PRODUCT NORMS (UNCHANGED)
-    // =========================
+ 
     lineItems = await Promise.all(
       lineItems.map(async (item) => {
         try {
