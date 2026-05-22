@@ -1963,6 +1963,195 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               break;
             }
+            case "price-collection": {
+              console.log("Processing Collection Price CSV");
+
+              const collectionCodes = new Set();
+              const skippedRowsForCollectionPrice = [];
+
+              for (const row of results) {
+                if (row["Collection Code"]) {
+                  collectionCodes.add(String(row["Collection Code"]).trim());
+                }
+              }
+
+              const collections = await Collection.find({
+                code: { $in: Array.from(collectionCodes) },
+              })
+                .select("code _id")
+                .lean();
+
+              const collectionMap = new Map(
+                collections.map((collection) => [
+                  String(collection.code).trim(),
+                  collection._id,
+                ]),
+              );
+
+              const products = await Product.find({
+                collection_id: { $in: collections.map((item) => item._id) },
+              })
+                .select("collection_id product_code _id")
+                .lean();
+
+              const productsByCollectionId = new Map();
+              products.forEach((product) => {
+                const collectionIdKey = String(product.collection_id);
+                if (!productsByCollectionId.has(collectionIdKey)) {
+                  productsByCollectionId.set(collectionIdKey, []);
+                }
+                productsByCollectionId.get(collectionIdKey).push(product);
+              });
+
+              const priceUpdates = [];
+              let totalProductsMatched = 0;
+              let totalPricesMatched = 0;
+              const now = new Date();
+
+              for (const row of results) {
+                const collectionCode = row["Collection Code"]
+                  ? String(row["Collection Code"]).trim()
+                  : "";
+                const L1DiscountPercentage = row["L1(%)"];
+                const L2DiscountPercentage = row["L2(%)"];
+                const L1DiscountPercentageNumber = Number(
+                  L1DiscountPercentage || 0,
+                );
+                const L2DiscountPercentageNumber = Number(
+                  L2DiscountPercentage || 0,
+                );
+
+                if (!collectionCode) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Missing required fields (Collection Code)",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(L1DiscountPercentageNumber) ||
+                  L1DiscountPercentageNumber < 0 ||
+                  L1DiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Invalid L1 Discount Percentage",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(L2DiscountPercentageNumber) ||
+                  L2DiscountPercentageNumber < 0 ||
+                  L2DiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Invalid L2 Discount Percentage",
+                  });
+                  continue;
+                }
+
+                const collectionId = collectionMap.get(collectionCode);
+                if (!collectionId) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Collection not found",
+                  });
+                  continue;
+                }
+
+                const matchedProducts =
+                  productsByCollectionId.get(String(collectionId)) || [];
+
+                if (matchedProducts.length === 0) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "No products found for collection",
+                  });
+                  continue;
+                }
+
+                totalProductsMatched += matchedProducts.length;
+
+                const productIds = matchedProducts.map((product) => product._id);
+                const activePrices = await Price.find({
+                  productId: { $in: productIds },
+                  price_type: "national",
+                  regionId: null,
+                  distributorId: null,
+                  status: true,
+                  $or: [
+                    { expiresAt: { $exists: false } },
+                    { expiresAt: null },
+                    { expiresAt: { $gte: now } },
+                  ],
+                })
+                  .select("_id mrp_price")
+                  .lean();
+
+                if (activePrices.length === 0) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason:
+                      "No active national prices found for collection products",
+                  });
+                  continue;
+                }
+
+                totalPricesMatched += activePrices.length;
+
+                activePrices.forEach((price) => {
+                  const mrpNumber = Number(price.mrp_price);
+
+                  if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
+                    return;
+                  }
+
+                  priceUpdates.push({
+                    updateOne: {
+                      filter: { _id: price._id },
+                      update: {
+                        $set: {
+                          dlp_price: Number(
+                            (
+                              mrpNumber -
+                              (mrpNumber * L1DiscountPercentageNumber) / 100
+                            ).toFixed(2),
+                          ),
+                          rlp_price: Number(
+                            (
+                              mrpNumber -
+                              (mrpNumber * L2DiscountPercentageNumber) / 100
+                            ).toFixed(2),
+                          ),
+                          L1DiscountPercentage: L1DiscountPercentageNumber,
+                          L2DiscountPercentage: L2DiscountPercentageNumber,
+                        },
+                      },
+                    },
+                  });
+                });
+              }
+
+              let modifiedPrices = 0;
+              if (priceUpdates.length > 0) {
+                const updateResult = await Price.bulkWrite(priceUpdates);
+                modifiedPrices = updateResult.modifiedCount;
+              }
+
+              resp = {
+                totalRows: results.length,
+                totalProductsMatched,
+                totalPricesMatched,
+                priceUpdatesPrepared: priceUpdates.length,
+                modifiedPrices,
+              };
+              skippedRows = skippedRowsForCollectionPrice;
+
+              break;
+            }
             case "Distributor": {
               console.log("Processing Distributor CSV");
 
