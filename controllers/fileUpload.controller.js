@@ -32,12 +32,12 @@ const generateCodesInBatch = async (prefix, count) => {
   const counter = await Counter.findOneAndUpdate(
     { codeType: prefix },
     { $inc: { seq: count } },
-    { new: true, upsert: true }
+    { new: true, upsert: true },
   );
   const start = counter.seq - count + 1;
   return Array.from(
     { length: count },
-    (_, i) => `${prefix}-${(start + i).toString().padStart(3, "0")}`
+    (_, i) => `${prefix}-${(start + i).toString().padStart(3, "0")}`,
   );
 };
 
@@ -124,7 +124,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 (row) =>
                   row["State Name"] &&
                   row["Zone Code"] &&
-                  !processedStateNames.has(row["State Name"].trim())
+                  !processedStateNames.has(row["State Name"].trim()),
               );
 
               if (validStates.length > 0) {
@@ -136,7 +136,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       code: StateCode,
                       zoneId: row["Zone Code"],
                     };
-                  })
+                  }),
                 );
 
                 resp = await State.insertMany(stateDocs);
@@ -218,7 +218,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   row["Zone Code"] &&
                   row["Region Name"] &&
                   row["State Code"] &&
-                  !processedRegionNames.has(row["Region Name"].trim())
+                  !processedRegionNames.has(row["Region Name"].trim()),
               );
 
               if (validRegions.length > 0) {
@@ -231,7 +231,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       zoneId: row["Zone Code"],
                       stateId: row["State Code"],
                     };
-                  })
+                  }),
                 );
 
                 resp = await Region.insertMany(regionDocs);
@@ -268,7 +268,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validBrands = results.filter(
                 (row) =>
                   row["Brand Name"] &&
-                  !processedBrandNames.has(row["Brand Name"].trim())
+                  !processedBrandNames.has(row["Brand Name"].trim()),
               );
 
               if (validBrands.length > 0) {
@@ -282,7 +282,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       slug: row["Slug"]?.trim() || null,
                       status: true,
                     };
-                  })
+                  }),
                 );
 
                 resp = await Brand.insertMany(brandDocs);
@@ -319,7 +319,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validCategories = results.filter(
                 (row) =>
                   row["Category Name"] &&
-                  !processedCategoryNames.has(row["Category Name"].trim())
+                  !processedCategoryNames.has(row["Category Name"].trim()),
               );
               if (validCategories.length > 0) {
                 const categoryDocs = await Promise.all(
@@ -333,7 +333,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         : null,
                       slug: row.slug || null,
                     };
-                  })
+                  }),
                 );
 
                 resp = await Category.insertMany(categoryDocs);
@@ -399,7 +399,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 (row) =>
                   row["Collection Name"] &&
                   row["Category Code"] &&
-                  !processedCollectionNames.has(row["Collection Name"].trim())
+                  !processedCollectionNames.has(row["Collection Name"].trim()),
               );
 
               if (validCollections.length > 0) {
@@ -418,7 +418,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         ? row["Collection Description"].trim()
                         : null,
                     };
-                  })
+                  }),
                 );
 
                 resp = await Collection.insertMany(collectionDocs);
@@ -467,7 +467,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 });
 
                 console.log(
-                  `Found unique codes - Categories: ${uniqueCodes.categories.size}, Collections: ${uniqueCodes.collections.size}, Brands: ${uniqueCodes.brands.size}, SubBrands: ${uniqueCodes.subBrands.size}, Suppliers: ${uniqueCodes.suppliers.size}, Products: ${uniqueCodes.products.size}`
+                  `Found unique codes - Categories: ${uniqueCodes.categories.size}, Collections: ${uniqueCodes.collections.size}, Brands: ${uniqueCodes.brands.size}, SubBrands: ${uniqueCodes.subBrands.size}, Suppliers: ${uniqueCodes.suppliers.size}, Products: ${uniqueCodes.products.size}`,
                 );
 
                 // Step 2: Batch fetch related entities
@@ -513,22 +513,22 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   categories: new Map(
-                    categories.map((cat) => [cat.code, cat._id])
+                    categories.map((cat) => [cat.code, cat._id]),
                   ),
                   collections: new Map(
-                    collections.map((col) => [col.code, col._id])
+                    collections.map((col) => [col.code, col._id]),
                   ),
                   brands: new Map(
-                    brands.map((brand) => [brand.code, brand._id])
+                    brands.map((brand) => [brand.code, brand._id]),
                   ),
                   subBrands: new Map(
-                    subBrands.map((sub) => [sub.code, sub._id])
+                    subBrands.map((sub) => [sub.code, sub._id]),
                   ),
                   suppliers: new Map(
-                    suppliers.map((sup) => [sup.supplierCode, sup._id])
+                    suppliers.map((sup) => [sup.supplierCode, sup._id]),
                   ),
                   existingProducts: new Set(
-                    existingProducts.map((prod) => prod.product_code)
+                    existingProducts.map((prod) => prod.product_code),
                   ),
                 };
 
@@ -555,14 +555,16 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 ) {
                   const batch = results.slice(
                     batchStart,
-                    batchStart + BATCH_SIZE
+                    batchStart + BATCH_SIZE,
                   );
                   const productsToInsert = [];
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
-                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1
-                    }-${Math.min(batchStart + BATCH_SIZE, results.length)})`
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
+                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${
+                      batchStart + 1
+                    }-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
                   );
 
                   // Process each row in the batch
@@ -572,14 +574,13 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     row.index = globalIndex + 1;
                     totalProcessed++;
 
-
                     // Quick validation
                     const missingFields = requiredFields.filter(
-                      (field) => !row[field]?.trim()
+                      (field) => !row[field]?.trim(),
                     );
                     if (missingFields.length > 0) {
                       row.reason = `Missing required fields: ${missingFields.join(
-                        ", "
+                        ", ",
                       )}`;
                       skippedRows.push({ ...row });
                       totalSkipped++;
@@ -599,19 +600,19 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     // Lookup related entities
                     const categoryId = lookupMaps.categories.get(
-                      row["Category Code"].trim()
+                      row["Category Code"].trim(),
                     );
                     const collectionId = lookupMaps.collections.get(
-                      row["Collection Code"].trim()
+                      row["Collection Code"].trim(),
                     );
                     const brandId = lookupMaps.brands.get(
-                      row["Brand Code"].trim()
+                      row["Brand Code"].trim(),
                     );
                     const subBrandId = lookupMaps.subBrands.get(
-                      row["Sub Brand Code"].trim()
+                      row["Sub Brand Code"].trim(),
                     );
                     const supplierId = lookupMaps.suppliers.get(
-                      row["Supplier Code"].trim()
+                      row["Supplier Code"].trim(),
                     );
 
                     if (
@@ -656,7 +657,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       img_path: safeTrim(row["Image Path"]),
                       product_type: safeTrim(row["Product Type"]),
                       product_valuation_type: safeTrim(
-                        row["Product Valuation Type"]
+                        row["Product Valuation Type"],
                       ),
                       product_hsn_code: safeTrim(row["Product HSN Code"]),
                       base_point: safeTrim(row["Base Points"]),
@@ -674,7 +675,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   // Step 5: Bulk insert in smaller chunks
                   if (productsToInsert.length > 0) {
                     console.log(
-                      `Inserting ${productsToInsert.length} products from current batch...`
+                      `Inserting ${productsToInsert.length} products from current batch...`,
                     );
 
                     // Insert in smaller chunks to avoid MongoDB limits
@@ -685,7 +686,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     ) {
                       const chunk = productsToInsert.slice(
                         chunkStart,
-                        chunkStart + DB_BATCH_SIZE
+                        chunkStart + DB_BATCH_SIZE,
                       );
 
                       try {
@@ -698,7 +699,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         resp.push(...insertResult);
 
                         console.log(
-                          `Chunk inserted: ${insertResult.length} products (Total: ${totalInserted})`
+                          `Chunk inserted: ${insertResult.length} products (Total: ${totalInserted})`,
                         );
                       } catch (error) {
                         console.error(`Chunk insert error:`, error.message);
@@ -720,7 +721,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           });
 
                           console.log(
-                            `Partial success: ${successCount} inserted, ${error.writeErrors.length} failed`
+                            `Partial success: ${successCount} inserted, ${error.writeErrors.length} failed`,
                           );
                         } else {
                           // Complete chunk failure
@@ -743,7 +744,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     100
                   ).toFixed(1);
                   console.log(
-                    `Batch completed. Progress: ${progress}% (${totalProcessed}/${results.length} processed, ${totalInserted} inserted, ${totalSkipped} skipped)`
+                    `Batch completed. Progress: ${progress}% (${totalProcessed}/${results.length} processed, ${totalInserted} inserted, ${totalSkipped} skipped)`,
                   );
 
                   // Optional: Add small delay to prevent overwhelming the database
@@ -760,12 +761,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   `Success Rate: ${(
                     (totalInserted / totalProcessed) *
                     100
-                  ).toFixed(2)}%`
+                  ).toFixed(2)}%`,
                 );
               } catch (error) {
                 console.error(
                   "Critical error during product processing:",
-                  error
+                  error,
                 );
                 throw error; // Re-throw to handle at higher level
               }
@@ -1082,7 +1083,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
             //   break;
             // }
-             case "Price": {
+            case "Price": {
               console.log("Processing Price CSV");
 
               // 1. Collect unique codes for batch DB queries (trimmed)
@@ -1118,13 +1119,13 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               // 3. Create lookup maps for quick access
               const regionMap = new Map(
-                regions.map((r) => [r.code.trim(), r._id])
+                regions.map((r) => [r.code.trim(), r._id]),
               );
               const productMap = new Map(
-                products.map((p) => [p.product_code.trim(), p._id])
+                products.map((p) => [p.product_code.trim(), p._id]),
               );
               const distributorMap = new Map(
-                distributors.map((d) => [d.dbCode.trim(), d._id])
+                distributors.map((d) => [d.dbCode.trim(), d._id]),
               );
 
               // 4. Pre-validate rows and collect valid combinations for existing price lookup
@@ -1145,12 +1146,17 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   : "";
                 const mrpNumber = Number(mrp);
                 const customBasicDiscountPercentageNumber = Number(
-                  customBasicDiscountPercentage || 0
+                  customBasicDiscountPercentage || 0,
                 );
 
                 // Basic field validation - Price CSV is always national now
                 const isNationalPricing = !regionCode && !distributorCode;
-                if (!productCode || mrp === undefined || mrp === null || !effectiveDate) {
+                if (
+                  !productCode ||
+                  mrp === undefined ||
+                  mrp === null ||
+                  !effectiveDate
+                ) {
                   skippedRowsForPrice.push({
                     ...row,
                     reason:
@@ -1226,7 +1232,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   .tz(
                     parsedDate.format("YYYY-MM-DD"),
                     "YYYY-MM-DD",
-                    "Asia/Kolkata"
+                    "Asia/Kolkata",
                   )
                   .startOf("day")
                   .toDate();
@@ -1266,7 +1272,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 });
               }
               console.log(
-                `Pre-validation complete: ${preValidatedRows.length} valid, ${skippedRowsForPrice.length} skipped (basic validation)`
+                `Pre-validation complete: ${preValidatedRows.length} valid, ${skippedRowsForPrice.length} skipped (basic validation)`,
               );
 
               // 5. Batch fetch all existing prices for valid combinations
@@ -1288,8 +1294,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 existingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.regionId || "null"}_${price.distributorId || "null"
-                    }`;
+                  const key = `${price.productId}_${price.regionId || "null"}_${
+                    price.distributorId || "null"
+                  }`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1298,13 +1305,14 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               }
 
               console.log(
-                `Found ${existingPricesMap.size} existing price combinations`
+                `Found ${existingPricesMap.size} existing price combinations`,
               ); // 6. Final validation with existing price checks and date validation
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.regionId || "null"
-                  }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1352,14 +1360,14 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 });
               }
               console.log(
-                `Final validation complete: ${validRows.length} valid for insertion, ${skippedRowsForPrice.length} total skipped`
+                `Final validation complete: ${validRows.length} valid for insertion, ${skippedRowsForPrice.length} total skipped`,
               ); // 7. Process valid rows and handle existing price expiration
               let insertedPrices = [];
               if (validRows.length > 0) {
                 // Generate all codes in batch for better performance
                 const codes = await generateCodesInBatch(
                   "PR",
-                  validRows.length
+                  validRows.length,
                 );
 
                 const priceDocs = validRows.map((row, idx) => ({
@@ -1375,7 +1383,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       (row.mrpNumber *
                         row.customBasicDiscountPercentageNumber) /
                         100
-                    ).toFixed(2)
+                    ).toFixed(2),
                   ),
                   customBasicDiscountPercentage:
                     row.customBasicDiscountPercentageNumber,
@@ -1417,7 +1425,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 if (priceUpdates.length > 0) {
                   await Price.bulkWrite(priceUpdates);
                   console.log(
-                    `Updated ${priceUpdates.length} existing prices with expiration dates`
+                    `Updated ${priceUpdates.length} existing prices with expiration dates`,
                   );
                 }
               } else {
@@ -1430,7 +1438,463 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               break;
             }
+            case "MRP_Price": {
+              console.log("Processing Price CSV");
 
+              // 1. Collect unique codes for batch DB queries (trimmed)
+              const regionCodes = new Set();
+              const productCodes = new Set();
+              const distributorCodes = new Set();
+
+              for (const row of results) {
+                if (row["Region Code"])
+                  regionCodes.add(String(row["Region Code"]).trim());
+                if (row["Product Code"])
+                  productCodes.add(String(row["Product Code"]).trim());
+                if (row["Distributor Code"])
+                  distributorCodes.add(String(row["Distributor Code"]).trim());
+              }
+
+              // 2. Fetch all required docs in parallel
+              const [regions, products, distributors] = await Promise.all([
+                Region.find({ code: { $in: Array.from(regionCodes) } })
+                  .select("code _id")
+                  .lean(),
+                Product.find({
+                  product_code: { $in: Array.from(productCodes) },
+                })
+                  .select("product_code _id")
+                  .lean(),
+                Distributor.find({
+                  dbCode: { $in: Array.from(distributorCodes) },
+                })
+                  .select("dbCode _id")
+                  .lean(),
+              ]);
+
+              // 3. Create lookup maps for quick access
+              const regionMap = new Map(
+                regions.map((r) => [String(r.code).trim(), r._id]),
+              );
+              const productMap = new Map(
+                products.map((p) => [String(p.product_code).trim(), p._id]),
+              );
+              const distributorMap = new Map(
+                distributors.map((d) => [String(d.dbCode).trim(), d._id]),
+              );
+
+              // 4. Pre-validate rows and collect valid combinations for existing price lookup
+              const skippedRowsForPrice = [];
+              const preValidatedRows = [];
+              const dateToday = new Date();
+              const todayStart = moment(dateToday)
+                .tz("Asia/Kolkata")
+                .startOf("day")
+                .toDate();
+              const validCombinations = [];
+
+              for (const row of results) {
+                const regionCode = row["Region Code"]
+                  ? String(row["Region Code"]).trim()
+                  : "";
+                const productCode = row["Product Code"]
+                  ? String(row["Product Code"]).trim()
+                  : "";
+                const distributorCode = row["Distributor Code"]
+                  ? String(row["Distributor Code"]).trim()
+                  : "";
+                const mrp = row["MRP"];
+                const L1DiscountPercentage = row["L1(%)"];
+                const L2DiscountPercentage = row["L2(%)"];
+                const effectiveDate = row["Effective Date"]
+                  ? String(row["Effective Date"]).trim()
+                  : "";
+                const mrpNumber = Number(mrp);
+                const L1DiscountPercentageNumber = Number(
+                  L1DiscountPercentage || 0,
+                );
+                const L2DiscountPercentageNumber = Number(
+                  L2DiscountPercentage || 0,
+                );
+
+                const priceType = distributorCode
+                  ? "distributor"
+                  : regionCode
+                    ? "regional"
+                    : "national";
+                const isNationalPricing = priceType === "national";
+                if (
+                  !productCode ||
+                  mrp === undefined ||
+                  mrp === null ||
+                  (!isNationalPricing && !effectiveDate)
+                ) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason:
+                      "Missing required fields (Product Code, MRP, Effective Date)",
+                  });
+                  continue;
+                }
+
+                if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid MRP",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(L1DiscountPercentageNumber) ||
+                  L1DiscountPercentageNumber < 0 ||
+                  L1DiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid L1 Discount Percentage",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(L2DiscountPercentageNumber) ||
+                  L2DiscountPercentageNumber < 0 ||
+                  L2DiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid L2 Discount Percentage",
+                  });
+                  continue;
+                }
+
+                // Entity existence validation
+                const regionId = regionCode ? regionMap.get(regionCode) : null;
+                const productId = productMap.get(productCode);
+                const distributorId = distributorCode
+                  ? distributorMap.get(distributorCode)
+                  : null;
+
+                if (!productId) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Product not found",
+                  });
+                  continue;
+                }
+
+                if (regionCode && !regionId) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Region not found",
+                  });
+                  continue;
+                }
+
+                // For distributor pricing, distributor must exist
+                if (distributorCode && !distributorId) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Distributor not found",
+                  });
+                  continue;
+                }
+
+                // Date validation
+                let effectiveDateParsed = todayStart;
+                if (effectiveDate) {
+                  const parsedDate = moment(
+                    effectiveDate,
+                    "DD-MM-YYYY",
+                    true,
+                  );
+                  if (!parsedDate.isValid()) {
+                    skippedRowsForPrice.push({
+                      ...row,
+                      reason: "Invalid Effective Date",
+                    });
+                    continue;
+                  }
+                  effectiveDateParsed = moment
+                    .tz(
+                      parsedDate.format("YYYY-MM-DD"),
+                      "YYYY-MM-DD",
+                      "Asia/Kolkata",
+                    )
+                    .startOf("day")
+                    .toDate();
+                }
+
+                // Note: Date validation will be done later after checking existing prices
+                // For now, just store the parsed date
+
+                // Store pre-validated row
+                const validatedRow = {
+                  ...row,
+                  regionId,
+                  productId,
+                  distributorId,
+                  priceType: priceType,
+                  mrpNumber,
+                  L1DiscountPercentageNumber,
+                  L2DiscountPercentageNumber,
+                  effectiveDate: effectiveDateParsed,
+                };
+
+                preValidatedRows.push(validatedRow);
+
+                // Collect combination for batch existing price lookup
+                validCombinations.push({
+                  productId,
+                  priceType,
+                  regionId: regionId || null,
+                  distributorId: distributorId || null,
+                });
+              }
+              console.log(
+                `Pre-validation complete: ${preValidatedRows.length} valid, ${skippedRowsForPrice.length} skipped (basic validation)`,
+              );
+
+              // 5. Batch fetch all existing prices for valid combinations
+              let existingPricesMap = new Map();
+              if (validCombinations.length > 0) {
+                const existingPricesQuery = validCombinations.map((combo) => ({
+                  productId: combo.productId,
+                  price_type: combo.priceType,
+                  regionId: combo.regionId,
+                  distributorId: combo.distributorId,
+                  status: true,
+                }));
+
+                const existingPrices = await Price.find({
+                  $or: existingPricesQuery,
+                })
+                  .select(
+                    "productId price_type regionId distributorId effective_date expiresAt _id",
+                  )
+                  .sort({ effective_date: -1 })
+                  .lean();
+
+                const activeExistingPrices = [];
+                const expiredPriceStatusUpdates = [];
+
+                for (const price of existingPrices) {
+                  const isExpiredRegionalPrice =
+                    price.price_type === "regional" &&
+                    price.expiresAt &&
+                    moment(price.expiresAt)
+                      .tz("Asia/Kolkata")
+                      .isSameOrBefore(dateToday);
+                  const isPastNationalPrice =
+                    price.price_type === "national" &&
+                    moment(price.effective_date)
+                      .tz("Asia/Kolkata")
+                      .isBefore(todayStart, "day");
+
+                  if (isExpiredRegionalPrice || isPastNationalPrice) {
+                    expiredPriceStatusUpdates.push({
+                      updateOne: {
+                        filter: {
+                          _id: price._id,
+                          productId: price.productId,
+                          price_type: price.price_type,
+                          regionId: price.regionId || null,
+                          distributorId: price.distributorId || null,
+                        },
+                        update: { $set: { status: false } },
+                      },
+                    });
+                    continue;
+                  }
+
+                  activeExistingPrices.push(price);
+                }
+
+                if (expiredPriceStatusUpdates.length > 0) {
+                  await Price.bulkWrite(expiredPriceStatusUpdates);
+                  console.log(
+                    `Deactivated ${expiredPriceStatusUpdates.length} expired or past active prices`,
+                  );
+                }
+
+                // Group existing prices by combination key
+                activeExistingPrices.forEach((price) => {
+                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${
+                    price.distributorId || "null"
+                  }`;
+                  if (!existingPricesMap.has(key)) {
+                    existingPricesMap.set(key, []);
+                  }
+                  existingPricesMap.get(key).push(price);
+                });
+              }
+
+              console.log(
+                `Found ${existingPricesMap.size} existing price combinations`,
+              ); // 6. Final validation with existing price checks and date validation
+              const validRows = [];
+
+              for (const row of preValidatedRows) {
+                const combinationKey = `${row.productId}_${row.priceType}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
+                const existingPrices =
+                  existingPricesMap.get(combinationKey) || [];
+
+                // Date validation based on existing prices
+                if (existingPrices.length > 0) {
+                  // If existing prices found, validate against latest price date
+                  const latestPrice = existingPrices[0]; // Already sorted by effective_date desc
+
+                  // Validate that new effective date is greater than latest existing price
+                  if (
+                    moment(latestPrice.effective_date)
+                      .tz("Asia/Kolkata")
+                      .isSameOrAfter(row.effectiveDate) &&
+                    row.SkipEffectiveDateCheck == "1"
+                  ) {
+                    skippedRowsForPrice.push({
+                      ...row,
+                      reason:
+                        "Price effective date should be greater than the latest existing price effective date",
+                    });
+                    continue;
+                  }
+                } else {
+                  // No existing prices found for this combination
+                  // Allow effective date to be in the past, but still validate it's not too far in the future
+                  // Only skip if the effective date is more than 1 year in the future (optional business rule)
+                  const oneYearFromNow = moment(dateToday)
+                    .add(1, "year")
+                    .toDate();
+                  if (row.effectiveDate > oneYearFromNow) {
+                    skippedRowsForPrice.push({
+                      ...row,
+                      reason:
+                        "Price effective date cannot be more than 1 year in the future",
+                    });
+                    continue;
+                  }
+                  // For new price combinations, effective date can be in the past or future (within reason)
+                }
+
+                // Add existing prices for later processing
+                validRows.push({
+                  ...row,
+                  existingPrices: existingPrices,
+                });
+              }
+              console.log(
+                `Final validation complete: ${validRows.length} valid for insertion, ${skippedRowsForPrice.length} total skipped`,
+              ); // 7. Process valid rows and handle existing price expiration
+              let insertedPrices = [];
+              if (validRows.length > 0) {
+                // Generate all codes in batch for better performance
+                const codes = await generateCodesInBatch(
+                  "PR",
+                  validRows.length,
+                );
+
+                const priceDocs = validRows.map((row, idx) => ({
+                  code: codes[idx],
+                  productId: row.productId,
+                  price_type: row.priceType,
+                  regionId: row.regionId,
+                  mrp_price: row.mrpNumber,
+                  dlp_price: Number(
+                    (
+                      row.mrpNumber -
+                      (row.mrpNumber * row.L1DiscountPercentageNumber) / 100
+                    ).toFixed(2),
+                  ),
+                  rlp_price: Number(
+                    (
+                      row.mrpNumber -
+                      (row.mrpNumber * row.L2DiscountPercentageNumber) / 100
+                    ).toFixed(2),
+                  ),
+                  L1DiscountPercentage: row.L1DiscountPercentageNumber,
+                  L2DiscountPercentage: row.L2DiscountPercentageNumber,
+                  effective_date: row.effectiveDate,
+                  distributorId: row.distributorId || null,
+                  createdBy: req.user._id,
+                }));
+
+                // Insert new prices
+                insertedPrices = await Price.insertMany(priceDocs);
+                console.log(`Inserted ${insertedPrices.length} new prices`);
+
+                // Prepare bulk updates for existing prices with expiration dates
+                const priceUpdates = [];
+                for (const row of validRows) {
+                  if (row.existingPrices && row.existingPrices.length > 0) {
+                    const expiresAt = moment(row.effectiveDate)
+                      .tz("Asia/Kolkata")
+                      .subtract(1, "day")
+                      .endOf("day")
+                      .toDate();
+
+                    for (const existingPrice of row.existingPrices) {
+                      const finalExpiresAt =
+                        existingPrice.expiresAt ?? expiresAt;
+                      const updateFields = {
+                        expiresAt: finalExpiresAt,
+                      };
+                      const existingEffectiveDate = moment(
+                        existingPrice.effective_date,
+                      ).tz("Asia/Kolkata");
+                      const isExpiredPrice = moment(finalExpiresAt)
+                        .tz("Asia/Kolkata")
+                        .isSameOrBefore(dateToday);
+                      const isPastNationalPrice =
+                        row.priceType === "national" &&
+                        existingEffectiveDate.isBefore(todayStart, "day");
+
+                      if (
+                        ((row.priceType === "regional" && isExpiredPrice) ||
+                          isPastNationalPrice) &&
+                        finalExpiresAt &&
+                        existingPrice.effective_date
+                      ) {
+                        updateFields.status = false;
+                      }
+
+                      priceUpdates.push({
+                        updateOne: {
+                          filter: {
+                            _id: existingPrice._id,
+                            productId: row.productId,
+                            price_type: row.priceType,
+                            regionId: row.regionId || null,
+                            distributorId: row.distributorId || null,
+                          },
+                          update: {
+                            $set: updateFields,
+                          },
+                        },
+                      });
+                    }
+                  }
+                }
+
+                // Execute bulk update for existing prices
+                if (priceUpdates.length > 0) {
+                  await Price.bulkWrite(priceUpdates);
+                  console.log(
+                    `Updated ${priceUpdates.length} existing prices with expiration dates`,
+                  );
+                }
+              } else {
+                console.warn("No valid results to save after filtering");
+              }
+
+              // 8. Return results
+              resp = insertedPrices || [];
+              skippedRows = skippedRowsForPrice || [];
+
+              break;
+            }
             case "Distributor": {
               console.log("Processing Distributor CSV");
 
@@ -1469,7 +1933,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Create lookup maps
                 const stateMap = new Map(states.map((s) => [s.slug.trim(), s])); // ✅ Changed from 'code' to 'slug'
                 const brandMap = new Map(
-                  brands.map((b) => [b.code.trim(), b._id])
+                  brands.map((b) => [b.code.trim(), b._id]),
                 );
 
                 // 3. Pre-validate rows
@@ -1536,7 +2000,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                   // Validate state and get region - ✅ Now using slug lookup
                   const state = stateMap.get(
-                    row["State Code (Required)"].trim()
+                    row["State Code (Required)"].trim(),
                   );
                   if (!state) {
                     skippedRowsForDistributor.push({
@@ -1613,7 +2077,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 console.log(
-                  `Pre-validation complete: ${validRows.length} valid, ${skippedRowsForDistributor.length} skipped`
+                  `Pre-validation complete: ${validRows.length} valid, ${skippedRowsForDistributor.length} skipped`,
                 );
 
                 // 4. Check for duplicate emails and dbCodes
@@ -1627,10 +2091,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   .lean();
 
                 const existingEmails = new Set(
-                  existingDistributors.map((d) => d.email)
+                  existingDistributors.map((d) => d.email),
                 );
                 const existingDbCodes = new Set(
-                  existingDistributors.map((d) => d.dbCode)
+                  existingDistributors.map((d) => d.dbCode),
                 );
 
                 const finalValidRows = validRows.filter((row) => {
@@ -1657,8 +2121,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 for (let i = 0; i < finalValidRows.length; i += BATCH_SIZE) {
                   const batch = finalValidRows.slice(i, i + BATCH_SIZE);
                   console.log(
-                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${batch.length
-                    }`
+                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${
+                      batch.length
+                    }`,
                   );
 
                   const batchPromises = batch.map(async (row) => {
@@ -1684,7 +2149,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     } catch (error) {
                       console.error(
                         `Error processing row ${row.rowNum}:`,
-                        error
+                        error,
                       );
                       skippedRowsForDistributor.push({
                         row: row.rowNum,
@@ -1703,7 +2168,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 console.log(`- Total rows processed: ${results.length}`);
                 console.log(`- Successfully inserted: ${totalInserted}`);
                 console.log(
-                  `- Skipped rows: ${skippedRowsForDistributor.length}`
+                  `- Skipped rows: ${skippedRowsForDistributor.length}`,
                 );
 
                 resp = insertedDistributors;
@@ -1711,7 +2176,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               } catch (error) {
                 console.error("Error during distributor processing:", error);
                 throw new Error(
-                  error?.message || "Failed to process distributors"
+                  error?.message || "Failed to process distributors",
                 );
               }
 
@@ -1721,15 +2186,14 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
             case "outlet": {
               console.log("Processing Outlet CSV");
               const getMobile1 = (row) =>
-                (row["Mobile Number"] ||
-                  row["Mobile 1"] ||
-                  "").toString().trim();
-
+                (row["Mobile Number"] || row["Mobile 1"] || "")
+                  .toString()
+                  .trim();
 
               const getMobile2 = (row) =>
-                (row["Alternate Number"] ||
-                  row["Mobile 2"] ||
-                  "").toString().trim();
+                (row["Alternate Number"] || row["Mobile 2"] || "")
+                  .toString()
+                  .trim();
 
               // Batch processing configuration
               const BATCH_SIZE = 1000;
@@ -1785,7 +2249,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 });
 
                 console.log(
-                  `Found unique codes - Employees: ${uniqueCodes.employees.size}, Beats: ${uniqueCodes.beats.size}, Zones: ${uniqueCodes.zones.size}, States: ${uniqueCodes.states.size}, Districts: ${uniqueCodes.districts.size}, Brands: ${uniqueCodes.brands.size}, Outlets: ${uniqueCodes.outlets.size}, OutletUIDs: ${uniqueCodes.outletUIDs.size}, Mobiles: ${uniqueCodes.mobiles.size}`
+                  `Found unique codes - Employees: ${uniqueCodes.employees.size}, Beats: ${uniqueCodes.beats.size}, Zones: ${uniqueCodes.zones.size}, States: ${uniqueCodes.states.size}, Districts: ${uniqueCodes.districts.size}, Brands: ${uniqueCodes.brands.size}, Outlets: ${uniqueCodes.outlets.size}, OutletUIDs: ${uniqueCodes.outletUIDs.size}, Mobiles: ${uniqueCodes.mobiles.size}`,
                 );
 
                 // Step 2: Batch fetch related entities
@@ -1859,53 +2323,53 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   employees: new Map(
-                    employees.map((emp) => [emp.empId, emp._id])
+                    employees.map((emp) => [emp.empId, emp._id]),
                   ),
                   beats: new Map(beats.map((beat) => [beat.code, beat._id])),
                   zones: new Map(zones.map((zone) => [zone.code, zone._id])),
                   states: new Map(
-                    states.map((state) => [state.slug, state._id])
+                    states.map((state) => [state.slug, state._id]),
                   ),
                   regionsByStateId: new Map(
                     allRegions.map((region) => [
                       region.stateId.toString(),
                       region._id,
-                    ])
+                    ]),
                   ),
                   districts: new Map(
-                    districts.map((district) => [district.code, district._id])
+                    districts.map((district) => [district.code, district._id]),
                   ),
                   brands: new Map(
-                    brands.map((brand) => [brand.code, brand._id])
+                    brands.map((brand) => [brand.code, brand._id]),
                   ),
                   existingOutletCodes: new Set(
                     existingOutlets
                       .map((outlet) => outlet.outletCode)
-                      .filter(Boolean)
+                      .filter(Boolean),
                   ),
                   existingOutletUIDs: new Set(
                     existingOutlets
                       .map((outlet) => outlet.outletUID)
-                      .filter(Boolean)
+                      .filter(Boolean),
                   ),
                   existingOutletCodesApproved: new Set(
                     existingOutletsApproved
                       .map((outlet) => outlet.outletCode)
-                      .filter(Boolean)
+                      .filter(Boolean),
                   ),
                   existingOutletUIDsApproved: new Set(
                     existingOutletsApproved
                       .map((outlet) => outlet.outletUID)
-                      .filter(Boolean)
+                      .filter(Boolean),
                   ),
                   existingMobile1s: new Set(
                     existingOutletsWithMobiles
                       .map((outlet) => outlet.mobile1)
-                      .filter(Boolean)
+                      .filter(Boolean),
                   ),
                 };
 
-                console.log("Lookup maps created successfully",lookupMaps);
+                console.log("Lookup maps created successfully", lookupMaps);
 
                 // Required fields for outlet
                 const requiredFields = [
@@ -1924,7 +2388,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 ) {
                   const batch = results.slice(
                     batchStart,
-                    batchStart + BATCH_SIZE
+                    batchStart + BATCH_SIZE,
                   );
                   const outletsToInsert = [];
 
@@ -1934,7 +2398,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const batchMobile1s = new Set();
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1}-${Math.min(batchStart + BATCH_SIZE, results.length)})`
+                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1}-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
                   );
 
                   // Process each row in the batch
@@ -1946,7 +2410,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     // Quick validation for required fields
                     const missingFields = requiredFields.filter(
-                      (field) => !row[field]?.trim()
+                      (field) => !row[field]?.trim(),
                     );
 
                     if (missingFields.length > 0) {
@@ -1991,7 +2455,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     }
 
                     // Check for existing outlet code in approved outlets
-                    if (lookupMaps.existingOutletCodesApproved.has(outletCode)) {
+                    if (
+                      lookupMaps.existingOutletCodesApproved.has(outletCode)
+                    ) {
                       skippedRows.push({
                         ...row,
                         reason: `Outlet with code ${outletCode} already exists in approved outlets at row ${row.index}`,
@@ -2029,12 +2495,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       continue;
                     }
 
-
                     // Check for duplicate mobile1
                     const mobile1 = getMobile1(row);
 
                     if (mobile1) {
-                      console.log("Mobile NO", mobile1)
+                      console.log("Mobile NO", mobile1);
                       // Validate format
                       const mobileRegex = /^[6-9]\d{9}$/;
                       if (!mobileRegex.test(mobile1)) {
@@ -2098,7 +2563,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     // Validate GSTIN (15 character format)
                     const gstin = row["GSTIN"]?.trim();
                     if (gstin) {
-                      const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/i;
+                      const gstinRegex =
+                        /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/i;
                       if (!gstinRegex.test(gstin)) {
                         skippedRows.push({
                           ...row,
@@ -2121,11 +2587,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     // Lookup foreign key references
                     const employeeId = lookupMaps.employees.get(
-                      row["Employee Code"].trim()
+                      row["Employee Code"].trim(),
                     );
 
                     const stateId = lookupMaps.states.get(
-                      row["State Code"].trim()
+                      row["State Code"].trim(),
                     );
 
                     // Optional references
@@ -2160,11 +2626,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         beatCodeRaw
                           .split(",")
                           .map((code) => code.trim())
-                          .filter(Boolean)
+                          .filter(Boolean),
                       ),
                     ];
-
-                    
 
                     const beatIds = [];
                     const invalidBeatCodes = [];
@@ -2222,7 +2686,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     const validCategories = ["ECONOMY", "PREMIUM", "RETAILER"];
 
                     const categoryOfOutlet =
-                      row["Category Of Outlet"]?.trim()?.toUpperCase() || "RETAILER";
+                      row["Category Of Outlet"]?.trim()?.toUpperCase() ||
+                      "RETAILER";
 
                     if (!validCategories.includes(categoryOfOutlet)) {
                       skippedRows.push({
@@ -2232,7 +2697,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       totalSkipped++;
                       continue;
                     }
-
 
                     // Validate existing retailer
                     let existingRetailerBool = false;
@@ -2326,9 +2790,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         sellingBrands: sellingBrands,
                         competitorBrands: row["Competitor Brands"]
                           ? row["Competitor Brands"]
-                            .split(",")
-                            .map((brand) => brand.trim())
-                            .filter((brand) => brand.length > 0)
+                              .split(",")
+                              .map((brand) => brand.trim())
+                              .filter((brand) => brand.length > 0)
                           : [],
                         existingRetailer: existingRetailerBool,
                         outletStatus: "Approved",
@@ -2348,7 +2812,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     } catch (error) {
                       console.error(
                         `Error processing row ${row.index}:`,
-                        error.message
+                        error.message,
                       );
                       skippedRows.push({
                         ...row,
@@ -2358,8 +2822,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     }
                   }
 
-                  console.log(" OUTlet To IOnsert ",outletsToInsert);
-                  console.log(" OUTlet To IOnsert ",outletsToInsert.length);
+                  console.log(" OUTlet To IOnsert ", outletsToInsert);
+                  console.log(" OUTlet To IOnsert ", outletsToInsert.length);
 
                   // Step 5: Bulk insert outlets
                   if (outletsToInsert.length > 0) {
@@ -2369,7 +2833,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         {
                           ordered: false,
                           writeConcern: { w: 1, j: false },
-                        }
+                        },
                       );
                       console.log("Insert Result:", insertResult);
 
@@ -2378,7 +2842,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       resp.push(...insertResult);
 
                       console.log(
-                        `Batch inserted: ${insertResult.length} outlets (Total: ${totalInserted})`
+                        `Batch inserted: ${insertResult.length} outlets (Total: ${totalInserted})`,
                       );
                     } catch (error) {
                       console.error(`Batch insert error:`, error.message);
@@ -2415,10 +2879,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                   // Progress logging
                   const progress = (
-                    ((batchStart + batch.length) / results.length) * 100
+                    ((batchStart + batch.length) / results.length) *
+                    100
                   ).toFixed(1);
                   console.log(
-                    `Batch completed. Progress: ${progress}% (${totalProcessed}/${results.length} processed, ${totalInserted} inserted, ${totalSkipped} skipped)`
+                    `Batch completed. Progress: ${progress}% (${totalProcessed}/${results.length} processed, ${totalInserted} inserted, ${totalSkipped} skipped)`,
                   );
 
                   // Optional delay
@@ -2432,7 +2897,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 console.log(`Successfully Inserted: ${totalInserted}`);
                 console.log(`Skipped/Failed: ${totalSkipped}`);
                 console.log(
-                  `Success Rate: ${((totalInserted / totalProcessed) * 100).toFixed(2)}%`
+                  `Success Rate: ${((totalInserted / totalProcessed) * 100).toFixed(2)}%`,
                 );
 
                 // Set resp if nothing was inserted
@@ -2440,7 +2905,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               } catch (error) {
                 console.error(
                   "Critical error during outlet processing:",
-                  error
+                  error,
                 );
                 throw error;
               }
@@ -2484,7 +2949,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               ]); // Step 3: Create lookup maps
               const regionMap = new Map(regions.map((r) => [r.code, r]));
               const distributorMap = new Map(
-                distributors.map((d) => [d.dbCode, d])
+                distributors.map((d) => [d.dbCode, d]),
               );
 
               // Create a map for existing beat combinations (name + regionId)
@@ -2499,10 +2964,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               });
 
               console.log(
-                `Found ${regions.length} regions and ${distributors.length} distributors in database`
+                `Found ${regions.length} regions and ${distributors.length} distributors in database`,
               );
               console.log(
-                `Found ${existingBeats.length} existing beats with matching names`
+                `Found ${existingBeats.length} existing beats with matching names`,
               );
 
               // Step 4: First pass - validate all rows
@@ -2599,10 +3064,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 ) {
                   skippedRowsForBeat.push({
                     ...row,
-                    reason: `Region name mismatch at row ${row.index
-                      }. Expected "${region.name}", got "${row[
-                        "Region Name"
-                      ].trim()}"`,
+                    reason: `Region name mismatch at row ${
+                      row.index
+                    }. Expected "${region.name}", got "${row[
+                      "Region Name"
+                    ].trim()}"`,
                   });
                   continue;
                 }
@@ -2634,7 +3100,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   skippedRowsForBeat.push({
                     ...row,
                     reason: `Distributor codes not found: ${invalidDistributorCodes.join(
-                      ", "
+                      ", ",
                     )} at row ${row.index}`,
                   });
                   continue;
@@ -2660,7 +3126,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     const beatWithDistributor = existingBeatsForNameRegion.find(
                       (beat) =>
                         beat.distributorId &&
-                        beat.distributorId.includes(distributor._id.toString())
+                        beat.distributorId.includes(distributor._id.toString()),
                     );
                     if (beatWithDistributor) {
                       conflictingDistributors.push(distributor.name);
@@ -2671,7 +3137,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     skippedRowsForBeat.push({
                       ...row,
                       reason: `Beat with name "${beatName}" already includes distributors: ${conflictingDistributors.join(
-                        ", "
+                        ", ",
                       )} in region "${region.name}" at row ${row.index}`,
                     });
                     continue;
@@ -2693,7 +3159,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   skippedRowsForBeat.push({
                     ...row,
                     reason: `Duplicate beat combination "${beatName}" for distributors: ${duplicateDistributors.join(
-                      ", "
+                      ", ",
                     )} in region "${region.name}" in CSV at row ${row.index}`,
                   });
                   continue;
@@ -2711,10 +3177,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               }
 
               console.log(
-                `Processing ${validRowsForProcessing.length} valid beats out of ${results.length} total rows`
+                `Processing ${validRowsForProcessing.length} valid beats out of ${results.length} total rows`,
               );
               console.log(
-                `Skipped ${skippedRowsForBeat.length} rows due to validation errors`
+                `Skipped ${skippedRowsForBeat.length} rows due to validation errors`,
               );
 
               // Step 5: Generate beat codes in batch and create beat documents
@@ -2724,7 +3190,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   // Generate beat codes in batch
                   const beatCodes = await generateCodesInBatch(
                     "BEAT",
-                    validRowsForProcessing.length
+                    validRowsForProcessing.length,
                   );
                   console.log(`Generated ${beatCodes.length} beat codes`);
 
@@ -2738,13 +3204,13 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       regionId: validRow.region._id,
                       distributorId: validRow.distributors.map((d) => d._id),
                       status: true,
-                    })
+                    }),
                   );
 
                   // Insert beats
                   insertedBeats = await Beat.insertMany(beatDocs);
                   console.log(
-                    `Successfully inserted ${insertedBeats.length} beats`
+                    `Successfully inserted ${insertedBeats.length} beats`,
                   );
                 } catch (insertError) {
                   console.error("Error inserting beats:", insertError);
@@ -2754,12 +3220,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     const duplicateKey = Object.keys(insertError.keyValue)[0];
                     const duplicateValue = insertError.keyValue[duplicateKey];
                     throw new Error(
-                      `Duplicate ${duplicateKey}: ${duplicateValue}. This beat may have been created by another process.`
+                      `Duplicate ${duplicateKey}: ${duplicateValue}. This beat may have been created by another process.`,
                     );
                   }
 
                   throw new Error(
-                    `Failed to insert beats: ${insertError.message}`
+                    `Failed to insert beats: ${insertError.message}`,
                   );
                 }
               } else {
@@ -2805,7 +3271,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     uniqueCodes.empIds.add(row["Employee ID"].trim());
                   if (row["Designation Code"]?.trim())
                     uniqueCodes.designations.add(
-                      row["Designation Code"].trim()
+                      row["Designation Code"].trim(),
                     );
                   if (row["State Code"]?.trim())
                     uniqueCodes.states.add(row["State Code"].trim());
@@ -2839,12 +3305,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     uniqueCodes.rmEmpIds.add(row["RM Employee ID"].trim());
                   if (row["RM Designation Code"]?.trim())
                     uniqueCodes.rmDesignations.add(
-                      row["RM Designation Code"].trim()
+                      row["RM Designation Code"].trim(),
                     );
                 });
 
                 console.log(
-                  `Found unique codes - EmpIds: ${uniqueCodes.empIds.size}, Designations: ${uniqueCodes.designations.size}, States: ${uniqueCodes.states.size}, Brands: ${uniqueCodes.brands.size}, Distributors: ${uniqueCodes.distributors.size}, Emails: ${uniqueCodes.emails.size}, RMEmpIds: ${uniqueCodes.rmEmpIds.size}, RMDesignations: ${uniqueCodes.rmDesignations.size}`
+                  `Found unique codes - EmpIds: ${uniqueCodes.empIds.size}, Designations: ${uniqueCodes.designations.size}, States: ${uniqueCodes.states.size}, Brands: ${uniqueCodes.brands.size}, Distributors: ${uniqueCodes.distributors.size}, Emails: ${uniqueCodes.emails.size}, RMEmpIds: ${uniqueCodes.rmEmpIds.size}, RMDesignations: ${uniqueCodes.rmDesignations.size}`,
                 );
 
                 // Step 2: Batch fetch related entities
@@ -2914,10 +3380,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   existingEmpIds: new Set(
-                    existingEmployees.map((emp) => emp.empId)
+                    existingEmployees.map((emp) => emp.empId),
                   ),
                   designations: new Map(
-                    designations.map((desg) => [desg.code, desg])
+                    designations.map((desg) => [desg.code, desg]),
                   ),
                   statesWithRelations: new Map(
                     statesWithRelations.map((state) => [
@@ -2930,36 +3396,36 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         zoneName: state.zoneId?.name,
                         zoneCode: state.zoneId?.code,
                       },
-                    ])
+                    ]),
                   ),
                   regionsByStateId: new Map(
                     regions.map((region) => [
                       region.stateId.toString(),
                       region._id,
-                    ])
+                    ]),
                   ),
                   brands: new Map(
-                    brands.map((brand) => [brand.code, brand._id])
+                    brands.map((brand) => [brand.code, brand._id]),
                   ),
                   distributors: new Map(
                     distributors?.map((dist) => {
                       // console.log(`Creating distributor map entry: ${dist?.dbCode} -> ${dist?._id}`);
                       return [dist?.dbCode, dist?._id];
-                    })
+                    }),
                   ),
                   existingEmails: new Set(
-                    existingEmails.map((emp) => emp.email?.toLowerCase())
+                    existingEmails.map((emp) => emp.email?.toLowerCase()),
                   ),
                   rmEmployees: new Map(
-                    rmEmployees.map((emp) => [emp.empId, emp])
+                    rmEmployees.map((emp) => [emp.empId, emp]),
                   ),
                   rmDesignations: new Map(
-                    rmDesignations.map((desg) => [desg.code, desg])
+                    rmDesignations.map((desg) => [desg.code, desg]),
                   ),
                 };
 
                 console.log(
-                  `Lookup maps created - Designations: ${lookupMaps.designations.size}, States: ${lookupMaps.statesWithRelations.size}, Regions: ${lookupMaps.regionsByStateId.size}, Brands: ${lookupMaps.brands.size}, Distributors: ${lookupMaps.distributors.size}, RMEmployees: ${lookupMaps.rmEmployees.size}, RMDesignations: ${lookupMaps.rmDesignations.size}`
+                  `Lookup maps created - Designations: ${lookupMaps.designations.size}, States: ${lookupMaps.statesWithRelations.size}, Regions: ${lookupMaps.regionsByStateId.size}, Brands: ${lookupMaps.brands.size}, Distributors: ${lookupMaps.distributors.size}, RMEmployees: ${lookupMaps.rmEmployees.size}, RMDesignations: ${lookupMaps.rmDesignations.size}`,
                 );
 
                 const skippedRowsForEmployee = [];
@@ -2972,13 +3438,14 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 ) {
                   const batchEnd = Math.min(
                     batchStart + BATCH_SIZE,
-                    results.length
+                    results.length,
                   );
                   const batch = results.slice(batchStart, batchEnd);
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
-                    }: rows ${batchStart + 1}-${batchEnd}`
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
+                    }: rows ${batchStart + 1}-${batchEnd}`,
                   );
 
                   const employeesToInsert = [];
@@ -3138,7 +3605,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           stateId = stateInfo._id;
                           zoneId = stateInfo.zoneId;
                           regionId = lookupMaps.regionsByStateId.get(
-                            stateId.toString()
+                            stateId.toString(),
                           );
                         } else {
                           skippedRowsForEmployee.push({
@@ -3175,7 +3642,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           skippedRowsForEmployee.push({
                             ...row,
                             reason: `Invalid Brand Code(s): ${invalidBrandCodes.join(
-                              ", "
+                              ", ",
                             )}`,
                           });
                           totalSkipped++;
@@ -3203,7 +3670,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           skippedRowsForEmployee.push({
                             ...row,
                             reason: `Invalid Distributor Code(s): ${invalidDistributorCodes.join(
-                              ", "
+                              ", ",
                             )}`,
                           });
                           totalSkipped++;
@@ -3224,7 +3691,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                             "DD-MM-YYYY",
                             "MM-DD-YYYY",
                           ],
-                          true
+                          true,
                         );
                         return date.isValid() ? date.toDate() : null;
                       };
@@ -3244,7 +3711,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           distributorId: id,
                           mappedDate: new Date(),
                           currentStatus: true,
-                        })
+                        }),
                       );
 
                       // Prepare employee document
@@ -3300,7 +3767,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     } catch (error) {
                       console.error(
                         `Error processing employee row ${totalProcessed}:`,
-                        error.message
+                        error.message,
                       );
                       skippedRowsForEmployee.push({
                         ...row,
@@ -3314,7 +3781,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   if (employeesToInsert.length > 0) {
                     try {
                       const employeeDocs = employeesToInsert.map(
-                        (item) => item.employeeDoc
+                        (item) => item.employeeDoc,
                       );
 
                       const insertResult = await Employee.insertMany(
@@ -3322,7 +3789,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         {
                           ordered: false,
                           writeConcern: { w: 1, j: false },
-                        }
+                        },
                       );
 
                       totalInserted += insertResult.length;
@@ -3335,7 +3802,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           employeeId: employee._id,
                           genPassword:
                             employeesToInsert[index].generatedPassword,
-                        })
+                        }),
                       );
 
                       await EmployeePassword.insertMany(passwordRecords, {
@@ -3385,12 +3852,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         }
 
                         console.log(
-                          `Created ${insertedMappings.length} employee mappings`
+                          `Created ${insertedMappings.length} employee mappings`,
                         );
                       }
 
                       console.log(
-                        `Batch inserted: ${insertResult.length} employees with passwords (Total: ${totalInserted})`
+                        `Batch inserted: ${insertResult.length} employees with passwords (Total: ${totalInserted})`,
                       );
                     } catch (error) {
                       console.error(`Batch insert error:`, error.message);
@@ -3411,12 +3878,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         });
 
                         console.log(
-                          `Partial batch insert: ${successCount} succeeded, ${failedCount} failed`
+                          `Partial batch insert: ${successCount} succeeded, ${failedCount} failed`,
                         );
                       } else {
                         totalSkipped += employeesToInsert.length;
                         console.error(
-                          `Full batch failed: ${employeesToInsert.length} employees`
+                          `Full batch failed: ${employeesToInsert.length} employees`,
                         );
                       }
                     }
@@ -3436,7 +3903,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   `Success Rate: ${(
                     (totalInserted / totalProcessed) *
                     100
-                  ).toFixed(2)}%`
+                  ).toFixed(2)}%`,
                 );
 
                 // Set resp and skippedRows
@@ -3445,7 +3912,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               } catch (error) {
                 console.error(
                   "Critical error during employee processing:",
-                  error
+                  error,
                 );
                 throw error;
               }
@@ -3487,17 +3954,17 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     .lean(),
                   Beat.find({ code: { $in: Array.from(beatCodes) } })
                     .select(
-                      "code _id employeeId beat_type distributorId isOccupied"
+                      "code _id employeeId beat_type distributorId isOccupied",
                     )
                     .lean(),
                 ]);
 
                 // 3. Create lookup maps for quick access
                 const employeeMap = new Map(
-                  employees.map((emp) => [emp.empId.trim(), emp])
+                  employees.map((emp) => [emp.empId.trim(), emp]),
                 );
                 const beatMap = new Map(
-                  beats.map((beat) => [beat.code.trim(), beat])
+                  beats.map((beat) => [beat.code.trim(), beat]),
                 );
 
                 // 4. Process each row with comprehensive validation
@@ -3552,7 +4019,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                       if (!beat) {
                         errorMessages.push(
-                          `Beat with code ${beatCode} not found`
+                          `Beat with code ${beatCode} not found`,
                         );
                         rowHasErrors = true;
                         continue;
@@ -3561,12 +4028,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       // Check if beat is already assigned to this employee
                       const employeeBeatIds = employee.beatId || [];
                       const isAlreadyAssigned = employeeBeatIds.some(
-                        (beatId) => beatId.toString() === beat._id.toString()
+                        (beatId) => beatId.toString() === beat._id.toString(),
                       );
 
                       if (isAlreadyAssigned) {
                         errorMessages.push(
-                          `Beat ${beatCode} is already assigned to employee ${employeeId}`
+                          `Beat ${beatCode} is already assigned to employee ${employeeId}`,
                         );
                         rowHasErrors = true;
                         continue;
@@ -3583,12 +4050,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           // Check if any of the assigned employees is different from current employee
                           const hasOtherEmployee = beat.employeeId.some(
                             (empId) =>
-                              empId.toString() !== employee._id.toString()
+                              empId.toString() !== employee._id.toString(),
                           );
 
                           if (hasOtherEmployee) {
                             errorMessages.push(
-                              `Normal beat ${beatCode} is already occupied by another employee`
+                              `Normal beat ${beatCode} is already occupied by another employee`,
                             );
                             rowHasErrors = true;
                             continue;
@@ -3604,13 +4071,13 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           (empDistId) =>
                             beatDistributors.some(
                               (beatDistId) =>
-                                empDistId.toString() === beatDistId.toString()
-                            )
+                                empDistId.toString() === beatDistId.toString(),
+                            ),
                         );
 
                         if (!hasCommonDistributor) {
                           errorMessages.push(
-                            `Employee ${employeeId} and normal beat ${beatCode} do not share any common distributors`
+                            `Employee ${employeeId} and normal beat ${beatCode} do not share any common distributors`,
                           );
                           rowHasErrors = true;
                           continue;
@@ -3625,20 +4092,20 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                           (empDistId) =>
                             beatDistributors.some(
                               (beatDistId) =>
-                                empDistId.toString() === beatDistId.toString()
-                            )
+                                empDistId.toString() === beatDistId.toString(),
+                            ),
                         );
 
                         if (!hasCommonDistributor) {
                           errorMessages.push(
-                            `Employee ${employeeId} and split beat ${beatCode} do not share any common distributors`
+                            `Employee ${employeeId} and split beat ${beatCode} do not share any common distributors`,
                           );
                           rowHasErrors = true;
                           continue;
                         }
                       } else {
                         errorMessages.push(
-                          `Beat ${beatCode} has invalid beat type: ${beat.beat_type}`
+                          `Beat ${beatCode} has invalid beat type: ${beat.beat_type}`,
                         );
                         rowHasErrors = true;
                         continue;

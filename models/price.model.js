@@ -38,7 +38,11 @@ const priceSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    customBasicDiscountPercentage: {
+    L1DiscountPercentage: {
+      type: Number,
+      default: 0,
+    },
+    L2DiscountPercentage: {
       type: Number,
       default: 0,
     },
