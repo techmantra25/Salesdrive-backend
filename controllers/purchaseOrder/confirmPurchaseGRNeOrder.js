@@ -19,15 +19,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       foreclose,
     } = req.body;
 
-    console.log("invoiceDate from frontend:", invoiceDate);
-
-    console.log("grnDate from frontend:", grnDate);
-
-    console.log("purchaseOrderId:", purchaseOrderId);
-
-    console.log("foreclose flag:", foreclose);
-
-    
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
     if (!purchaseOrder) {
