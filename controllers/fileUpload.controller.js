@@ -1090,14 +1090,15 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const regionCodes = new Set();
               const productCodes = new Set();
               const distributorCodes = new Set();
+              const dateToday = new Date();
 
               for (const row of results) {
                 if (row["Region Code"])
-                  regionCodes.add(row["Region Code"].trim());
+                  regionCodes.add(String(row["Region Code"]).trim());
                 if (row["Product Code"])
-                  productCodes.add(row["Product Code"].trim());
+                  productCodes.add(String(row["Product Code"]).trim());
                 if (row["Distributor Code"])
-                  distributorCodes.add(row["Distributor Code"].trim());
+                  distributorCodes.add(String(row["Distributor Code"]).trim());
               }
 
               // 2. Fetch all required docs in parallel
@@ -1117,70 +1118,100 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   .lean(),
               ]);
 
+              const activeNationalPrices = await Price.find({
+                productId: { $in: products.map((product) => product._id) },
+                price_type: "national",
+                regionId: null,
+                distributorId: null,
+                status: true,
+                effective_date: { $lte: dateToday },
+                $or: [
+                  { expiresAt: { $exists: false } },
+                  { expiresAt: null },
+                  { expiresAt: { $gte: dateToday } },
+                ],
+              })
+                .select("productId mrp_price effective_date")
+                .sort({ effective_date: -1 })
+                .lean();
+
               // 3. Create lookup maps for quick access
               const regionMap = new Map(
-                regions.map((r) => [r.code.trim(), r._id]),
+                regions.map((r) => [String(r.code).trim(), r._id]),
               );
               const productMap = new Map(
-                products.map((p) => [p.product_code.trim(), p._id]),
+                products.map((p) => [String(p.product_code).trim(), p._id]),
               );
               const distributorMap = new Map(
-                distributors.map((d) => [d.dbCode.trim(), d._id]),
+                distributors.map((d) => [String(d.dbCode).trim(), d._id]),
               );
+              const activeNationalPriceMap = new Map();
+              activeNationalPrices.forEach((price) => {
+                const productIdKey = String(price.productId);
+                if (!activeNationalPriceMap.has(productIdKey)) {
+                  activeNationalPriceMap.set(productIdKey, price);
+                }
+              });
 
               // 4. Pre-validate rows and collect valid combinations for existing price lookup
               const skippedRowsForPrice = [];
               const preValidatedRows = [];
-              const dateToday = new Date();
               const validCombinations = [];
 
               for (const row of results) {
-                const regionCode = null;
-                const productCode = row["Product Code"]?.trim();
+                const regionCode = row["Region Code"]
+                  ? String(row["Region Code"]).trim()
+                  : "";
+                const productCode = row["Product Code"]
+                  ? String(row["Product Code"]).trim()
+                  : "";
                 const distributorCode = null;
                 const mrp = row["MRP"];
-                const customBasicDiscountPercentage =
-                  row["Customer Basic Discount Percentage"];
+                const hasCsvMrp =
+                  mrp !== undefined && mrp !== null && String(mrp).trim() !== "";
+                const L1DiscountPercentage = row["L1(%)"];
+                const L2DiscountPercentage = row["L2(%)"];
                 const effectiveDate = row["Effective Date"]
                   ? String(row["Effective Date"]).trim()
                   : "";
-                const mrpNumber = Number(mrp);
-                const customBasicDiscountPercentageNumber = Number(
-                  customBasicDiscountPercentage || 0,
+                let mrpNumber = hasCsvMrp ? Number(mrp) : null;
+                const L1DiscountPercentageNumber = Number(
+                  L1DiscountPercentage || 0,
+                );
+                const L2DiscountPercentageNumber = Number(
+                  L2DiscountPercentage || 0,
                 );
 
-                // Basic field validation - Price CSV is always national now
-                const isNationalPricing = !regionCode && !distributorCode;
-                if (
-                  !productCode ||
-                  mrp === undefined ||
-                  mrp === null ||
-                  !effectiveDate
-                ) {
+                const priceType = "regional";
+                if (!productCode || !regionCode || !effectiveDate) {
                   skippedRowsForPrice.push({
                     ...row,
                     reason:
-                      "Missing required fields (Product Code, MRP, Effective Date)",
-                  });
-                  continue;
-                }
-
-                if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
-                  skippedRowsForPrice.push({
-                    ...row,
-                    reason: "Invalid MRP",
+                      "Missing required fields (Product Code, Region Code, Effective Date)",
                   });
                   continue;
                 }
 
                 if (
-                  !Number.isFinite(customBasicDiscountPercentageNumber) ||
-                  customBasicDiscountPercentageNumber < 0 ||
-                  customBasicDiscountPercentageNumber > 100
+                  !Number.isFinite(L1DiscountPercentageNumber) ||
+                  L1DiscountPercentageNumber < 0 ||
+                  L1DiscountPercentageNumber > 100
                 ) {
                   skippedRowsForPrice.push({
                     ...row,
-                    reason: "Invalid Customer Basic Discount Percentage",
+                    reason: "Invalid L1 Discount Percentage",
+                  });
+                  continue;
+                }
+
+                if (
+                  !Number.isFinite(L2DiscountPercentageNumber) ||
+                  L2DiscountPercentageNumber < 0 ||
+                  L2DiscountPercentageNumber > 100
+                ) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Invalid L2 Discount Percentage",
                   });
                   continue;
                 }
@@ -1200,12 +1231,38 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   continue;
                 }
 
-                // For regional/distributor pricing, region is required
-                if (!isNationalPricing && !regionId) {
+                if (!hasCsvMrp) {
+                  const activeNationalPrice = activeNationalPriceMap.get(
+                    String(productId),
+                  );
+
+                  if (!activeNationalPrice) {
+                    console.error(
+                      `Price CSV row skipped: active national price not found for product code ${productCode}`,
+                      row,
+                    );
+                    skippedRowsForPrice.push({
+                      ...row,
+                      reason: "Active national price not found for MRP",
+                    });
+                    continue;
+                  }
+
+                  mrpNumber = Number(activeNationalPrice.mrp_price);
+                }
+
+                if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
                   skippedRowsForPrice.push({
                     ...row,
-                    reason:
-                      "Region not found (required for regional/distributor pricing)",
+                    reason: "Invalid MRP",
+                  });
+                  continue;
+                }
+
+                if (!regionId) {
+                  skippedRowsForPrice.push({
+                    ...row,
+                    reason: "Region not found",
                   });
                   continue;
                 }
@@ -1220,7 +1277,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 // Date validation
-                const parsedDate = moment(effectiveDate, "DD-MM-YYYY");
+                const parsedDate = moment(effectiveDate, "DD-MM-YYYY", true);
                 if (!parsedDate.isValid()) {
                   skippedRowsForPrice.push({
                     ...row,
@@ -1240,16 +1297,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Note: Date validation will be done later after checking existing prices
                 // For now, just store the parsed date
 
-                // Determine price type based on what's provided
-                let priceType;
-                if (distributorCode) {
-                  priceType = "distributor";
-                } else if (regionCode) {
-                  priceType = "regional";
-                } else {
-                  priceType = "national";
-                }
-
                 // Store pre-validated row
                 const validatedRow = {
                   ...row,
@@ -1258,7 +1305,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   distributorId,
                   priceType: priceType,
                   mrpNumber,
-                  customBasicDiscountPercentageNumber,
+                  L1DiscountPercentageNumber,
+                  L2DiscountPercentageNumber,
                   effectiveDate: effectiveDateParsed,
                 };
 
@@ -1267,6 +1315,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Collect combination for batch existing price lookup
                 validCombinations.push({
                   productId,
+                  priceType,
                   regionId: regionId || null,
                   distributorId,
                 });
@@ -1280,6 +1329,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               if (validCombinations.length > 0) {
                 const existingPricesQuery = validCombinations.map((combo) => ({
                   productId: combo.productId,
+                  price_type: combo.priceType,
                   regionId: combo.regionId,
                   distributorId: combo.distributorId,
                   status: true,
@@ -1288,13 +1338,17 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const existingPrices = await Price.find({
                   $or: existingPricesQuery,
                 })
-                  .select("productId regionId distributorId effective_date _id")
+                  .select(
+                    "productId price_type regionId distributorId effective_date _id",
+                  )
                   .sort({ effective_date: -1 })
                   .lean();
 
                 // Group existing prices by combination key
                 existingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.regionId || "null"}_${
+                  const key = `${price.productId}_${price.price_type}_${
+                    price.regionId || "null"
+                  }_${
                     price.distributorId || "null"
                   }`;
                   if (!existingPricesMap.has(key)) {
@@ -1310,7 +1364,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${
+                const combinationKey = `${row.productId}_${row.priceType}_${
                   row.regionId || "null"
                 }_${row.distributorId || "null"}`;
                 const existingPrices =
@@ -1376,17 +1430,20 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   price_type: row.priceType,
                   regionId: row.regionId,
                   mrp_price: row.mrpNumber,
-                  dlp_price: row.mrpNumber,
+                  dlp_price: Number(
+                    (
+                      row.mrpNumber -
+                      (row.mrpNumber * row.L1DiscountPercentageNumber) / 100
+                    ).toFixed(2),
+                  ),
                   rlp_price: Number(
                     (
                       row.mrpNumber -
-                      (row.mrpNumber *
-                        row.customBasicDiscountPercentageNumber) /
-                        100
+                      (row.mrpNumber * row.L2DiscountPercentageNumber) / 100
                     ).toFixed(2),
                   ),
-                  customBasicDiscountPercentage:
-                    row.customBasicDiscountPercentageNumber,
+                  L1DiscountPercentage: row.L1DiscountPercentageNumber,
+                  L2DiscountPercentage: row.L2DiscountPercentageNumber,
                   effective_date: row.effectiveDate,
                   distributorId: row.distributorId || null,
                   createdBy: req.user._id,
@@ -1407,13 +1464,24 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       .toDate();
 
                     for (const existingPrice of row.existingPrices) {
+                      const finalExpiresAt =
+                        existingPrice.expiresAt ?? expiresAt;
+                      const updateFields = {
+                        expiresAt: finalExpiresAt,
+                      };
+                      const isExpiredPrice = moment(finalExpiresAt)
+                        .tz("Asia/Kolkata")
+                        .isSameOrBefore(dateToday);
+
+                      if (row.priceType === "regional" && isExpiredPrice) {
+                        updateFields.status = false;
+                      }
+
                       priceUpdates.push({
                         updateOne: {
                           filter: { _id: existingPrice._id },
                           update: {
-                            $set: {
-                              expiresAt: existingPrice.expiresAt ?? expiresAt,
-                            },
+                            $set: updateFields,
                           },
                         },
                       });
