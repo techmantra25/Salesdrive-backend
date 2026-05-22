@@ -23,7 +23,11 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
     console.log("grnDate from frontend:", grnDate);
 
-    console.log("FULL BODY:", req.body);
+    console.log("purchaseOrderId:", purchaseOrderId);
+
+    console.log("foreclose flag:", foreclose);
+
+    
     const purchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
 
     if (!purchaseOrder) {
@@ -31,22 +35,39 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         message: "Purchase Order not found",
       });
     }
+if (foreclose === true) {
 
-    if (foreclose === true) {
+  const {
+    productIds = [],
+    forecloseReason = "",
+  } = req.body;
 
-      purchaseOrder.foreclose = true;
+  if (!productIds.length) {
+    return res.status(400).json({
+      message: "No products selected",
+    });
+  }
 
-      purchaseOrder.forecloseReason =
-        req.body.forecloseReason || "";
+  purchaseOrder.lineItems.forEach((item) => {
 
-      await purchaseOrder.save();
+    const currentProductId = String(item.product);
 
-      return res.status(200).json({
-        message: "Purchase Order Foreclosed Successfully",
-        data: purchaseOrder,
-      });
+    if (productIds.includes(currentProductId)) {
+
+      item.foreclose = true;
+
+      item.forecloseReason = forecloseReason;
     }
 
+  });
+
+  await purchaseOrder.save();
+
+  return res.status(200).json({
+    message: "Products Shortclosed Successfully",
+    data: purchaseOrder,
+  });
+}
     // =========================
     // 🔥 FETCH PREVIOUS INVOICES
     // =========================
