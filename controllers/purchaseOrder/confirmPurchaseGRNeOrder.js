@@ -26,39 +26,52 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         message: "Purchase Order not found",
       });
     }
-if (foreclose === true) {
+    if (foreclose === true) {
 
-  const {
-    productIds = [],
-    forecloseReason = "",
-  } = req.body;
+      const {
+        productIds = [],
+        forecloseReason = "",
+        forecloseUom = [],
+      } = req.body;
 
-  if (!productIds.length) {
-    return res.status(400).json({
-      message: "No products selected",
-    });
-  }
+      console.log("🔍 Foreclose Request:", {
+        productIds,
+        forecloseReason,
+        forecloseUom
+      });
 
-  purchaseOrder.lineItems.forEach((item) => {
+      if (!productIds.length) {
+        return res.status(400).json({
+          message: "No products selected",
+        });
+      }
 
-    const currentProductId = String(item.product);
+      purchaseOrder.lineItems.forEach((item) => {
 
-    if (productIds.includes(currentProductId)) {
+        const currentProductId = String(item.product);
 
-      item.foreclose = true;
+        if (productIds.includes(currentProductId)) {
 
-      item.forecloseReason = forecloseReason;
+          const matchedQty = forecloseUom.find(
+            (q) => String(q.productId) === currentProductId
+          );
+
+          item.foreclose = true;
+
+          item.forecloseReason = forecloseReason;
+
+          item.forecloseUom = Number(matchedQty?.forecloseUom || 0);
+        }
+
+      });
+
+      await purchaseOrder.save();
+
+      return res.status(200).json({
+        message: "Products Shortclosed Successfully",
+        data: purchaseOrder,
+      });
     }
-
-  });
-
-  await purchaseOrder.save();
-
-  return res.status(200).json({
-    message: "Products Shortclosed Successfully",
-    data: purchaseOrder,
-  });
-}
     // =========================
     // 🔥 FETCH PREVIOUS INVOICES
     // =========================
@@ -149,11 +162,11 @@ if (foreclose === true) {
       const alreadyReceived =
         receivedMap[String(item.productId)] || 0;
 
-     
 
-      
 
-   
+
+
+
       // ✅ Case 3: ignore zero qty (important)
       if (!requestedQty || requestedQty <= 0) {
         continue;

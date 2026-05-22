@@ -71,6 +71,10 @@ const LineItemSchema = new mongoose.Schema({
   type: Boolean,
   default: false,
 },
+forecloseUom: {
+  type: Number,
+  default: 0,
+},
 
 forecloseReason: {
   type: String,
