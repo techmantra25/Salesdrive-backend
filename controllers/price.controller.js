@@ -61,12 +61,6 @@ const addPrice = asyncHandler(async (req, res) => {
         regionId: null,
         distributorId: null,
         status: true,
-        effective_date: { $lte: dateToday },
-        $or: [
-          { expiresAt: { $exists: false } },
-          { expiresAt: null },
-          { expiresAt: { $gte: dateToday } },
-        ],
       })
         .sort({ effective_date: -1, createdAt: -1 })
         .select("mrp_price")
@@ -374,6 +368,8 @@ const updatePrice = asyncHandler(async (req, res) => {
 
     // Determine regionId and distributorId based on price_type
     const priceType = req.body.price_type ?? priceData.price_type;
+    const productId = req.body.productId ?? priceData.productId?._id ?? priceData.productId;
+    const mrpPrice = req.body.mrp_price ?? priceData.mrp_price;
     let regionId, distributorId;
 
     if (priceType === "national") {
@@ -388,13 +384,36 @@ const updatePrice = asyncHandler(async (req, res) => {
       distributorId = null;
     }
 
+    if (priceType === "regional") {
+      const activeNationalPrice = await Price.findOne({
+        productId,
+        price_type: "national",
+        regionId: null,
+        distributorId: null,
+        status: true,
+      })
+        .sort({ effective_date: -1, createdAt: -1 })
+        .select("mrp_price")
+        .lean();
+
+      if (!activeNationalPrice) {
+        res.status(400);
+        throw new Error("Active national price not found for this product");
+      }
+
+      if (Number(activeNationalPrice.mrp_price) !== Number(mrpPrice)) {
+        res.status(400);
+        throw new Error("Regional MRP should match active national MRP");
+      }
+    }
+
     let priceList = await Price.findOneAndUpdate(
       { _id: req.params.priceId },
       {
-        productId: req.body.productId ?? priceData.productId,
+        productId,
         price_type: priceType,
         regionId: regionId,
-        mrp_price: req.body.mrp_price ?? priceData.mrp_price,
+        mrp_price: mrpPrice,
         dlp_price: req.body.dlp_price ?? priceData.dlp_price,
         rlp_price: req.body.rlp_price ?? priceData.rlp_price,
         L1DiscountPercentage:
