@@ -1124,15 +1124,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 regionId: null,
                 distributorId: null,
                 status: true,
-                effective_date: { $lte: dateToday },
-                $or: [
-                  { expiresAt: { $exists: false } },
-                  { expiresAt: null },
-                  { expiresAt: { $gte: dateToday } },
-                ],
               })
                 .select("productId mrp_price effective_date")
-                .sort({ effective_date: -1 })
+                .sort({ effective_date: -1, createdAt: -1 })
                 .lean();
 
               // 3. Create lookup maps for quick access
