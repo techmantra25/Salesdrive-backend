@@ -615,6 +615,36 @@ const pricingStatusBulkUpdate = asyncHandler(async (req, res) => {
   // }
 });
 
+const InactivePriceByExpiredDate = asyncHandler(async (req, res) => {
+  try {
+    const todayStart = moment()
+      .tz("Asia/Kolkata")
+      .startOf("day")
+      .toDate();
+
+    const result = await Price.updateMany(
+      {
+        status: true,
+        expiresAt: { $ne: null, $lt: todayStart },
+      },
+      { $set: { status: false } },
+    );
+
+    return res.status(200).json({
+      status: 200,
+      message: "Expired prices deactivated successfully",
+      data: {
+        todayStart,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});
+
 const PriceALList = asyncHandler(async (req, res) => {
   try {
     let priceList = await Price.find({})
@@ -1329,6 +1359,7 @@ module.exports = {
   PriceList,
   PriceALListPaginated,
   pricingStatusBulkUpdate,
+  InactivePriceByExpiredDate,
   PricingAllListReport,
   ProductPricing,
 };

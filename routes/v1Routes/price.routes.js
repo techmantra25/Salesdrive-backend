@@ -7,6 +7,7 @@ const {
   PriceList,
   PriceALListPaginated,
   pricingStatusBulkUpdate,
+  InactivePriceByExpiredDate,
   PricingAllListReport,
   ProductPricing,
   addDBPriceByDB,
@@ -22,6 +23,9 @@ priceRoutes.route("/add").post(protectRoute, isAdmin, addPrice);
 priceRoutes.route("/add-db-price-by-db").post(protectDisRoute, addDBPriceByDB);
 priceRoutes.route("/update/:priceId").patch(protectRoute, isAdmin, updatePrice);
 priceRoutes.route("/bulk-update-status").put(pricingStatusBulkUpdate);
+priceRoutes
+  .route("/inactive-price-by-expired-date")
+  .put(InactivePriceByExpiredDate);
 priceRoutes.route("/all-list-paginated").get(protect, PriceALListPaginated);
 priceRoutes.route("/price-download").get(protect, priceDownload);
 
