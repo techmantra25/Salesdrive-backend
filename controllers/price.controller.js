@@ -52,10 +52,39 @@ const addPrice = asyncHandler(async (req, res) => {
       .tz(effective_date, "YYYY-MM-DD", "Asia/Kolkata")
       .startOf("day")
       .toDate();
+    const dateToday = new Date();
+
+    if (price_type === "regional") {
+      const activeNationalPrice = await Price.findOne({
+        productId,
+        price_type: "national",
+        regionId: null,
+        distributorId: null,
+        status: true,
+        effective_date: { $lte: dateToday },
+        $or: [
+          { expiresAt: { $exists: false } },
+          { expiresAt: null },
+          { expiresAt: { $gte: dateToday } },
+        ],
+      })
+        .sort({ effective_date: -1, createdAt: -1 })
+        .select("mrp_price")
+        .lean();
+
+      if (!activeNationalPrice) {
+        res.status(400);
+        throw new Error("Active national price not found for this product");
+      }
+
+      if (Number(activeNationalPrice.mrp_price) !== Number(mrp_price)) {
+        res.status(400);
+        throw new Error("Regional MRP should match active national MRP");
+      }
+    }
 
     if (existingPrices.length > 0) {
       const latestPrice = existingPrices[0];
-      const dateToday = new Date();
       const todayStart = moment(dateToday)
         .tz("Asia/Kolkata")
         .startOf("day")
