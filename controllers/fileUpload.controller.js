@@ -1870,18 +1870,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   price_type: row.priceType,
                   regionId: row.regionId,
                   mrp_price: row.mrpNumber,
-                  dlp_price: Number(
-                    (
-                      row.mrpNumber -
-                      (row.mrpNumber * row.L1DiscountPercentageNumber) / 100
-                    ).toFixed(2),
-                  ),
-                  rlp_price: Number(
-                    (
-                      row.mrpNumber -
-                      (row.mrpNumber * row.L2DiscountPercentageNumber) / 100
-                    ).toFixed(2),
-                  ),
+                  dlp_price: 0,
+                  rlp_price: 0,
                   L1DiscountPercentage: row.L1DiscountPercentageNumber,
                   L2DiscountPercentage: row.L2DiscountPercentageNumber,
                   effective_date: row.effectiveDate,
