@@ -149,26 +149,11 @@ if (foreclose === true) {
       const alreadyReceived =
         receivedMap[String(item.productId)] || 0;
 
-      const remainingQty = poItem.orderQty - alreadyReceived;
+     
 
-      // ❌ Case 1: user entered qty but nothing available
-      if (remainingQty <= 0 && requestedQty > 0) {
-        failedProducts.push(
-          `${productName} (No qty available)`
-        );
-        hasValidationError = true;
-        continue;
-      }
+      
 
-      // ❌ Case 2: user exceeded remaining qty
-      if (requestedQty > remainingQty) {
-        failedProducts.push(
-          `${productName} (Only ${remainingQty} qty left)`
-        );
-        hasValidationError = true;
-        continue;
-      }
-
+   
       // ✅ Case 3: ignore zero qty (important)
       if (!requestedQty || requestedQty <= 0) {
         continue;
