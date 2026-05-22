@@ -2004,6 +2004,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               });
 
               const priceUpdates = [];
+              const updatedPriceIds = new Set();
               let totalProductsMatched = 0;
               let totalPricesMatched = 0;
               const now = new Date();
@@ -2132,23 +2133,24 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       },
                     },
                   });
+                  updatedPriceIds.add(String(price._id));
                 });
               }
 
-              let modifiedPrices = 0;
+              let updatedPrices = [];
               if (priceUpdates.length > 0) {
-                const updateResult = await Price.bulkWrite(priceUpdates);
-                modifiedPrices = updateResult.modifiedCount;
+                await Price.bulkWrite(priceUpdates);
+                updatedPrices = await Price.find({
+                  _id: { $in: Array.from(updatedPriceIds) },
+                }).lean();
               }
 
-              resp = {
-                totalRows: results.length,
-                totalProductsMatched,
-                totalPricesMatched,
-                priceUpdatesPrepared: priceUpdates.length,
-                modifiedPrices,
-              };
-              skippedRows = skippedRowsForCollectionPrice;
+              console.log(
+                `Collection price update complete: ${updatedPrices.length} updated prices, ${totalProductsMatched} matched products, ${totalPricesMatched} matched prices, ${skippedRowsForCollectionPrice.length} skipped`,
+              );
+
+              resp = updatedPrices || [];
+              skippedRows = skippedRowsForCollectionPrice || [];
 
               break;
             }
