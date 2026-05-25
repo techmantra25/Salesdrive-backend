@@ -92,6 +92,14 @@ if (req.query.updatedFromDate && req.query.updatedToDate) {
 }
 
 
+    // SORTING
+    let sortOption = { _id: -1 };
+    if (req.query.outletname_sort === "a_to_z") {
+      sortOption = { outletName: 1 };
+    } else if (req.query.outletname_sort === "z_to_a") {
+      sortOption = { outletName: -1 };
+    }
+
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
@@ -157,7 +165,7 @@ if (req.query.updatedFromDate && req.query.updatedToDate) {
           select: "",
         },
       ])
-      .sort({ _id: -1 })
+      .sort(sortOption)
       .skip(skip)
       .limit(limit);
 
