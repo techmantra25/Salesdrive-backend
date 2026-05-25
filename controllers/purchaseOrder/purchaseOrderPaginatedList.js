@@ -13,7 +13,7 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       toDate,
       distributorId,
       approvedStatus,
-      purchaseOrderNo,
+      search,
     } = req.query;
 
     let query = {};
@@ -25,15 +25,17 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       query.approvedStatus = approvedStatus;
     }
 
-    if (purchaseOrderNo) {
-      // or condition
-      query.$or = [
-        { purchaseOrderNo: new RegExp(purchaseOrderNo, "i") },
-        { "sapStatusData.Vbeln": new RegExp(purchaseOrderNo, "i") },
-        { "sapStatusData.Vbelnso": new RegExp(purchaseOrderNo, "i") },
-      ];
-    }
+  if (search) {
+  query.$or = [
+    { purchaseOrderNo: new RegExp(search, "i") },
 
+    { soNumber: new RegExp(search, "i") },
+
+    { "sapStatusData.Vbeln": new RegExp(search, "i") },
+
+    { "sapStatusData.Vbelnso": new RegExp(search, "i") },
+  ];
+}
     // Filter by distributor
     if (distributorId) query.distributorId = distributorId;
 
