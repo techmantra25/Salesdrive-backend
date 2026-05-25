@@ -8,13 +8,12 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
       page = 1,
       limit = 10,
       status,
-      invoiceNo,
+      search,
       fromDate,
       toDate,
       grnFromDate,
       grnToDate,
     } = req.query;
-
     page = parseInt(page, 10);
     limit = parseInt(limit, 10);
     const skip = (page - 1) * limit;
@@ -121,7 +120,22 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
     // ============================
     const baseMatch = {};
     if (distributorId) baseMatch.distributorId = distributorId;
-    if (invoiceNo) baseMatch.invoiceNo = { $regex: invoiceNo, $options: "i" };
+    if (search) {
+      baseMatch.$or = [
+        {
+          invoiceNo: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          soNumber: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+      ];
+    }
     if (grnDateRange) baseMatch.grnDate = grnDateRange;
 
     console.log("==================== BASE MATCH ====================");
@@ -369,8 +383,7 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
       console.log("Sample of invoice dates:");
       invoices.slice(0, 5).forEach((inv, idx) => {
         console.log(
-          `  Invoice ${idx + 1}: ${inv.invoiceNo} - Date: ${
-            inv.date
+          `  Invoice ${idx + 1}: ${inv.invoiceNo} - Date: ${inv.date
           } - Status: ${inv.status}`,
         );
       });
