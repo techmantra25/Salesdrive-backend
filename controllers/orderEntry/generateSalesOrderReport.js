@@ -7,7 +7,11 @@ const OrderEntry = require("../../models/orderEntry.model");
 const escapeCSVValue = (value) => {
   if (value == null || value === undefined) return "";
   const stringValue = String(value);
-  if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
+  if (
+    stringValue.includes(",") ||
+    stringValue.includes('"') ||
+    stringValue.includes("\n")
+  ) {
     return `"${stringValue.replace(/"/g, '""')}"`;
   }
   return stringValue;
@@ -19,7 +23,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=sales-order-report.csv"
+      "attachment; filename=sales-order-report.csv",
     );
 
     // -------------------- FILTERS --------------------
@@ -152,7 +156,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       "Gross Amount",
       "Scheme Discount",
       "Special Disc Amount",
-      "Net Amount",
+      "Net Amount (Incl. Amt)",
       "Order to Bill Status",
     ];
 
@@ -177,13 +181,14 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           order.status === "Partially_Billed"
             ? "Partially Billed"
             : order.status === "Completed_Billed"
-            ? "Completely Billed"
-            : order.status;
+              ? "Completely Billed"
+              : order.status;
 
         csvStream.write({
           "Distributor ID": order.distributorId?.dbCode || "",
           "Distributor Name": escapeCSVValue(order.distributorId?.name),
-          "Distributor's Zone": order.distributorId?.stateId?.zoneId?.name || "",
+          "Distributor's Zone":
+            order.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": order.distributorId?.stateId?.name || "",
           "Distributor's City": order.distributorId?.city || "",
           "Order Number": order.orderNo || "",
@@ -193,7 +198,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Order Source": order.orderSource || "",
           "Salesman Code": order.salesmanName?.empId || "",
           "Salesman Name": order.salesmanName?.name || "",
-          "Reporting Manager": order.salesmanName?.empMappingId?.rmEmpId?.name || "",
+          "Reporting Manager":
+            order.salesmanName?.empMappingId?.rmEmpId?.name || "",
           "Beat Code": order.routeId?.code || "",
           Beat: order.routeId?.name || "",
           "Retailer Code": order.retailerId?.outletCode || "",
@@ -213,7 +219,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Gross Amount": item?.grossAmt || 0,
           "Scheme Discount": item?.schemeDisc || 0,
           "Special Disc Amount": item?.distributorDisc || 0,
-          "Net Amount": item?.netAmt || 0,
+          "Net Amount (Incl. Amt)": item?.netAmt || 0,
           "Order to Bill Status": statusLabel,
         });
       });
