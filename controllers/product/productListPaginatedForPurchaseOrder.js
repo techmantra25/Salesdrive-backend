@@ -16,7 +16,6 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     const skip = (page - 1) * limit;
 
     const distributorId = req?.user?._id;
-    const search = req?.query?.search;
     const size = req?.query?.size;
     const color = req?.query?.color;
     const productType = req?.query?.productType;
@@ -96,13 +95,22 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
       query.subBrand = subBrandId;
     }
 
-    if (search) {
-      query.$or = [
-        { product_code: { $regex: search, $options: "i" } },
-        { name: { $regex: search, $options: "i" } },
-        { sku_group_id: { $regex: search, $options: "i" } },
-        { sku_group__name: { $regex: search, $options: "i" } },
-      ];
+    if (req.query.search) {
+      const search = req.query.search.trim();
+
+      // Split by space or dash
+      const tokens = search.split(/[\s-]+/).filter(Boolean);
+
+      // Every token must match
+      query.$and = tokens.map((token) => ({
+        $or: [
+          { product_code: { $regex: token, $options: "i" } },
+          { name: { $regex: token, $options: "i" } },
+          { sku_group_id: { $regex: token, $options: "i" } },
+          { sku_group__name: { $regex: token, $options: "i" } },
+          { product_hsn_code: { $regex: token, $options: "i" } },
+        ],
+      }));
     }
 
     if (size && size !== "undefined" && size !== "null") {

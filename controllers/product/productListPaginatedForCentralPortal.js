@@ -8,7 +8,6 @@ const productListPaginatedForCentralPortal = asyncHandler(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 5;
     const skip = (page - 1) * limit;
-    const search = req?.query?.search;
     const distributorId = req?.query?.distributorId;
 
     const { categoryId, collectionId, brandId, subBrandId } = req.query;
@@ -37,11 +36,22 @@ const productListPaginatedForCentralPortal = asyncHandler(async (req, res) => {
       query.subBrand = subBrandId;
     }
 
-    if (search) {
-      query.$or = [
-        { product_code: { $regex: search, $options: "i" } },
-        { name: { $regex: search, $options: "i" } },
-      ];
+    if (req.query.search) {
+      const search = req.query.search.trim();
+
+      // Split by space or dash
+      const tokens = search.split(/[\s-]+/).filter(Boolean);
+
+      // Every token must match
+      query.$and = tokens.map((token) => ({
+        $or: [
+          { product_code: { $regex: token, $options: "i" } },
+          { name: { $regex: token, $options: "i" } },
+          { sku_group_id: { $regex: token, $options: "i" } },
+          { sku_group__name: { $regex: token, $options: "i" } },
+          { product_hsn_code: { $regex: token, $options: "i" } },
+        ],
+      }));
     }
 
     // supplier not null

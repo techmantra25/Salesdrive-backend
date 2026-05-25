@@ -113,8 +113,7 @@ const productDetail = asyncHandler(async (req, res) => {
   }
 });
 
-
-//old code 
+//old code
 // const updateProduct = asyncHandler(async (req, res) => {
 //   try {
 //     console.log(req.params.proId)
@@ -180,7 +179,6 @@ const productDetail = asyncHandler(async (req, res) => {
 //   }
 // });
 
-
 const updateProduct = asyncHandler(async (req, res) => {
   try {
     let message;
@@ -190,14 +188,15 @@ const updateProduct = asyncHandler(async (req, res) => {
       // Check if there's at least one active price for this product
       const activePriceExists = await Price.findOne({
         productId: req.params.proId,
-        status: true
+        status: true,
       });
 
       if (!activePriceExists) {
         // No active price found - block the activation
         return res.status(400).send({
           error: true,
-          message: "Cannot activate product. No active price found for this product."
+          message:
+            "Cannot activate product. No active price found for this product.",
         });
       }
     }
@@ -206,7 +205,7 @@ const updateProduct = asyncHandler(async (req, res) => {
     let productList = await Product.findOneAndUpdate(
       { _id: req.params.proId },
       req.body,
-      { new: true }
+      { new: true },
     );
 
     if (productList) {
@@ -265,105 +264,274 @@ const productAllList = asyncHandler(async (req, res) => {
   }
 });
 
+// const productPaginatedList = asyncHandler(async (req, res) => {
+//   try {
+//     const page = parseInt(req.query.page) || 1;
+//     const limit = parseInt(req.query.limit) || 10;
+//     const skip = (page - 1) * limit;
+
+//     // Build filter object
+//     const filter = {};
+
+//     // Status filter
+//     if (req.query.status !== undefined) {
+//       filter.status = req.query.status === "true";
+//     }
+
+//     // Brand filter
+//     if (req.query.brand) {
+//       filter.brand = req.query.brand;
+//     }
+
+//     // Category filter
+//     if (req.query.category) {
+//       filter.cat_id = req.query.category;
+//     }
+
+//     // Collection filter
+//     if (req.query.collection) {
+//       filter.collection_id = req.query.collection;
+//     }
+
+//     // SubBrand filter
+//     if (req.query.subBrand) {
+//       filter.subBrand = req.query.subBrand;
+//     }
+
+//     const TIMEZONE = "Asia/Kolkata";
+
+//     // Date range filter on createdAt
+//     if (req.query.startDate && req.query.endDate) {
+//       filter.updatedAt = {
+//         $gte: moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate(),
+//         $lte: moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate(),
+//       };
+//       // const start = moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate();
+//       // const end = moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate();
+//       // filter.$or = [
+//       //   { createdAt: { $gte: start, $lte: end } },
+//       //   { updatedAt: { $gte: start, $lte: end } }
+//       // ];
+//     }
+//     // Search functionality
+//     if (req.query.search) {
+//       const searchRegex = new RegExp(req.query.search, "i");
+//       filter.$or = [
+//         { product_code: searchRegex },
+//         { name: searchRegex },
+//         { sku_group_id: searchRegex },
+//         { sku_group__name: searchRegex },
+//         { product_hsn_code: searchRegex },
+//       ];
+//     }
+
+//     // Get total count without filters for pagination info
+//     const totalCount = await Product.countDocuments({});
+
+//     // Get filtered count
+//     const filteredCount = await Product.countDocuments(filter);
+
+//     // Get products with pagination
+//     const products = await Product.find(filter)
+//       .populate([
+//         {
+//           path: "cat_id",
+//           select: "",
+//         },
+//         {
+//           path: "collection_id",
+//           select: "",
+//         },
+//         {
+//           path: "brand",
+//           select: "",
+//         },
+//         {
+//           path: "subBrand",
+//           select: "",
+//         },
+//         {
+//           path: "supplier",
+//           select: "",
+//         },
+//       ])
+//       .sort({ product_code: 1 })
+//       .skip(skip)
+//       .limit(limit);
+
+//     return res.status(200).json({
+//       status: 200,
+//       message: "Product paginated list",
+//       data: products,
+//       pagination: {
+//         currentPage: page,
+//         limit,
+//         totalPages: Math.ceil(filteredCount / limit),
+//         filteredCount,
+//         totalItems: totalCount,
+//       },
+//     });
+//   } catch (error) {
+//     res.status(400);
+//     throw error;
+//   }
+// });
+
+
+
 const productPaginatedList = asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // Build filter object
+    // =========================
+    // FILTER OBJECT
+    // =========================
     const filter = {};
 
-    // Status filter
+    // =========================
+    // STATUS FILTER
+    // =========================
     if (req.query.status !== undefined) {
       filter.status = req.query.status === "true";
     }
 
-    // Brand filter
+    // =========================
+    // BRAND FILTER
+    // =========================
     if (req.query.brand) {
       filter.brand = req.query.brand;
     }
 
-    // Category filter
+    // =========================
+    // CATEGORY FILTER
+    // =========================
     if (req.query.category) {
       filter.cat_id = req.query.category;
     }
 
-    // Collection filter
+    // =========================
+    // COLLECTION FILTER
+    // =========================
     if (req.query.collection) {
       filter.collection_id = req.query.collection;
     }
 
-    // SubBrand filter
+    // =========================
+    // SUB BRAND FILTER
+    // =========================
     if (req.query.subBrand) {
       filter.subBrand = req.query.subBrand;
     }
 
+    // =========================
+    // DATE FILTER
+    // =========================
     const TIMEZONE = "Asia/Kolkata";
 
-    // Date range filter on createdAt
     if (req.query.startDate && req.query.endDate) {
       filter.updatedAt = {
         $gte: moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate(),
+
         $lte: moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate(),
       };
-      // const start = moment.tz(req.query.startDate, TIMEZONE).startOf("day").toDate();
-      // const end = moment.tz(req.query.endDate, TIMEZONE).endOf("day").toDate();
-      // filter.$or = [
-      //   { createdAt: { $gte: start, $lte: end } },
-      //   { updatedAt: { $gte: start, $lte: end } }
-      // ];
-    }
-    // Search functionality
-    if (req.query.search) {
-      const searchRegex = new RegExp(req.query.search, "i");
-      filter.$or = [
-        { product_code: searchRegex },
-        { name: searchRegex },
-        { sku_group_id: searchRegex },
-        { sku_group__name: searchRegex },
-        { product_hsn_code: searchRegex },
-      ];
     }
 
-    // Get total count without filters for pagination info
+    // =========================
+    // FUZZY SEARCH
+    // =========================
+    if (req.query.search) {
+      const search = req.query.search.trim();
+
+      // Split by space or dash
+      const tokens = search.split(/[\s-]+/).filter(Boolean);
+
+      // Every token must match
+      filter.$and = tokens.map((token) => ({
+        $or: [
+          {
+            product_code: {
+              $regex: token,
+              $options: "i",
+            },
+          },
+
+          {
+            name: {
+              $regex: token,
+              $options: "i",
+            },
+          },
+
+          {
+            sku_group_id: {
+              $regex: token,
+              $options: "i",
+            },
+          },
+
+          {
+            sku_group__name: {
+              $regex: token,
+              $options: "i",
+            },
+          },
+
+          {
+            product_hsn_code: {
+              $regex: token,
+              $options: "i",
+            },
+          },
+        ],
+      }));
+    }
+
+    // =========================
+    // TOTAL COUNT
+    // =========================
     const totalCount = await Product.countDocuments({});
 
-    // Get filtered count
+    // =========================
+    // FILTERED COUNT
+    // =========================
     const filteredCount = await Product.countDocuments(filter);
 
-    // Get products with pagination
+    // =========================
+    // PRODUCT LIST
+    // =========================
     const products = await Product.find(filter)
       .populate([
         {
           path: "cat_id",
-          select: "",
         },
         {
           path: "collection_id",
-          select: "",
         },
         {
           path: "brand",
-          select: "",
         },
         {
           path: "subBrand",
-          select: "",
         },
         {
           path: "supplier",
-          select: "",
         },
       ])
       .sort({ product_code: 1 })
       .skip(skip)
-      .limit(limit);
+      .limit(limit)
+      .lean();
 
+    // =========================
+    // RESPONSE
+    // =========================
     return res.status(200).json({
       status: 200,
       message: "Product paginated list",
       data: products,
+
       pagination: {
         currentPage: page,
         limit,
@@ -373,10 +541,18 @@ const productPaginatedList = asyncHandler(async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(400);
-    throw error;
+    console.log(error);
+
+    return res.status(500).json({
+      status: 500,
+      message: error.message,
+    });
   }
 });
+
+module.exports = {
+  productPaginatedList,
+};
 
 module.exports = {
   createProduct,
