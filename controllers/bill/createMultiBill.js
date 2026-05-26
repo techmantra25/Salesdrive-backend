@@ -81,8 +81,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         preallocatedBillNumbers.push(`${startSeries.prefix}${paddedNumber}`);
       }
       console.log(
-        `✅ Pre-allocated ${billCount} bill numbers from ${
-          preallocatedBillNumbers[0]
+        `✅ Pre-allocated ${billCount} bill numbers from ${preallocatedBillNumbers[0]
         } to ${preallocatedBillNumbers[billCount - 1]}`,
       );
     }
@@ -177,8 +176,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
             const product = await Product.findById(item?.product);
             if (!product) {
               throw new Error(
-                `Product not found for ID ${item?.product} in line item #${
-                  itemIndex + 1
+                `Product not found for ID ${item?.product} in line item #${itemIndex + 1
                 }.`,
               );
             }
@@ -186,8 +184,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
             const price = await Price.findById(item?.price);
             if (!price) {
               throw new Error(
-                `Price not found for ID ${item?.price} in line item #${
-                  itemIndex + 1
+                `Price not found for ID ${item?.price} in line item #${itemIndex + 1
                 }.`,
               );
             }
@@ -198,8 +195,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
               );
               if (!inventory) {
                 throw new Error(
-                  `Inventory not found for ID ${
-                    item?.inventoryId?._id
+                  `Inventory not found for ID ${item?.inventoryId?._id
                   } in line item #${itemIndex + 1}.`,
                 );
               }
@@ -248,14 +244,12 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         if (activeBillSeries) {
           newbillNo = preallocatedBillNumbers[successfulBillIndex]; // ✅ USE PRE-ALLOCATED
           console.log(
-            `Assigning pre-allocated bill #${
-              successfulBillIndex + 1
+            `Assigning pre-allocated bill #${successfulBillIndex + 1
             }: ${newbillNo} for order ${orderNo}`,
           );
         } else {
           console.log(
-            `No active bill series for bill ${
-              index + 1
+            `No active bill series for bill ${index + 1
             }, using only oldBillNo = ${billNo}`,
           );
         }
@@ -263,6 +257,9 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         const modifiedLineItems = lineItems.map((item) => ({
           ...item,
           billQty: item.oderQty,
+
+          totalDiscountAmount: item.totalDiscountAmount || 0,
+          totalDiscountPercentage: item.totalDiscountPercentage || 0,
         }));
 
         // Get adjustedCreditNoteIds and creditAmount from order if they exist

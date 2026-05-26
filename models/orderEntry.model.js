@@ -66,6 +66,15 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+  totalDiscountAmount: {
+  type: Number,
+  default: 0,
+},
+
+totalDiscountPercentage: {
+  type: Number,
+  default: 0,
+},
   usedBasePoint: { type: Number, default: null },
   goodsType: {
     type: String,

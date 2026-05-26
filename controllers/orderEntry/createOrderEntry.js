@@ -39,6 +39,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       creditAmount,
       isBillCreate,
     } = req.body;
+    console.log("Received createOrderEntry request with data:", req.body);
 
     const distributorId = req.user.id;
 
@@ -50,6 +51,11 @@ const createOrderEntry = asyncHandler(async (req, res) => {
 
     // Validate each line item for product, price, and inventory
     for (const item of lineItems) {
+      console.log("TOTAL DISCOUNT DATA:", {
+  product: item.product,
+  totalDiscountAmount: item.totalDiscountAmount,
+  totalDiscountPercentage: item.totalDiscountPercentage,
+});
       const product = await Product.findById(item.product);
       if (!product) {
         return res

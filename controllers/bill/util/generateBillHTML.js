@@ -121,11 +121,16 @@ async function generateBillHTML(bill, options = {}) {
           ${formatCurrency(item.grossAmt)}
         </td>
         <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-          ${formatCurrency(item.distributorDisc)}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-          ${formatCurrency(item.totalCGST + item.totalSGST + item.totalIGST)}
-        </td>
+  ${formatCurrency(item.distributorDisc)}
+</td>
+
+<td style="border-right: 1px solid #000; padding: 2px; text-align: center; font-weight: bold;">
+  ${formatCurrency(item.totalDiscountPercentage || 0)}%
+</td>
+
+<td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
+  ${formatCurrency(item.totalCGST + item.totalSGST + item.totalIGST)}
+</td>
         <td style="padding: 2px; font-weight: bold; text-align: right;">
           ${formatCurrency(item.netAmt)}
         </td>
@@ -148,7 +153,8 @@ async function generateBillHTML(bill, options = {}) {
         <td style="border-right: 1px solid #000; padding: 2px;"></td>
         <td style="border-right: 1px solid #000; padding: 2px;"></td>
         <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="padding: 2px;"></td>
+<td style="border-right: 1px solid #000; padding: 2px;"></td>
+<td style="padding: 2px;"></td>
       </tr>
     `;
   }
@@ -509,24 +515,35 @@ async function generateBillHTML(bill, options = {}) {
               >
                 Gross<br />Amount
               </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Disc Amt
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Tax Amount
-              </th>
+             <th
+  style="
+    border-right: 1px solid #000;
+    padding: 2px;
+    text-align: center;
+  "
+>
+  Disc Amt
+</th>
+
+<th
+  style="
+    border-right: 1px solid #000;
+    padding: 2px;
+    text-align: center;
+  "
+>
+  Total Discount
+</th>
+
+<th
+  style="
+    border-right: 1px solid #000;
+    padding: 2px;
+    text-align: center;
+  "
+>
+  Tax Amount
+</th>
               <th style="padding: 2px; text-align: center">Net Amount</th>
             </tr>
           </thead>

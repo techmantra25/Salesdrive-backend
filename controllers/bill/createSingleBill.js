@@ -269,13 +269,26 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // update the order with the new bill
-    await OrderEntry.findByIdAndUpdate(
-      orderId,
-      {
-        $push: { billIds: newBill?._id },
-      },
-      { new: true },
-    );
+   await OrderEntry.findByIdAndUpdate(
+  orderId,
+  {
+    $push: { billIds: newBill?._id },
+
+    $set: {
+      lineItems: lineItems.map((item) => ({
+        ...item,
+        totalDiscountAmount: Number(
+          item?.totalDiscountAmount || 0
+        ),
+
+        totalDiscountPercentage: Number(
+          item?.totalDiscountPercentage || 0
+        ),
+      })),
+    },
+  },
+  { new: true },
+);
 
     const orderEntry = await OrderEntry.findById(orderId).populate([
       { path: "billIds", select: "" },
