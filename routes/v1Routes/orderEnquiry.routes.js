@@ -1,0 +1,32 @@
+const express = require("express");
+const {
+  createOrderEnquiry,
+} = require("../../controllers/orderEnquiry/createOrderEnquiry.js");
+const {
+  paginatedOrderEnquiry,
+} = require("../../controllers/orderEnquiry/paginatedOrderEnquiry.js");
+const {
+  detailOrderEnquiry,
+} = require("../../controllers/orderEnquiry/detailOrderEnquiry.js");
+const {
+  updateOrderEnquiry,
+} = require("../../controllers/orderEnquiry/updateOrderEnquiry.js");
+const {
+  convertOrderEnquiryToOrderEntry,
+} = require("../../controllers/orderEnquiry/convertOrderEnquiryToOrderEntry.js");
+const { protectDisRoute } = require("../../middlewares/protectDisRoute");
+const { protect } = require("../../middlewares/auth.middleware.js");
+
+const orderEnquiryRoutes = express.Router();
+
+orderEnquiryRoutes.route("/create").post(protectDisRoute, createOrderEnquiry);
+orderEnquiryRoutes
+  .route("/paginated-list")
+  .get(protectDisRoute, paginatedOrderEnquiry);
+orderEnquiryRoutes.route("/detail/:id").get(protect, detailOrderEnquiry);
+orderEnquiryRoutes.route("/update/:id").patch(protectDisRoute, updateOrderEnquiry);
+orderEnquiryRoutes
+  .route("/convert-to-order-entry/:id")
+  .post(protectDisRoute, convertOrderEnquiryToOrderEntry);
+
+module.exports = orderEnquiryRoutes;
