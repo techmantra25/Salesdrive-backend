@@ -154,6 +154,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         { path: "lineItems.inventoryId" },
         { path: "billIds" },
         { path: "secondaryOrderEntryLogId", select: "Order_Id OrderData" },
+        { path: "orderEnquiryId", select: "enquiryNo" },
         {
           path: "adjustedCreditNoteIds.creditNoteId",
           model: "CreditNote",
