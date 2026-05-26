@@ -14,6 +14,9 @@ const {
 const {
   convertOrderEnquiryToOrderEntry,
 } = require("../../controllers/orderEnquiry/convertOrderEnquiryToOrderEntry.js");
+const {
+  orderEnquiryPrintPDF,
+} = require("../../controllers/orderEnquiry/orderEnquiryPrintPDF.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 
@@ -28,5 +31,8 @@ orderEnquiryRoutes.route("/update/:id").patch(protectDisRoute, updateOrderEnquir
 orderEnquiryRoutes
   .route("/convert-to-order-entry/:id")
   .post(protectDisRoute, convertOrderEnquiryToOrderEntry);
+orderEnquiryRoutes
+  .route("/order-enquiry-print-pdf/:orderEnquiryId")
+  .get(protect, orderEnquiryPrintPDF);
 
 module.exports = orderEnquiryRoutes;
