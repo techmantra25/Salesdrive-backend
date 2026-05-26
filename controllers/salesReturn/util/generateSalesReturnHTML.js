@@ -721,7 +721,7 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
                         : ""
                     }
                     <tr class="bold border-top-bold">
-                      <td style="padding-top: 5px;">Net Amount</td>
+                      <td style="padding-top: 5px;">Net Amt <br/> ( Incl. GST )</td>
                       <td class="text-center" style="padding-top: 5px;">:</td>
                       <td class="text-right" style="padding-top: 5px;">₹${formatCurrency(
                         salesReturn.netAmount,
