@@ -12,6 +12,9 @@ const {
   updateOrderEnquiry,
 } = require("../../controllers/orderEnquiry/updateOrderEnquiry.js");
 const {
+  editOrderEnquiry,
+} = require("../../controllers/orderEnquiry/editOrderEnquiry.js");
+const {
   convertOrderEnquiryToOrderEntry,
 } = require("../../controllers/orderEnquiry/convertOrderEnquiryToOrderEntry.js");
 const {
@@ -28,6 +31,7 @@ orderEnquiryRoutes
   .get(protectDisRoute, paginatedOrderEnquiry);
 orderEnquiryRoutes.route("/detail/:id").get(protect, detailOrderEnquiry);
 orderEnquiryRoutes.route("/update/:id").patch(protectDisRoute, updateOrderEnquiry);
+orderEnquiryRoutes.route("/edit/:id").patch(protectDisRoute, editOrderEnquiry);
 orderEnquiryRoutes
   .route("/convert-to-order-entry/:id")
   .post(protectDisRoute, convertOrderEnquiryToOrderEntry);
