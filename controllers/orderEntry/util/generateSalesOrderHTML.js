@@ -442,8 +442,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <th style="width: 8%;">Basic Rate</th>
                 <th style="width: 9%;">Gross Amt</th>
                <th style="width: 8%;">Disc Amt</th>
-<th style="width: 8%;">Total Disc</th>
-<th style="width: 8%;">Tax Amt</th>
+               <th style="width: 8%;">Total Disc</th>
+               <th style="width: 8%;">Tax Amt</th>
                 <th style="width: 8%;">Net Amt</th>
               </tr>
             </thead>
