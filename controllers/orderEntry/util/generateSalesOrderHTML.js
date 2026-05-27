@@ -79,16 +79,16 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
     : [];
   const validLineItems = Array.isArray(orderEntry?.lineItems)
     ? orderEntry.lineItems.filter(
-        (item) =>
-          item?.product &&
-          ((Number(item?.oderQty) || 0) > 0 ||
-            (Number(item?.boxOrderQty) || 0) > 0 ||
-            (Number(item?.netAmt) || 0) > 0),
-      )
+      (item) =>
+        item?.product &&
+        ((Number(item?.oderQty) || 0) > 0 ||
+          (Number(item?.boxOrderQty) || 0) > 0 ||
+          (Number(item?.netAmt) || 0) > 0),
+    )
     : [];
 
   const emptyRows = Array.from({
-    length: Math.max(0, 20 - validLineItems.length),
+    length: Math.max(0, 6 - validLineItems.length),
   });
 
   const totalQtyPcs = validLineItems.reduce(
@@ -101,8 +101,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
   );
   const linkedBills = Array.isArray(orderEntry?.billIds)
     ? orderEntry.billIds
-        .map((bill) => bill?.new_billno || bill?.billNo)
-        .filter(Boolean)
+      .map((bill) => bill?.new_billno || bill?.billNo)
+      .filter(Boolean)
     : [];
 
   return `
@@ -256,10 +256,10 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
             <div class="logo-container">
               <img
                 src="${escapeHtml(
-                  options?.logoBase64 ||
-                    options?.logoUrl ||
-                    "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
-                )}"
+    options?.logoBase64 ||
+    options?.logoUrl ||
+    "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+  )}"
                 alt="Company Logo"
                 onerror="this.style.display='none'"
               />
@@ -269,10 +269,9 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
             </h2>
             <p style="margin: 3px 0;">
               ${escapeHtml(
-                `${distributor?.address1 || ""}${
-                  distributor?.address2 ? `, ${distributor.address2}` : ""
-                }`,
-              )}
+    `${distributor?.address1 || ""}${distributor?.address2 ? `, ${distributor.address2}` : ""
+    }`,
+  )}
             </p>
             <table style="margin-top: 3px;">
               <tbody>
@@ -324,8 +323,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td style="width: 30%;">Name</td>
                         <td>: <strong>${escapeHtml(
-                          retailer?.outletName || "",
-                        )}</strong>${retailer?.outletUID ? ` (${escapeHtml(retailer.outletUID)})` : ""}</td>
+    retailer?.outletName || "",
+  )}</strong>${retailer?.outletUID ? ` (${escapeHtml(retailer.outletUID)})` : ""}</td>
                       </tr>
                       <tr>
                         <td>Outlet Code</td>
@@ -334,10 +333,9 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td>Address</td>
                         <td>: ${escapeHtml(
-                          `${retailer?.address1 || ""}${
-                            retailer?.city ? `, ${retailer.city}` : ""
-                          }`,
-                        )}</td>
+    `${retailer?.address1 || ""}${retailer?.city ? `, ${retailer.city}` : ""
+    }`,
+  )}</td>
                       </tr>
                       <tr>
                         <td>Village/City</td>
@@ -367,19 +365,18 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td style="width: 34%;">Order No.</td>
                         <td>: <strong>${escapeHtml(
-                          orderEntry?.orderNo || "",
-                        )}</strong></td>
+    orderEntry?.orderNo || "",
+  )}</strong></td>
                       </tr>
-                      ${
-                        orderEntry?.orderId
-                          ? `
+                      ${orderEntry?.orderId
+      ? `
                       <tr>
                         <td>External Order ID</td>
                         <td>: ${escapeHtml(orderEntry.orderId)}</td>
                       </tr>
                       `
-                          : ""
-                      }
+      : ""
+    }
                       <tr>
                         <td>Order Date</td>
                         <td>: ${escapeHtml(formatDate(orderEntry?.createdAt))}</td>
@@ -399,14 +396,14 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td>Sales Man</td>
                         <td>: ${escapeHtml(
-                          salesman?.name || "",
-                        )}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
+      salesman?.name || "",
+    )}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
                       </tr>
                       <tr>
                         <td>Beat</td>
                         <td>: ${escapeHtml(
-                          route?.name || "",
-                        )}${route?.code ? ` (${escapeHtml(route.code)})` : ""}</td>
+      route?.name || "",
+    )}${route?.code ? ` (${escapeHtml(route.code)})` : ""}</td>
                       </tr>
                       <tr>
                         <td>Status</td>
@@ -415,8 +412,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td>Linked Bill(s)</td>
                         <td>: <strong>${escapeHtml(
-                          linkedBills.length ? linkedBills.join(", ") : "NA",
-                        )}</strong></td>
+      linkedBills.length ? linkedBills.join(", ") : "NA",
+    )}</strong></td>
                       </tr>
                     </tbody>
                   </table>
@@ -425,15 +422,14 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
             </tbody>
           </table>
 
-          ${
-            orderEntry?.remark
-              ? `
+          ${orderEntry?.remark
+      ? `
           <div class="highlight-box">
             <strong>Remarks:</strong> ${escapeHtml(orderEntry.remark)}
           </div>
           `
-              : ""
-          }
+      : ""
+    }
 
           <table class="items-table">
             <thead>
@@ -445,50 +441,58 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <th style="width: 8%;">Qty BOX</th>
                 <th style="width: 8%;">Basic Rate</th>
                 <th style="width: 9%;">Gross Amt</th>
-                <th style="width: 9%;">Disc Amt</th>
-                <th style="width: 8%;">Tax Amt</th>
+               <th style="width: 8%;">Disc Amt</th>
+<th style="width: 8%;">Total Disc</th>
+<th style="width: 8%;">Tax Amt</th>
                 <th style="width: 8%;">Net Amt</th>
               </tr>
             </thead>
             <tbody>
               ${validLineItems
-                .map((item, index) => {
-                  const product = item?.product || {};
-                  const description = `${product?.name || ""}`;
+      .map((item, index) => {
+        const product = item?.product || {};
+        const description = `${product?.name || ""}`;
 
-                  return `
+        return `
               <tr>
                 <td class="text-center">${index + 1}</td>
                 <td class="text-left">${escapeHtml(description)}</td>
                 <td class="text-center">${escapeHtml(
-                  product?.product_hsn_code || "",
-                )}</td>
+          product?.product_hsn_code || "",
+        )}</td>
                 <td class="text-center">${Number(item?.oderQty) || 0}</td>
                 <td class="text-center">${escapeHtml(
-                  getBoxQty(product, item?.oderQty),
-                )}</td>
+          getBoxQty(product, item?.oderQty),
+        )}</td>
                 <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.price?.rlp_price || 0),
-                )}</td>
+          formatCurrency(item?.price?.rlp_price || 0),
+        )}</td>
                 <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.grossAmt),
-                )}</td>
+          formatCurrency(item?.grossAmt),
+        )}</td>
+               <td class="text-right">${escapeHtml(
+          formatCurrency(item?.distributorDisc),
+        )}</td>
+
+<td class="text-right">
+  ${escapeHtml(
+          formatCurrency(item?.totalDiscountPercentage || 0)
+        )}%
+</td>
+
+<td class="text-right">${escapeHtml(
+          formatCurrency(getTaxAmount(item)),
+        )}</td>
                 <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.distributorDisc),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(getTaxAmount(item)),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.netAmt),
-                )}</td>
+          formatCurrency(item?.netAmt),
+        )}</td>
               </tr>
                   `;
-                })
-                .join("")}
+      })
+      .join("")}
               ${emptyRows
-                .map(
-                  () => `
+      .map(
+        () => `
               <tr>
                 <td class="text-center">-</td>
                 <td></td>
@@ -502,8 +506,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <td></td>
               </tr>
                   `,
-                )
-                .join("")}
+      )
+      .join("")}
             </tbody>
           </table>
 
@@ -532,16 +536,15 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         <td colspan="2">Order to Bill Status</td>
                         <td>: ${escapeHtml(getStatusLabel(orderEntry?.status))}</td>
                       </tr>
-                      ${
-                        Number(orderEntry?.totalBasePoints) > 0
-                          ? `
+                      ${Number(orderEntry?.totalBasePoints) > 0
+      ? `
                       <tr>
                         <td colspan="2">Base Points</td>
                         <td>: ${Number(orderEntry.totalBasePoints) || 0}</td>
                       </tr>
                       `
-                          : ""
-                      }
+      : ""
+    }
                       <tr>
                         <td colspan="3" style="padding-top: 10px;">
                           <strong>Amount In Words:</strong>
@@ -550,8 +553,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td colspan="3" class="bold">
                           ${escapeHtml(
-                            formatAmountInWords(orderEntry?.netAmount),
-                          )}
+      formatAmountInWords(orderEntry?.netAmount),
+    )}
                         </td>
                       </tr>
                     </tbody>
@@ -564,97 +567,108 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         <td style="width: 60%;">Gross Amount</td>
                         <td style="width: 10%;" class="text-center">:</td>
                         <td style="width: 30%;" class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.grossAmount),
-                        )}</td>
+      formatCurrency(orderEntry?.grossAmount),
+    )}</td>
                       </tr>
                       <tr>
                         <td>Special Discount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.distributorDiscount),
-                        )}</td>
+      formatCurrency(orderEntry?.distributorDiscount),
+    )}</td>
                       </tr>
                       <tr>
                         <td>Taxable Amount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.taxableAmount),
-                        )}</td>
+      formatCurrency(orderEntry?.taxableAmount),
+    )}</td>
                       </tr>
                       <tr>
                         <td>CGST</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.cgst),
-                        )}</td>
+      formatCurrency(orderEntry?.cgst),
+    )}</td>
                       </tr>
                       <tr>
                         <td>SGST</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.sgst),
-                        )}</td>
+      formatCurrency(orderEntry?.sgst),
+    )}</td>
                       </tr>
-                      ${
-                        Number(orderEntry?.igst) > 0
-                          ? `
+                      ${Number(orderEntry?.igst) > 0
+      ? `
                       <tr>
                         <td>IGST</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.igst),
-                        )}</td>
+        formatCurrency(orderEntry?.igst),
+      )}</td>
                       </tr>
                       `
-                          : ""
-                      }
+      : ""
+    }
                       <tr>
                         <td>Invoice Amount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.invoiceAmount),
-                        )}</td>
+      formatCurrency(orderEntry?.invoiceAmount),
+    )}</td>
                       </tr>
                       <tr>
                         <td>Round Off Amount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.roundOffAmount),
-                        )}</td>
+      formatCurrency(orderEntry?.roundOffAmount),
+    )}</td>
                       </tr>
-                      ${
-                        Number(orderEntry?.cashDiscount) > 0 ||
-                        orderEntry?.cashDiscountApplied
-                          ? `
+                      ${Number(orderEntry?.cashDiscount) > 0 ||
+      orderEntry?.cashDiscountApplied
+      ? `
                       <tr>
                         <td>Cash Discount</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.cashDiscount),
-                        )}</td>
+        formatCurrency(orderEntry?.cashDiscount),
+      )}</td>
                       </tr>
                       `
-                          : ""
-                      }
-                      ${
-                        Number(orderEntry?.creditAmount) > 0
-                          ? `
+      : ""
+    }
+                      ${Number(orderEntry?.creditAmount) > 0
+      ? `
                       <tr>
                         <td>Credit Note Adjustment</td>
                         <td class="text-center">:</td>
                         <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEntry?.creditAmount),
-                        )}</td>
+        formatCurrency(orderEntry?.creditAmount),
+      )}</td>
                       </tr>
                       `
-                          : ""
-                      }
+      : ""
+    }
+                      <tr>
+  <td>Total Discount %</td>
+  <td class="text-center">:</td>
+  <td class="text-right">
+    ${escapeHtml(
+      formatCurrency(
+        validLineItems.reduce(
+          (acc, item) => acc + (Number(item?.totalDiscountPercentage) || 0),
+          0
+        ) / (validLineItems.length || 1)
+      )
+    )}%
+  </td>
+</tr>
                       <tr class="bold border-top-bold" style="font-weight: bold;">
                         <td style="padding-top: 5px;">Net Amount</td>
                         <td class="text-center" style="padding-top: 5px;">:</td>
                         <td class="text-right" style="padding-top: 5px;">${escapeHtml(
-                          formatCurrency(orderEntry?.netAmount),
-                        )}</td>
+      formatCurrency(orderEntry?.netAmount),
+    )}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -663,9 +677,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
             </tbody>
           </table>
 
-          ${
-            bankData?.bankName || upiData?.upiId
-              ? `
+          ${bankData?.bankName || upiData?.upiId
+      ? `
           <table class="bank-table">
             <tbody>
               <tr>
@@ -675,9 +688,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       <tr>
                         <td colspan="3" class="bold">Bank Details</td>
                       </tr>
-                      ${
-                        bankData?.bankName
-                          ? `
+                      ${bankData?.bankName
+        ? `
                       <tr>
                         <td style="width: 30%;">Bank Name</td>
                         <td>: ${escapeHtml(bankData.bankName)}</td>
@@ -699,12 +711,12 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         <td>: ${escapeHtml(bankData.accountNumber || "")}</td>
                       </tr>
                       `
-                          : `
+        : `
                       <tr>
                         <td colspan="2">Bank details are not available.</td>
                       </tr>
                       `
-                      }
+      }
                     </tbody>
                   </table>
                 </td>
@@ -716,10 +728,10 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                       </tr>
                       <tr>
                         <td>${escapeHtml(
-                          upiData?.upiId
-                            ? `UPI ID: ${upiData.upiId}`
-                            : "UPI details are not available.",
-                        )}</td>
+        upiData?.upiId
+          ? `UPI ID: ${upiData.upiId}`
+          : "UPI details are not available.",
+      )}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -728,27 +740,26 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
             </tbody>
           </table>
           `
-              : ""
-          }
+      : ""
+    }
 
-          ${
-            termConditions.length > 0
-              ? `
+          ${termConditions.length > 0
+      ? `
           <div class="terms-section">
             <p class="bold">Terms & Conditions:</p>
             <ol>
               ${termConditions
-                .map((term) => `<li>${escapeHtml(term)}</li>`)
-                .join("")}
+        .map((term) => `<li>${escapeHtml(term)}</li>`)
+        .join("")}
             </ol>
           </div>
           `
-              : `
+      : `
           <div class="terms-section">
             <p><strong>Note:</strong> This is a system generated sales order print.</p>
           </div>
           `
-          }
+    }
 
           <table class="signature-table">
             <tbody>
@@ -759,8 +770,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 </td>
                 <td>
                   <p class="bold">For ${escapeHtml(
-                    distributor?.name || "Company Name",
-                  )}</p>
+      distributor?.name || "Company Name",
+    )}</p>
                   <div class="signature-line">
                     <p class="bold">Authorised Signatory</p>
                   </div>
