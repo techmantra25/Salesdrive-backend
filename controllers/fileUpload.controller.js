@@ -1989,6 +1989,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               const priceUpdates = [];
               const updatedPriceIds = new Set();
+              const newPriceDocs = [];
               let totalProductsMatched = 0;
               let totalPricesMatched = 0;
               const now = new Date();
@@ -2047,6 +2048,35 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   continue;
                 }
 
+                const effectiveDate = row["Effective Date"]
+                  ? String(row["Effective Date"]).trim()
+                  : "";
+                if (!effectiveDate) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Missing required fields (Effective Date)",
+                  });
+                  continue;
+                }
+
+                const parsedEff = moment(effectiveDate, "DD-MM-YYYY");
+                if (!parsedEff.isValid()) {
+                  skippedRowsForCollectionPrice.push({
+                    ...row,
+                    reason: "Invalid Effective Date",
+                  });
+                  continue;
+                }
+
+                const effectiveDateParsed = moment
+                  .tz(parsedEff.format("YYYY-MM-DD"), "YYYY-MM-DD", "Asia/Kolkata")
+                  .startOf("day")
+                  .toDate();
+                const todayStart = moment(now)
+                  .tz("Asia/Kolkata")
+                  .startOf("day")
+                  .toDate();
+
                 const matchedProducts =
                   productsByCollectionId.get(String(collectionId)) || [];
 
@@ -2059,7 +2089,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 totalProductsMatched += matchedProducts.length;
-
                 const productIds = matchedProducts.map((product) => product._id);
                 const activePrices = await Price.find({
                   productId: { $in: productIds },
@@ -2073,7 +2102,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     { expiresAt: { $gte: now } },
                   ],
                 })
-                  .select("_id mrp_price")
+                  .select("_id mrp_price effective_date expiresAt productId status")
                   .lean();
 
                 if (activePrices.length === 0) {
@@ -2085,43 +2114,152 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   continue;
                 }
 
-                totalPricesMatched += activePrices.length;
-
+                const pricesByProduct = new Map();
                 activePrices.forEach((price) => {
-                  const mrpNumber = Number(price.mrp_price);
+                  const key = String(price.productId);
+                  if (!pricesByProduct.has(key)) {
+                    pricesByProduct.set(key, []);
+                  }
+                  pricesByProduct.get(key).push(price);
+                });
 
-                  if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
-                    return;
+                for (const product of matchedProducts) {
+                  const productKey = String(product._id);
+                  const productPrices = pricesByProduct.get(productKey) || [];
+                  if (productPrices.length === 0) {
+                    skippedRowsForCollectionPrice.push({
+                      ...row,
+                      reason: `No active national price found for product ${String(
+                        product.product_code || product._id,
+                      )}`,
+                    });
+                    continue;
                   }
 
-                  priceUpdates.push({
-                    updateOne: {
-                      filter: { _id: price._id },
-                      update: {
-                        $set: {
-                          dlp_price: Number(
-                            (
-                              mrpNumber -
-                              (mrpNumber * L1DiscountPercentageNumber) / 100
-                            ).toFixed(2),
-                          ),
-                          rlp_price: Number(
-                            (
-                              mrpNumber -
-                              (mrpNumber * L2DiscountPercentageNumber) / 100
-                            ).toFixed(2),
-                          ),
-                          L1DiscountPercentage: L1DiscountPercentageNumber,
-                          L2DiscountPercentage: L2DiscountPercentageNumber,
+                  const sortedPrices = productPrices.sort(
+                    (a, b) => new Date(b.effective_date) - new Date(a.effective_date),
+                  );
+                  const latestPrice = sortedPrices[0];
+                  const mrpNumber = Number(latestPrice.mrp_price);
+
+                  if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
+                    skippedRowsForCollectionPrice.push({
+                      ...row,
+                      reason: "Invalid MRP price on existing national price",
+                    });
+                    continue;
+                  }
+
+                  const sameEffectivePrices = productPrices.filter((price) =>
+                    moment(price.effective_date)
+                      .tz("Asia/Kolkata")
+                      .isSame(effectiveDateParsed, "day"),
+                  );
+
+                  const dlpPrice = Number(
+                    (
+                      mrpNumber -
+                      (mrpNumber * L1DiscountPercentageNumber) / 100
+                    ).toFixed(2),
+                  );
+                  const rlpPrice = Number(
+                    (
+                      mrpNumber -
+                      (mrpNumber * L2DiscountPercentageNumber) / 100
+                    ).toFixed(2),
+                  );
+
+                  if (sameEffectivePrices.length > 0) {
+                    sameEffectivePrices.forEach((price) => {
+                      priceUpdates.push({
+                        updateOne: {
+                          filter: { _id: price._id },
+                          update: {
+                            $set: {
+                              dlp_price: dlpPrice,
+                              rlp_price: rlpPrice,
+                              L1DiscountPercentage: L1DiscountPercentageNumber,
+                              L2DiscountPercentage: L2DiscountPercentageNumber,
+                              effective_date: effectiveDateParsed,
+                            },
+                          },
+                        },
+                      });
+                      updatedPriceIds.add(String(price._id));
+                      totalPricesMatched += 1;
+                    });
+                    continue;
+                  }
+
+                  if (effectiveDateParsed <= todayStart) {
+                    skippedRowsForCollectionPrice.push({
+                      ...row,
+                      reason:
+                        "Price effective date should be greater than the current date",
+                    });
+                    continue;
+                  }
+
+                  if (
+                    moment(latestPrice.effective_date)
+                      .tz("Asia/Kolkata")
+                      .isSameOrAfter(effectiveDateParsed)
+                  ) {
+                    skippedRowsForCollectionPrice.push({
+                      ...row,
+                      reason:
+                        "Price effective date should be greater than the latest existing price effective date",
+                    });
+                    continue;
+                  }
+
+                  const expiresAt = moment(effectiveDateParsed)
+                    .tz("Asia/Kolkata")
+                    .subtract(1, "day")
+                    .endOf("day")
+                    .toDate();
+
+                  productPrices.forEach((price) => {
+                    const finalExpiresAt = price.expiresAt ?? expiresAt;
+                    const isExpiredPrice = moment(finalExpiresAt)
+                      .tz("Asia/Kolkata")
+                      .isSameOrBefore(now);
+
+                    priceUpdates.push({
+                      updateOne: {
+                        filter: { _id: price._id },
+                        update: {
+                          $set: {
+                            expiresAt: finalExpiresAt,
+                            status: isExpiredPrice ? false : price.status,
+                          },
                         },
                       },
-                    },
+                    });
+                    updatedPriceIds.add(String(price._id));
                   });
-                  updatedPriceIds.add(String(price._id));
-                });
+
+                  newPriceDocs.push({
+                    code: null,
+                    productId: product._id,
+                    price_type: "national",
+                    regionId: null,
+                    mrp_price: latestPrice.mrp_price,
+                    dlp_price: dlpPrice,
+                    rlp_price: rlpPrice,
+                    L1DiscountPercentage: L1DiscountPercentageNumber,
+                    L2DiscountPercentage: L2DiscountPercentageNumber,
+                    effective_date: effectiveDateParsed,
+                    distributorId: null,
+                    createdBy: req.user._id,
+                  });
+                  totalPricesMatched += 1;
+                }
               }
 
               let updatedPrices = [];
+              let insertedPrices = [];
+
               if (priceUpdates.length > 0) {
                 await Price.bulkWrite(priceUpdates);
                 updatedPrices = await Price.find({
@@ -2129,11 +2267,24 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }).lean();
               }
 
+              if (newPriceDocs.length > 0) {
+                const codes = await generateCodesInBatch(
+                  "PR",
+                  newPriceDocs.length,
+                );
+                newPriceDocs.forEach((doc, idx) => {
+                  doc.code = codes[idx];
+                });
+                insertedPrices = await Price.insertMany(newPriceDocs);
+              }
+
+              const resultPrices = [...insertedPrices, ...updatedPrices];
+
               console.log(
-                `Collection price update complete: ${updatedPrices.length} updated prices, ${totalProductsMatched} matched products, ${totalPricesMatched} matched prices, ${skippedRowsForCollectionPrice.length} skipped`,
+                `Collection price update complete: ${resultPrices.length} updated/created prices, ${totalProductsMatched} matched products, ${totalPricesMatched} matched prices, ${skippedRowsForCollectionPrice.length} skipped`,
               );
 
-              resp = updatedPrices || [];
+              resp = resultPrices;
               skippedRows = skippedRowsForCollectionPrice || [];
 
               break;
