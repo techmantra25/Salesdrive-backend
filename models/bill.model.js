@@ -72,15 +72,15 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-  totalDiscountAmount: {
-  type: Number,
-  default: 0,
-},
+  //   totalDiscountAmount: {
+  //   type: Number,
+  //   default: 0,
+  // },
 
-totalDiscountPercentage: {
-  type: Number,
-  default: 0,
-},
+  totalDiscountPercentage: {
+    type: Number,
+    default: 0,
+  },
   remark: {
     type: String,
   },
@@ -153,9 +153,9 @@ const BillSchema = new mongoose.Schema(
       required: true,
     },
     // target id
-    targetId:{
-      type:mongoose.Schema.Types.ObjectId,
-      ref:"SecondaryTarget"
+    targetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "SecondaryTarget"
     },
     orderNo: {
       type: String,
@@ -349,7 +349,7 @@ const BillSchema = new mongoose.Schema(
       failedAdjustments: { type: Number, default: 0 },
       lastRetryAttempt: { type: Date, default: null },
     },
-    
+
   },
   {
     timestamps: true,
