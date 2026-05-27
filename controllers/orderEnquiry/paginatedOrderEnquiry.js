@@ -1,16 +1,15 @@
 const asyncHandler = require("express-async-handler");
-const OrderEntry = require("../../models/orderEntry.model");
-const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
+const OrderEnquiry = require("../../models/orderEnquiry.model");
 const OutletApproved = require("../../models/outletApproved.model");
 
-const paginatedOrderEntry = asyncHandler(async (req, res) => {
+const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
   try {
     const distributorId = req.user.id;
 
     const {
       page = 1,
       limit = 10,
-      orderNo,
+      enquiryNo,
       salesmanName,
       routeId,
       retailerId,
@@ -24,55 +23,31 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       status,
     } = req.query;
 
-    let query = { distributorId };
+    const query = { distributorId };
 
-    // --------------------------------------------------
-    // ORDER NUMBER FILTER
-    // --------------------------------------------------
-    if (orderNo) {
-      const log = await SecondaryOrderEntryLog.findOne({ Order_Id: orderNo });
-      if (log) {
-        query.secondaryOrderEntryLogId = log._id;
-      } else {
-        query.orderNo = { $regex: orderNo, $options: "i" };
-      }
-    }
-
+    if (enquiryNo) query.enquiryNo = { $regex: enquiryNo, $options: "i" };
     if (salesmanName && salesmanName !== "all") query.salesmanName = salesmanName;
     if (routeId && routeId !== "all") query.routeId = routeId;
     if (orderType && orderType !== "all") query.orderType = orderType;
     if (orderSource && orderSource !== "all") query.orderSource = orderSource;
     if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
     if (status && status !== "all") query.status = status;
+    if (retailerId && retailerId !== "all") query.retailerId = retailerId;
 
-    // --------------------------------------------------
-    // RETAILER NAME FILTER
-    // --------------------------------------------------
-    if (retailerId && retailerId !== "all") {
-      query.retailerId = retailerId;
-    }
-
-    // --------------------------------------------------
-    // RETAILER PHONE FILTER (Normalize both schema + frontend)
-    // --------------------------------------------------
     if (retailerPhone && retailerPhone !== "all") {
-     
-
-      // Normalize frontend phone → last 10 digits
       const frontendDigits = retailerPhone.replace(/\D/g, "").slice(-10);
-      // Get retailers (we will filter manually)
       const allRetailers = await OutletApproved.find({}, { _id: 1, mobile1: 1 });
-
-      // Normalize schema numbers → last 10 digits
-      const matchedRetailers = allRetailers.filter((r) => {
-        const schemaDigits = (r.mobile1 || "").replace(/\D/g, "").slice(-10);
+      const matchedRetailers = allRetailers.filter((retailer) => {
+        const schemaDigits = (retailer.mobile1 || "")
+          .replace(/\D/g, "")
+          .slice(-10);
         return schemaDigits === frontendDigits;
       });
 
       if (matchedRetailers.length === 0) {
         return res.status(200).json({
           status: 200,
-          message: "Order entries list",
+          message: "Order enquiries list",
           data: [],
           pagination: {
             currentPage: Number(page),
@@ -85,25 +60,18 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         });
       }
 
-      // Apply phone filter only if retailerId is NOT already selected
       if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedRetailers.map((r) => r._id) };
+        query.retailerId = { $in: matchedRetailers.map((retailer) => retailer._id) };
       }
     }
 
-    // --------------------------------------------------
-    // OUTLET CODE FILTER
-    // --------------------------------------------------
     if (outletCode && outletCode !== "all") {
-      const outlet = await OutletApproved.findOne(
-        { outletCode },
-        { _id: 1 }
-      );
+      const outlet = await OutletApproved.findOne({ outletCode }, { _id: 1 });
 
       if (!outlet) {
         return res.status(200).json({
           status: 200,
-          message: "Order entries list",
+          message: "Order enquiries list",
           data: [],
           pagination: {
             currentPage: Number(page),
@@ -116,14 +84,11 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         });
       }
 
-      // Apply outletCode filter ONLY if retailerId is not already set
       if (!retailerId || retailerId === "all") {
         query.retailerId = outlet._id;
       }
     }
-    // --------------------------------------------------
-    // DATE RANGE FILTER
-    // --------------------------------------------------
+
     if (fromDate || toDate) {
       query.createdAt = {};
 
@@ -140,10 +105,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       }
     }
 
-    // --------------------------------------------------
-    // FETCH ORDER DATA
-    // --------------------------------------------------
-    const orderEntries = await OrderEntry.find(query)
+    const orderEnquiries = await OrderEnquiry.find(query)
       .populate([
         { path: "distributorId" },
         { path: "salesmanName" },
@@ -152,9 +114,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         { path: "lineItems.product" },
         { path: "lineItems.price" },
         { path: "lineItems.inventoryId" },
-        { path: "billIds" },
-        { path: "secondaryOrderEntryLogId", select: "Order_Id OrderData" },
-        { path: "orderEnquiryId", select: "enquiryNo" },
+        { path: "convertedOrderEntryId", select: "orderNo invoiceAmount" },
         {
           path: "adjustedCreditNoteIds.creditNoteId",
           model: "CreditNote",
@@ -163,25 +123,24 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         },
       ])
       .sort({ _id: -1 })
-      .skip((page - 1) * limit)
+      .skip((Number(page) - 1) * Number(limit))
       .limit(Number(limit));
 
-    const totalCount = await OrderEntry.countDocuments(query);
+    const totalCount = await OrderEnquiry.countDocuments(query);
 
     return res.status(200).json({
       status: 200,
-      message: "Order entries list",
-      data: orderEntries,
+      message: "Order enquiries list",
+      data: orderEnquiries,
       pagination: {
         currentPage: Number(page),
         limit: Number(limit),
-        totalPages: Math.ceil(totalCount / limit),
+        totalPages: Math.ceil(totalCount / Number(limit)),
         totalCount,
         filteredCount: totalCount,
         totalActiveCount: totalCount,
       },
     });
-
   } catch (error) {
     console.log("Error:", error);
     res.status(400);
@@ -189,4 +148,4 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { paginatedOrderEntry };
+module.exports = { paginatedOrderEnquiry };

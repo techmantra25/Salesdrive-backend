@@ -55,6 +55,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedCreditNoteIds,
       creditAmount,
       adjustedReplacementIds,
+      adviceSlipLink,
     } = req.body;
 
     const today = new Date();
@@ -250,6 +251,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedCreditNoteIds,
       adjustedReplacementIds,
       creditAmount,
+      adviceSlipLink,
       cashDiscountApplied: req.body.cashDiscountApplied || false,
       cashDiscountType: req.body.cashDiscountType || "amount",
       cashDiscountValue: req.body.cashDiscountValue || 0,

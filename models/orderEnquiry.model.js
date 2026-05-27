@@ -23,7 +23,7 @@ const LineItemSchema = new mongoose.Schema({
     ref: "Inventory",
   },
   oderQty: {
-    type: Number, // 10 > 5
+    type: Number,
     default: 0,
   },
   boxOrderQty: {
@@ -66,15 +66,6 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-//   totalDiscountAmount: {
-//   type: Number,
-//   default: 0,
-// },
-
-totalDiscountPercentage: {
-  type: Number,
-  default: 0,
-},
   usedBasePoint: { type: Number, default: null },
   goodsType: {
     type: String,
@@ -82,23 +73,17 @@ totalDiscountPercentage: {
   },
 });
 
-const OrderEntrySchema = new mongoose.Schema(
+const OrderEnquirySchema = new mongoose.Schema(
   {
     distributorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Distributor",
       required: true,
     },
-    orderNo: {
+    enquiryNo: {
       type: String,
       required: true,
       unique: true,
-    },
-    orderId: {
-      type: String,
-      // required: true,
-      unique: true,
-      sparse: true,
     },
     salesmanName: {
       type: mongoose.Schema.Types.ObjectId,
@@ -197,10 +182,6 @@ const OrderEntrySchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
-    billIds: {
-      type: [mongoose.Schema.Types.ObjectId],
-      ref: "Bill",
-    },
     adjustedCreditNoteIds: [
       {
         creditNoteId: {
@@ -215,24 +196,18 @@ const OrderEntrySchema = new mongoose.Schema(
     ],
     status: {
       type: String,
-      enum: ["Pending", "Completed_Billed", "Partially_Billed", "Cancelled"],
+      enum: ["Pending", "Converted", "Cancelled"],
       default: "Pending",
     },
     remark: {
       type: String,
     },
-    creditNoteId: {
-      type: [mongoose.Schema.Types.ObjectId],
-      ref: "CreditNote",
-      default: [],
-    },
-    secondaryOrderEntryLogId: {
+    convertedOrderEntryId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "SecondaryOrderEntryLog",
+      ref: "OrderEntry",
     },
-    orderEnquiryId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "OrderEnquiry",
+    convertedAt: {
+      type: Date,
     },
   },
   {
@@ -240,28 +215,6 @@ const OrderEntrySchema = new mongoose.Schema(
   },
 );
 
-OrderEntrySchema.index(
-  {
-    secondaryOrderEntryLogId: 1,
-  },
-  {
-    unique: true,
-    sparse: true,
-    partialFilterExpression: { secondaryOrderEntryLogId: { $exists: true } },
-  },
-);
+const OrderEnquiry = mongoose.model("OrderEnquiry", OrderEnquirySchema);
 
-OrderEntrySchema.index(
-  {
-    orderEnquiryId: 1,
-  },
-  {
-    unique: true,
-    sparse: true,
-    partialFilterExpression: { orderEnquiryId: { $exists: true } },
-  },
-);
-
-const OrderEntry = mongoose.model("OrderEntry", OrderEntrySchema);
-
-module.exports = OrderEntry;
+module.exports = OrderEnquiry;
