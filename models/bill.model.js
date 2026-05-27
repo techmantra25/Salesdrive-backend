@@ -242,6 +242,10 @@ const BillSchema = new mongoose.Schema(
         type: Date,
       },
     },
+    adviceSlipLink: {
+      type: String,
+      default: null,
+    },
     billedType: {
       type: String,
       enum: ["Bulk", "Single"],
