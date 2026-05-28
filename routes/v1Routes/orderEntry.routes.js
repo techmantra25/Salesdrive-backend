@@ -33,6 +33,7 @@ const {
   salesOrderPrintPDF,
 } = require("../../controllers/orderEntry/salesOrderPrintPDF.js");
 const {dayBookReport }= require("../../controllers/orderEntry/dayBookReport.js");
+const {editOrderEntry} = require("../../controllers/orderEntry/editOrderEntry.js");
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/create").post(protectDisRoute, createOrderEntry);
@@ -71,5 +72,9 @@ orderEntryRoutes
 orderEntryRoutes
   .route("/day-book-report")
   .get(protectDisRoute, dayBookReport);
+
+  orderEntryRoutes
+  .route("/order-entry-edit/:id")
+  .patch(protectDisRoute, editOrderEntry);
 
 module.exports = orderEntryRoutes;
