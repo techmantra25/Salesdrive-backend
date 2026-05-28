@@ -7,8 +7,8 @@ const v2Routes = require("./routes/v2.routes");
 const { errorHandler, notFound } = require("./middlewares/error.middleware");
 const connectDB = require("./db/db");
 const { app: expressApp, server } = require("./server");
-const notificationQueue = require("./queues/notificationQueue");
-const { initSocket } = require("./socket");
+// const notificationQueue = require("./queues/notificationQueue");
+// const { initSocket } = require("./socket");
 const {
   startAutoPendingBillCron,
 } = require("./jobs/crons/autoPendingBillDeliveryCron");
@@ -83,8 +83,8 @@ app.use("/api/v1/", v1Routes);
 app.use("/api/v2/", v2Routes);
 
 // Other queues
-require("./jobs/syncInventoryQueue");
-require("./jobs/syncGRNQueue");
+// require("./jobs/syncInventoryQueue");
+// require("./jobs/syncGRNQueue");
 
 // Cron jobs (unchanged)
 if (NODE_ENV !== "development" && NODE_ENV !== "testing") {
@@ -97,21 +97,21 @@ app.use(notFound);
 app.use(errorHandler);
 
 const bootstrapServer = async () => {
-  await startAutoPendingBillCron();
-  await startPortalLockCheckCron();
-  await startPartiallyDeliveredBillRetryCron();
+  // await startAutoPendingBillCron();
+  // await startPortalLockCheckCron();
+  // await startPartiallyDeliveredBillRetryCron();
 
   server.listen(PORT, () => {
     console.log(`Server started on port ${PORT} in ${NODE_ENV} mode`);
 
-    try {
-      initSocket(server);
-      console.log("Socket initialized successfully");
-    } catch (err) {
-      console.error("Socket initialization error:", err);
-    }
+    // try {
+    //   initSocket(server);
+    //   console.log("Socket initialized successfully");
+    // } catch (err) {
+    //   console.error("Socket initialization error:", err);
+    // }
 
-    require("./workers/notificationWorker");
+    // require("./workers/notificationWorker");
   });
 };
 
