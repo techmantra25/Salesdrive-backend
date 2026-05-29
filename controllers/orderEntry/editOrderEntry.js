@@ -4,6 +4,7 @@ const OrderEntry = require("../../models/orderEntry.model");
 const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
 const OutletApproved = require("../../models/outletApproved.model");
 const Price = require("../../models/price.model");
+const Inventory = require("../../models/inventory.model");
 
 const editOrderEntry = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -97,7 +98,7 @@ const editOrderEntry = asyncHandler(async (req, res) => {
             }
 
 
-            const inventoryId =
+            let inventoryId =
                 typeof item?.inventoryId === "object"
                     ? (
                         item?.inventoryId?._id ||
@@ -111,6 +112,29 @@ const editOrderEntry = asyncHandler(async (req, res) => {
                         null
                     )
                     : item?.inventoryId || null;
+
+
+            // ==========================================
+            // AUTO FIND INVENTORY IF NULL
+            // ==========================================
+
+            if (!inventoryId && productId) {
+
+                const inventory =
+                    await Inventory.findOne({
+                        productId: productId,
+                        distributorId:
+                            existingOrder.distributorId,
+                    });
+
+                inventoryId = inventory?._id || null;
+
+                console.log(
+                    "AUTO INVENTORY",
+                    productId,
+                    inventoryId
+                );
+            }
 
 
             const grossAmt =
