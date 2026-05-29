@@ -334,14 +334,7 @@ const updateDistributor = asyncHandler(async (req, res) => {
     throw new Error("Distributor not found");
   }
 
-  // Set the updatedBy field for tracking who updated RBPSchemeMapped
-  // if (
-  //   req.body.RBPSchemeMapped &&
-  //   req.body.RBPSchemeMapped !== distributor.RBPSchemeMapped
-  // ) {
-  //   distributor._updatedBy = req.user._id;
-  // }
-
+  // Update all standard fields
   distributor.name = req.body.name ?? distributor.name;
   distributor.address1 = req.body.address1 ?? distributor.address1;
   distributor.address2 = req.body.address2 ?? distributor.address2;
@@ -353,11 +346,7 @@ const updateDistributor = asyncHandler(async (req, res) => {
   distributor.status = req.body.status ?? distributor.status;
   distributor.sbu = req.body.sbu ?? distributor.sbu;
   distributor.role = req.body.role ?? distributor.role;
-  distributor.RBPSchemeMapped =
-    req.body.RBPSchemeMapped ?? distributor.RBPSchemeMapped;
-  if (req.body.password) {
-    distributor.password = req.body.password;
-  }
+  distributor.RBPSchemeMapped = req.body.RBPSchemeMapped ?? distributor.RBPSchemeMapped;
   distributor.area = req.body.area ?? distributor.area;
   distributor.ownerName = req.body.ownerName ?? distributor.ownerName;
   distributor.dayOff = req.body.dayOff ?? distributor.dayOff;
@@ -367,8 +356,7 @@ const updateDistributor = asyncHandler(async (req, res) => {
   distributor.stateId = req.body.stateId ?? distributor.stateId;
   distributor.regionId = req.body.regionId ?? distributor.regionId;
   distributor.oldDate = req.body.oldDate ?? distributor.oldDate;
-  distributor.primaryInvoiceType =
-    req.body.primaryInvoiceType ?? distributor.primaryInvoiceType;
+  distributor.primaryInvoiceType = req.body.primaryInvoiceType ?? distributor.primaryInvoiceType;
 
   if ("openingStock" in req.body) {
     distributor.openingStock = req.body.openingStock;
@@ -378,19 +366,25 @@ const updateDistributor = asyncHandler(async (req, res) => {
     distributor.allowRLPEdit = req.body.allowRLPEdit;
   }
 
-  const updatedDistributor = await distributor.save();
-
-  // Only update Password collection if password is changed
+  // ✅ PASSWORD CHANGE — assign plain text, pre-save hook will hash it
   if (req.body.password) {
-    let updateParam = {
-      userId: distributor._id,
-      password: req.body.password,
-    };
+    // Assign plain text — model's pre-save hook hashes it automatically
+    distributor.password = req.body.password;
 
-    await Password.findOneAndUpdate({ userId: distributor._id }, updateParam, {
-      new: true,
-    });
+    // Invalidate genPassword with a random unguessable string
+    // pre-save hook will hash this too since genPassword is modified
+    distributor.genPassword =
+      "INVALIDATED_" + distributor._id + "_" + Date.now();
+
+    // Update Password collection (keep plain text for email credential feature)
+    await Password.findOneAndUpdate(
+      { userId: distributor._id },
+      { password: req.body.password },
+      { new: true }
+    );
   }
+
+  const updatedDistributor = await distributor.save();
 
   const token = generateToken(updatedDistributor._id);
 
@@ -403,6 +397,7 @@ const updateDistributor = asyncHandler(async (req, res) => {
     resultDistributor.loginAs = "Admin";
   }
 
+  // Never expose hashed passwords in response
   delete resultDistributor.password;
   delete resultDistributor.genPassword;
 
@@ -411,7 +406,6 @@ const updateDistributor = asyncHandler(async (req, res) => {
     data: resultDistributor,
   });
 });
-
 const sendCredentialEmail = asyncHandler(async (req, res) => {
   try {
     const userId = req.params.id;
