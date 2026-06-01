@@ -6,12 +6,12 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
-TEMP_PROJECT_PATH="/home/saas/temp-rupa-dms-backend"
+TEMP_PROJECT_PATH="/home/saas/temp-salesdrive-backend"
 
-PROJECT_PATH="/home/saas/app/rupa-dms-backend"
+PROJECT_PATH="/home/saas/app/salesdrive-backend"
 printf "live\n"
-ECOSYSTEM_FILE="/home/saas/scripts/pm2StartDMSBackend.config.js"
-APP_NAME="rupa-dms-backend"
+ECOSYSTEM_FILE="/home/saas/scripts/pm2Start.config.js"
+APP_NAME="salesdrive-backend"
 
 echo -e "${YELLOW}************** Backend Deployment Start **************${NC}"
 
