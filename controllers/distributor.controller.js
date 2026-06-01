@@ -326,7 +326,6 @@ const disList = asyncHandler(async (req, res) => {
 
 const updateDistributor = asyncHandler(async (req, res) => {
   const { _id } = req.body;
-  
 
   const distributor = await Distributor.findById(_id);
 
