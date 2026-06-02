@@ -377,8 +377,6 @@ const productAllList = asyncHandler(async (req, res) => {
 //   }
 // });
 
-
-
 const productPaginatedList = asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -519,10 +517,13 @@ const productPaginatedList = asyncHandler(async (req, res) => {
           path: "supplier",
         },
       ])
-      .sort({ product_code: 1 })
+      // .sort({ product_code: 1 })
+      .sort({ updatedAt: -1 })
       .skip(skip)
       .limit(limit)
       .lean();
+
+      console.log(products, "products");
 
     // =========================
     // RESPONSE
