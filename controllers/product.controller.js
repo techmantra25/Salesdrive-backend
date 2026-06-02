@@ -523,8 +523,6 @@ const productPaginatedList = asyncHandler(async (req, res) => {
       .limit(limit)
       .lean();
 
-      console.log(products, "products");
-
     // =========================
     // RESPONSE
     // =========================
