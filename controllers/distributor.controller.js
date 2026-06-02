@@ -182,6 +182,11 @@ const loginUser = asyncHandler(async (req, res) => {
         password,
         user.genPassword,
       );
+      console.log("Password match:", isMatchPassword);
+      console.log("GenPassword match:", isMatchGenPassword);
+      console.log("DB Code:", user.dbCode);
+      console.log("Password Hash:", user.password);
+      console.log("GenPassword Hash:", user.genPassword);
 
       // If either password or genPassword matches
       if (isMatchPassword || isMatchGenPassword) {
@@ -366,23 +371,61 @@ const updateDistributor = asyncHandler(async (req, res) => {
     distributor.allowRLPEdit = req.body.allowRLPEdit;
   }
 
-  // ✅ PASSWORD CHANGE — assign plain text, pre-save hook will hash it
-  if (req.body.password) {
-    // Assign plain text — model's pre-save hook hashes it automatically
-    distributor.password = req.body.password;
 
-    // Invalidate genPassword with a random unguessable string
-    // pre-save hook will hash this too since genPassword is modified
-    distributor.genPassword =
-      "INVALIDATED_" + distributor._id + "_" + Date.now();
 
-    // Update Password collection (keep plain text for email credential feature)
-    await Password.findOneAndUpdate(
-      { userId: distributor._id },
-      { password: req.body.password },
-      { new: true }
+
+
+  if (req.body.password && req.body.oldPassword) {
+    const passwordMatched = await bcrypt.compare(
+      req.body.oldPassword,
+      distributor.password
     );
+
+    const genPasswordMatched = await bcrypt.compare(
+      req.body.oldPassword,
+      distributor.genPassword
+    );
+
+    if (!passwordMatched && !genPasswordMatched) {
+      res.status(400);
+      throw new Error("Old password is incorrect");
+    }
+
+    // Only password matched
+    if (passwordMatched && !genPasswordMatched) {
+      distributor.password = req.body.password;
+
+      await Password.findOneAndUpdate(
+        { userId: distributor._id },
+        { password: req.body.password },
+        { new: true, upsert: true }
+      );
+    }
+
+    // Only genPassword matched
+    else if (genPasswordMatched && !passwordMatched) {
+      distributor.genPassword = req.body.password;
+
+      await Password.findOneAndUpdate(
+        { userId: distributor._id },
+        { genPassword: req.body.password },
+        { new: true, upsert: true }
+      );
+    }
+
+    // Both matched (password & genPassword are same)
+    else if (passwordMatched && genPasswordMatched) {
+      // Change ONLY password
+      distributor.password = req.body.password;
+
+      await Password.findOneAndUpdate(
+        { userId: distributor._id },
+        { password: req.body.password },
+        { new: true, upsert: true }
+      );
+    }
   }
+
 
   const updatedDistributor = await distributor.save();
 
