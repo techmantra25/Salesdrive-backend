@@ -465,174 +465,182 @@ const updatePrice = asyncHandler(async (req, res) => {
   }
 });
 
+// const pricingStatusBulkUpdate = asyncHandler(async (req, res) => {
+//   // try {
+//   //   const now = new Date();
+//   //   const todayStart = moment(now).tz("Asia/Kolkata").startOf("day").toDate();
+
+//   //   console.log("Bulk update pricing status", now, todayStart);
+
+//   //   // Step 1: Update expired prices
+//   //   const expiredResult = await Price.updateMany(
+//   //     { expiresAt: { $lte: now }, status: true },
+//   //     { $set: { status: false } }
+//   //   );
+
+//   //   const staleNationalResult = await Price.updateMany(
+//   //     {
+//   //       price_type: "national",
+//   //       status: true,
+//   //       effective_date: { $lt: todayStart },
+//   //       expiresAt: { $ne: null },
+//   //     },
+//   //     { $set: { status: false } }
+//   //   );
+
+//   //   // Step 2: Handle duplicate regional prices
+//   //   const duplicateRegionalPrices = await Price.aggregate([
+//   //     {
+//   //       $match: {
+//   //         status: true,
+//   //         price_type: "regional",
+//   //         $or: [
+//   //           { expiresAt: { $exists: false } },
+//   //           { expiresAt: null },
+//   //           { expiresAt: { $lte: new Date() } },
+//   //         ],
+//   //       },
+//   //     },
+//   //     {
+//   //       $group: {
+//   //         _id: {
+//   //           productId: "$productId",
+//   //           regionId: "$regionId",
+//   //         },
+//   //         prices: {
+//   //           $push: {
+//   //             _id: "$_id",
+//   //             createdAt: "$createdAt",
+//   //             effective_date: "$effective_date",
+//   //           },
+//   //         },
+//   //         count: { $sum: 1 },
+//   //       },
+//   //     },
+//   //     {
+//   //       $match: {
+//   //         count: { $gt: 1 },
+//   //       },
+//   //     },
+//   //   ]);
+
+//   //   let deactivatedRegionalCount = 0;
+//   //   for (const duplicateGroup of duplicateRegionalPrices) {
+//   //     // Sort by effective_date descending, then by createdAt descending (keep the latest)
+//   //     const sortedPrices = duplicateGroup.prices.sort((a, b) => {
+//   //       // First sort by effective_date
+//   //       if (a.effective_date && b.effective_date) {
+//   //         const dateCompare =
+//   //           new Date(b.effective_date) - new Date(a.effective_date);
+//   //         if (dateCompare !== 0) return dateCompare;
+//   //       }
+//   //       // If effective_dates are same or null, sort by createdAt
+//   //       return new Date(b.createdAt) - new Date(a.createdAt);
+//   //     });
+
+//   //     // Keep the first (latest) price, deactivate the rest
+//   //     const pricesToDeactivate = sortedPrices.slice(1).map((p) => p._id);
+
+//   //     if (pricesToDeactivate.length > 0) {
+//   //       const regionalResult = await Price.updateMany(
+//   //         { _id: { $in: pricesToDeactivate } },
+//   //         { $set: { status: false } }
+//   //       );
+//   //       deactivatedRegionalCount += regionalResult.modifiedCount;
+//   //     }
+//   //   }
+
+//   //   // Step 3: Handle duplicate distributor prices
+//   //   const duplicateDistributorPrices = await Price.aggregate([
+//   //     {
+//   //       $match: {
+//   //         status: true,
+//   //         price_type: "distributor",
+//   //         distributorId: { $ne: null },
+//   //         $or: [
+//   //           { expiresAt: { $exists: false } },
+//   //           { expiresAt: null },
+//   //           { expiresAt: { $lte: new Date() } },
+//   //         ],
+//   //       },
+//   //     },
+//   //     {
+//   //       $group: {
+//   //         _id: {
+//   //           productId: "$productId",
+//   //           regionId: "$regionId",
+//   //           distributorId: "$distributorId",
+//   //         },
+//   //         prices: {
+//   //           $push: {
+//   //             _id: "$_id",
+//   //             createdAt: "$createdAt",
+//   //             effective_date: "$effective_date",
+//   //           },
+//   //         },
+//   //         count: { $sum: 1 },
+//   //       },
+//   //     },
+//   //     {
+//   //       $match: {
+//   //         count: { $gt: 1 },
+//   //       },
+//   //     },
+//   //   ]);
+
+//   //   let deactivatedDistributorCount = 0;
+//   //   for (const duplicateGroup of duplicateDistributorPrices) {
+//   //     // Sort by effective_date descending, then by createdAt descending (keep the latest)
+//   //     const sortedPrices = duplicateGroup.prices.sort((a, b) => {
+//   //       // First sort by effective_date
+//   //       if (a.effective_date && b.effective_date) {
+//   //         const dateCompare =
+//   //           new Date(b.effective_date) - new Date(a.effective_date);
+//   //         if (dateCompare !== 0) return dateCompare;
+//   //       }
+//   //       // If effective_dates are same or null, sort by createdAt
+//   //       return new Date(b.createdAt) - new Date(a.createdAt);
+//   //     });
+
+//   //     // Keep the first (latest) price, deactivate the rest
+//   //     const pricesToDeactivate = sortedPrices.slice(1).map((p) => p._id);
+
+//   //     if (pricesToDeactivate.length > 0) {
+//   //       const distributorResult = await Price.updateMany(
+//   //         { _id: { $in: pricesToDeactivate } },
+//   //         { $set: { status: false } }
+//   //       );
+//   //       deactivatedDistributorCount += distributorResult.modifiedCount;
+//   //     }
+//   //   }
+
+//   //   return res.status(200).json({
+//   //     status: 200,
+//   //     message: "Price status updated successfully",
+//   //     data: {
+//   //       expiredPricesDeactivated: expiredResult.modifiedCount,
+//   //       staleNationalPricesDeactivated: staleNationalResult.modifiedCount,
+//   //       duplicateRegionalPricesDeactivated: deactivatedRegionalCount,
+//   //       duplicateDistributorPricesDeactivated: deactivatedDistributorCount,
+//   //       totalDuplicateGroupsFound: {
+//   //         regional: duplicateRegionalPrices.length,
+//   //         distributor: duplicateDistributorPrices.length,
+//   //       },
+//   //     },
+//   //   });
+//   // } catch (error) {
+//   //   res.status(400);
+//   //   throw new Error(error?.message || "Something went wrong");
+//   // }
+// });
+
 const pricingStatusBulkUpdate = asyncHandler(async (req, res) => {
-  // try {
-  //   const now = new Date();
-  //   const todayStart = moment(now).tz("Asia/Kolkata").startOf("day").toDate();
-
-  //   console.log("Bulk update pricing status", now, todayStart);
-
-  //   // Step 1: Update expired prices
-  //   const expiredResult = await Price.updateMany(
-  //     { expiresAt: { $lte: now }, status: true },
-  //     { $set: { status: false } }
-  //   );
-
-  //   const staleNationalResult = await Price.updateMany(
-  //     {
-  //       price_type: "national",
-  //       status: true,
-  //       effective_date: { $lt: todayStart },
-  //       expiresAt: { $ne: null },
-  //     },
-  //     { $set: { status: false } }
-  //   );
-
-  //   // Step 2: Handle duplicate regional prices
-  //   const duplicateRegionalPrices = await Price.aggregate([
-  //     {
-  //       $match: {
-  //         status: true,
-  //         price_type: "regional",
-  //         $or: [
-  //           { expiresAt: { $exists: false } },
-  //           { expiresAt: null },
-  //           { expiresAt: { $lte: new Date() } },
-  //         ],
-  //       },
-  //     },
-  //     {
-  //       $group: {
-  //         _id: {
-  //           productId: "$productId",
-  //           regionId: "$regionId",
-  //         },
-  //         prices: {
-  //           $push: {
-  //             _id: "$_id",
-  //             createdAt: "$createdAt",
-  //             effective_date: "$effective_date",
-  //           },
-  //         },
-  //         count: { $sum: 1 },
-  //       },
-  //     },
-  //     {
-  //       $match: {
-  //         count: { $gt: 1 },
-  //       },
-  //     },
-  //   ]);
-
-  //   let deactivatedRegionalCount = 0;
-  //   for (const duplicateGroup of duplicateRegionalPrices) {
-  //     // Sort by effective_date descending, then by createdAt descending (keep the latest)
-  //     const sortedPrices = duplicateGroup.prices.sort((a, b) => {
-  //       // First sort by effective_date
-  //       if (a.effective_date && b.effective_date) {
-  //         const dateCompare =
-  //           new Date(b.effective_date) - new Date(a.effective_date);
-  //         if (dateCompare !== 0) return dateCompare;
-  //       }
-  //       // If effective_dates are same or null, sort by createdAt
-  //       return new Date(b.createdAt) - new Date(a.createdAt);
-  //     });
-
-  //     // Keep the first (latest) price, deactivate the rest
-  //     const pricesToDeactivate = sortedPrices.slice(1).map((p) => p._id);
-
-  //     if (pricesToDeactivate.length > 0) {
-  //       const regionalResult = await Price.updateMany(
-  //         { _id: { $in: pricesToDeactivate } },
-  //         { $set: { status: false } }
-  //       );
-  //       deactivatedRegionalCount += regionalResult.modifiedCount;
-  //     }
-  //   }
-
-  //   // Step 3: Handle duplicate distributor prices
-  //   const duplicateDistributorPrices = await Price.aggregate([
-  //     {
-  //       $match: {
-  //         status: true,
-  //         price_type: "distributor",
-  //         distributorId: { $ne: null },
-  //         $or: [
-  //           { expiresAt: { $exists: false } },
-  //           { expiresAt: null },
-  //           { expiresAt: { $lte: new Date() } },
-  //         ],
-  //       },
-  //     },
-  //     {
-  //       $group: {
-  //         _id: {
-  //           productId: "$productId",
-  //           regionId: "$regionId",
-  //           distributorId: "$distributorId",
-  //         },
-  //         prices: {
-  //           $push: {
-  //             _id: "$_id",
-  //             createdAt: "$createdAt",
-  //             effective_date: "$effective_date",
-  //           },
-  //         },
-  //         count: { $sum: 1 },
-  //       },
-  //     },
-  //     {
-  //       $match: {
-  //         count: { $gt: 1 },
-  //       },
-  //     },
-  //   ]);
-
-  //   let deactivatedDistributorCount = 0;
-  //   for (const duplicateGroup of duplicateDistributorPrices) {
-  //     // Sort by effective_date descending, then by createdAt descending (keep the latest)
-  //     const sortedPrices = duplicateGroup.prices.sort((a, b) => {
-  //       // First sort by effective_date
-  //       if (a.effective_date && b.effective_date) {
-  //         const dateCompare =
-  //           new Date(b.effective_date) - new Date(a.effective_date);
-  //         if (dateCompare !== 0) return dateCompare;
-  //       }
-  //       // If effective_dates are same or null, sort by createdAt
-  //       return new Date(b.createdAt) - new Date(a.createdAt);
-  //     });
-
-  //     // Keep the first (latest) price, deactivate the rest
-  //     const pricesToDeactivate = sortedPrices.slice(1).map((p) => p._id);
-
-  //     if (pricesToDeactivate.length > 0) {
-  //       const distributorResult = await Price.updateMany(
-  //         { _id: { $in: pricesToDeactivate } },
-  //         { $set: { status: false } }
-  //       );
-  //       deactivatedDistributorCount += distributorResult.modifiedCount;
-  //     }
-  //   }
-
-  //   return res.status(200).json({
-  //     status: 200,
-  //     message: "Price status updated successfully",
-  //     data: {
-  //       expiredPricesDeactivated: expiredResult.modifiedCount,
-  //       staleNationalPricesDeactivated: staleNationalResult.modifiedCount,
-  //       duplicateRegionalPricesDeactivated: deactivatedRegionalCount,
-  //       duplicateDistributorPricesDeactivated: deactivatedDistributorCount,
-  //       totalDuplicateGroupsFound: {
-  //         regional: duplicateRegionalPrices.length,
-  //         distributor: duplicateDistributorPrices.length,
-  //       },
-  //     },
-  //   });
-  // } catch (error) {
-  //   res.status(400);
-  //   throw new Error(error?.message || "Something went wrong");
-  // }
+  return res.status(200).json({
+    status: 200,
+    message: "Server response: pricingStatusBulkUpdate controller is running",
+  });
 });
+
 
 const InactivePriceByExpiredDate = asyncHandler(async (req, res) => {
   try {
