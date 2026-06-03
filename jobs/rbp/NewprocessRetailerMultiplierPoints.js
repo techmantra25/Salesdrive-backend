@@ -115,15 +115,15 @@ async function startQueueIfNotRunning() {
 }
 
 // Schedule to run on the 4th of every month at 05:15 AM
-cron.schedule(
-  "15 5 4 * *",
-  () => {
-    startQueueIfNotRunning();
-  },
-  null,
-  true,
-  "Asia/Kolkata"
-);
+// cron.schedule(
+//   "15 5 4 * *",
+//   () => {
+//     startQueueIfNotRunning();
+//   },
+//   null,
+//   true,
+//   "Asia/Kolkata"
+// );
 
 // Schedule to run on the 1st of every month at 00:30 AM
 // cron.schedule(
