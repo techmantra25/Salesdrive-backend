@@ -87,10 +87,10 @@ app.use("/api/v2/", v2Routes);
 // require("./jobs/syncGRNQueue");
 
 // Cron jobs (unchanged)
-if (NODE_ENV !== "development" && NODE_ENV !== "testing") {
-  console.log("Starting cron jobs");
-  require("./jobs/rbp/NewprocessRetailerMultiplierPoints");
-}
+// if (NODE_ENV !== "development" && NODE_ENV !== "testing") {
+//   console.log("Starting cron jobs");
+//   require("./jobs/rbp/NewprocessRetailerMultiplierPoints");
+// }
 
 // Error handlers
 app.use(notFound);
