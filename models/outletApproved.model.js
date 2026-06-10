@@ -25,7 +25,7 @@ const outletApprovedSchema = new mongoose.Schema(
     employeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
-      required: true,
+     default: null,
     },
     zoneId: {
       type: mongoose.Schema.Types.ObjectId,
