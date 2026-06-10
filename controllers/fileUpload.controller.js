@@ -20,6 +20,7 @@ const Outlet = require("../models/outlet.model");
 const Employee = require("../models/employee.model");
 const Beat = require("../models/beat.model");
 const District = require("../models/district.model");
+const SubDivision = require("../models/subDivision.model");
 const Designation = require("../models/designation.model");
 const EmployeeMapping = require("../models/employeeMapping.model");
 const EmployeePassword = require("../models/employeePassword.model");
@@ -238,6 +239,103 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               } else {
                 console.warn("No valid results to save after filtering");
               }
+              break;
+            }
+
+            case "SubDivision":
+            case "subDivision": {
+              const districtCodes = new Set();
+              const subDivisionCodes = new Set();
+              const duplicateCodesInCsv = new Set();
+
+              for (const row of results) {
+                const districtCode = row["District Code"]?.trim();
+                const subDivisionCode = row["Sub Division Code"]?.trim();
+
+                if (districtCode) {
+                  districtCodes.add(districtCode);
+                }
+
+                if (subDivisionCode) {
+                  if (subDivisionCodes.has(subDivisionCode)) {
+                    duplicateCodesInCsv.add(subDivisionCode);
+                  }
+                  subDivisionCodes.add(subDivisionCode);
+                }
+              }
+
+              const [districts, existingSubDivisions] = await Promise.all([
+                District.find({
+                  code: { $in: Array.from(districtCodes) },
+                }).lean(),
+                SubDivision.find({
+                  code: { $in: Array.from(subDivisionCodes) },
+                })
+                  .select("code")
+                  .lean(),
+              ]);
+
+              const districtMap = new Map(
+                districts.map((district) => [district.code, district]),
+              );
+              const existingSubDivisionCodes = new Set(
+                existingSubDivisions.map((subDivision) => subDivision.code),
+              );
+              const validSubDivisions = [];
+
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1;
+
+                const subDivisionCode = row["Sub Division Code"]?.trim();
+                const subDivisionName = row["Sub Division Name"]?.trim();
+                const districtCode = row["District Code"]?.trim();
+
+                if (!subDivisionCode || !subDivisionName || !districtCode) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Missing required fields at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                if (duplicateCodesInCsv.has(subDivisionCode)) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Duplicate Sub Division Code in CSV at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                if (existingSubDivisionCodes.has(subDivisionCode)) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Sub Division already exists at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                const district = districtMap.get(districtCode);
+
+                if (!district) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `District not found at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                validSubDivisions.push({
+                  name: subDivisionName,
+                  code: subDivisionCode,
+                  districtId: district._id,
+                });
+              }
+
+              if (validSubDivisions.length > 0) {
+                resp = await SubDivision.insertMany(validSubDivisions);
+              }
+
               break;
             }
 
@@ -3303,13 +3401,13 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               console.log("Processing Beat CSV");
 
               const skippedRowsForBeat = [];
-              const regionCodes = new Set();
+              const subDivisionCodesForBeat = new Set();
               const distributorCodes = new Set();
               const beatNames = new Set();
 
               results.forEach((row) => {
-                if (row["Region Code"]?.trim()) {
-                  regionCodes.add(row["Region Code"].trim());
+                if (row["Sub Division Code"]?.trim()) {
+                  subDivisionCodesForBeat.add(row["Sub Division Code"].trim());
                 }
                 if (row["Distributor Codes"]?.trim()) {
                   // Split comma-separated distributor codes and add each one
@@ -3323,9 +3421,17 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 if (row["Beat Name"]?.trim()) {
                   beatNames.add(row["Beat Name"].trim());
                 }
-              }); // Step 2: Batch fetch regions, distributors, and existing beats
-              const [regions, distributors, existingBeats] = await Promise.all([
-                Region.find({ code: { $in: Array.from(regionCodes) } }).lean(),
+              }); // Step 2: Batch fetch sub divisions, distributors, and existing beats
+              const [subDivisions, distributors, existingBeats] =
+                await Promise.all([
+                SubDivision.find({
+                  code: { $in: Array.from(subDivisionCodesForBeat) },
+                })
+                  .populate({
+                    path: "districtId",
+                    select: "stateId",
+                  })
+                  .lean(),
                 Distributor.find({
                   dbCode: { $in: Array.from(distributorCodes) },
                 }).lean(),
@@ -3333,7 +3439,28 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   .select("name regionId distributorId")
                   .lean(),
               ]); // Step 3: Create lookup maps
-              const regionMap = new Map(regions.map((r) => [r.code, r]));
+
+              const stateIdsForRegions = [
+                ...new Set(
+                  subDivisions
+                    .map((subDivision) =>
+                      subDivision.districtId?.stateId?.toString(),
+                    )
+                    .filter(Boolean),
+                ),
+              ];
+              const regions = await Region.find({
+                stateId: { $in: stateIdsForRegions },
+              }).lean();
+              const regionByStateId = new Map(
+                regions.map((region) => [region.stateId.toString(), region]),
+              );
+              const subDivisionMap = new Map(
+                subDivisions.map((subDivision) => [
+                  subDivision.code,
+                  subDivision,
+                ]),
+              );
               const distributorMap = new Map(
                 distributors.map((d) => [d.dbCode, d]),
               );
@@ -3350,7 +3477,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               });
 
               console.log(
-                `Found ${regions.length} regions and ${distributors.length} distributors in database`,
+                `Found ${subDivisions.length} sub divisions and ${distributors.length} distributors in database`,
+              );
+              console.log(
+                `Found ${regions.length} regions mapped by sub division state`,
               );
               console.log(
                 `Found ${existingBeats.length} existing beats with matching names`,
@@ -3381,10 +3511,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   continue;
                 }
 
-                if (!row["Region Code"]?.trim()) {
+                if (!row["Sub Division Code"]?.trim()) {
                   skippedRowsForBeat.push({
                     ...row,
-                    reason: `Missing Region Code at row ${row.index}`,
+                    reason: `Missing Sub Division Code at row ${row.index}`,
                   });
                   continue;
                 }
@@ -3399,7 +3529,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 const beatName = row["Beat Name"].trim();
                 const beatType = row["Beat Type"].trim().toLowerCase();
-                const regionCode = row["Region Code"].trim();
+                const subDivisionCode = row["Sub Division Code"].trim();
                 const distributorCodesStr = row["Distributor Codes"].trim();
 
                 // Parse comma-separated distributor codes
@@ -3433,27 +3563,21 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   continue;
                 }
 
-                // Validate region exists
-                const region = regionMap.get(regionCode);
-                if (!region) {
+                const subDivision = subDivisionMap.get(subDivisionCode);
+                if (!subDivision) {
                   skippedRowsForBeat.push({
                     ...row,
-                    reason: `Region with code "${regionCode}" not found at row ${row.index}`,
+                    reason: `Sub Division with code "${subDivisionCode}" not found at row ${row.index}`,
                   });
                   continue;
                 }
 
-                // Validate region name matches (if provided)
-                if (
-                  row["Region Name"]?.trim() &&
-                  row["Region Name"].trim() !== region.name
-                ) {
+                const stateId = subDivision.districtId?.stateId?.toString();
+                const region = stateId ? regionByStateId.get(stateId) : null;
+                if (!region) {
                   skippedRowsForBeat.push({
                     ...row,
-                    reason: `Region name mismatch at row ${row.index
-                      }. Expected "${region.name}", got "${row[
-                        "Region Name"
-                      ].trim()}"`,
+                    reason: `Region not found for Sub Division "${subDivisionCode}" at row ${row.index}`,
                   });
                   continue;
                 }
@@ -3461,6 +3585,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Validate distributors exist and collect valid ones
                 const validDistributors = [];
                 const invalidDistributorCodes = [];
+                let distributorRegionMismatch = false;
 
                 for (const distributorCode of distributorCodes) {
                   const distributor = distributorMap.get(distributorCode);
@@ -3475,10 +3600,15 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         ...row,
                         reason: `Distributor "${distributor.name}" (${distributorCode}) does not belong to region "${region.name}" at row ${row.index}`,
                       });
-                      continue; // Skip this entire row
+                      distributorRegionMismatch = true;
+                      break;
                     }
                     validDistributors.push(distributor);
                   }
+                }
+
+                if (distributorRegionMismatch) {
+                  continue;
                 }
 
                 if (invalidDistributorCodes.length > 0) {
@@ -3556,6 +3686,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   beatName,
                   beatType,
                   region,
+                  subDivision,
                   distributors: validDistributors,
                   beatIds: beatIds, // Add beatIds to validated row data
                 });
@@ -3587,6 +3718,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       beatIds: validRow.beatIds || [], // Add beatIds field
                       beat_type: validRow.beatType,
                       regionId: validRow.region._id,
+                      subDivisionId: validRow.subDivision?._id,
                       distributorId: validRow.distributors.map((d) => d._id),
                       status: true,
                     }),

@@ -16,6 +16,10 @@ const updateBeat = asyncHandler(async (req, res) => {
         path: "employeeId",
         select: "",
       },
+      {
+        path: "subDivisionId",
+        select: "",
+      },
     ]);
 
     if (!beat) {
@@ -53,7 +57,7 @@ const updateBeat = asyncHandler(async (req, res) => {
       { _id: req.params.bid },
       { ...otherUpdates, ...(status !== undefined ? { status } : {}) }, // Update status if allowed
       { new: true }
-    );
+    ).populate([{ path: "subDivisionId", select: "" }]);
 
     if (updatedBeat) {
       return res.status(201).json({

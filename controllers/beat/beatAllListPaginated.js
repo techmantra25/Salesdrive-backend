@@ -8,6 +8,7 @@ const beatAllListPaginated = asyncHandler(async (req, res) => {
       limit = 10,
       status,
       regionId,
+      subDivisionId,
       distributorId,
       search,
     } = req.query;
@@ -21,6 +22,9 @@ const beatAllListPaginated = asyncHandler(async (req, res) => {
     }
     if (regionId) {
       filter.regionId = regionId;
+    }
+    if (subDivisionId) {
+      filter.subDivisionId = subDivisionId;
     }
     if (distributorId) {
       filter.distributorId = { $in: [distributorId] };
@@ -49,6 +53,10 @@ const beatAllListPaginated = asyncHandler(async (req, res) => {
         },
         {
           path: "distributorId",
+          select: "",
+        },
+        {
+          path: "subDivisionId",
           select: "",
         },
         {

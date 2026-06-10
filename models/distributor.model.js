@@ -36,7 +36,7 @@ const distributorSchema = new mongoose.Schema(
       type: String,
       enum: ["GT"],
       default: "GT",
-      required: true,
+     // required: true,
     },
     regionId: {
       type: mongoose.Schema.Types.ObjectId,

@@ -20,6 +20,10 @@ const allBeats = asyncHandler(async (req, res) => {
           select: "",
         },
         {
+          path: "subDivisionId",
+          select: "",
+        },
+        {
           path: "employeeId",
           select: "name, empId,desgId",
           populate: [

@@ -16,6 +16,10 @@ const listByRegion = asyncHandler(async (req, res) => {
           select: "",
         },
         {
+          path: "subDivisionId",
+          select: "",
+        },
+        {
           path: "employeeId",
           select: "",
           populate: [
