@@ -28,7 +28,7 @@ const beatSchema = new mongoose.Schema(
     subDivisionId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "SubDivision",
-      required: false,
+      required: true,
     },
     isOccupied: {
       type: Boolean,
