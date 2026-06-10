@@ -965,6 +965,14 @@ async function adjustSingleLineItem(item, billId, billNo, userId, bill) {
     );
   }
 
+  // Validate that we're using the current bill state
+  const currentBillNo = bill.new_billno || bill.billNo;
+  if (currentBillNo !== billNo) {
+    console.warn(
+      `⚠ BILLNO MISMATCH for bill ${billId}: parameter=${billNo}, current=${currentBillNo}`,
+    );
+  }
+
   const billQty = Number(item.billQty || 0);
   const invId = item.inventoryId._id || item.inventoryId;
   const productId = item.product._id || item.product;
@@ -990,11 +998,13 @@ async function adjustSingleLineItem(item, billId, billNo, userId, bill) {
   }
 
   // Check if already adjusted (prevents double-adjustment)
+  // This check is critical to prevent duplicate transactions
   const alreadyAdjustedNew = await Transaction.findOne({
     billId: billId,
     billLineItemId: item._id,
     transactionType: "delivery",
     type: "Out",
+    distributorId: userId, // Add distributor filter for isolation
   });
 
   const alreadyAdjustedOld = await Transaction.findOne({
@@ -1003,6 +1013,7 @@ async function adjustSingleLineItem(item, billId, billNo, userId, bill) {
     transactionType: "delivery",
     type: "Out",
     billLineItemId: { $exists: false },
+    distributorId: userId, // Add distributor filter for isolation
   });
 
   if (alreadyAdjustedNew || alreadyAdjustedOld) {
@@ -1071,6 +1082,9 @@ async function adjustSingleLineItem(item, billId, billNo, userId, bill) {
   }
 
   // Create transaction record
+  // CRITICAL: Always use the current bill's billNo, not the parameter (which may be stale)
+  const finalBillNo = bill.new_billno || bill.billNo;
+
   const transactionData = {
     distributorId: userId,
     productId: productId,
@@ -1083,7 +1097,7 @@ async function adjustSingleLineItem(item, billId, billNo, userId, bill) {
     type: "Out",
     transactionType: "delivery",
     stockType: "salable",
-    description: `Delivered against Bill ${billNo}`,
+    description: `Delivered against Bill ${finalBillNo}`,
     dates: {
       deliveryDate: backdateFields.deliveryDate,
       originalDeliveryDate: backdateFields.originalDeliveryDate,

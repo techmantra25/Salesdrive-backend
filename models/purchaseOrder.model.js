@@ -180,12 +180,12 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
 
     totalBasePoints: { type: Number, default: null },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const PurchaseOrderEntry = mongoose.model(
   "PurchaseOrderEntry",
-  PurchasOrderEntrySchema
+  PurchasOrderEntrySchema,
 );
 
 module.exports = PurchaseOrderEntry;

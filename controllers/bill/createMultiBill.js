@@ -154,11 +154,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         }
 
         // Check if the order status is Completed_Billed or Cancelled
-        if (
-          ["Completed_Billed", "Partially_Billed", "Cancelled"].includes(
-            order.status,
-          )
-        ) {
+        if (["Completed_Billed", "Cancelled"].includes(order.status)) {
           throw new Error(
             `Order ${orderNo} has already been billed or cancelled or partially billed.`,
           );
@@ -262,6 +258,49 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           totalDiscountPercentage: item.totalDiscountPercentage || 0,
         }));
 
+        // Reserve stock atomically before creating the bill (no mongoose sessions available)
+        const getInvId = (itm) =>
+          itm.inventoryId && itm.inventoryId._id
+            ? itm.inventoryId._id
+            : itm.inventoryId;
+        const reservedInventories = [];
+        try {
+          for (const item of modifiedLineItems) {
+            if (item.inventoryId && item.billQty > 0) {
+              const invId = getInvId(item);
+              const updatedInv = await Inventory.findOneAndUpdate(
+                { _id: invId, availableQty: { $gte: Number(item.billQty) } },
+                {
+                  $inc: {
+                    availableQty: -Number(item.billQty),
+                    reservedQty: Number(item.billQty),
+                  },
+                },
+                { new: true, runValidators: true },
+              );
+
+              if (!updatedInv) {
+                // rollback any previous reservations for this row
+                for (const r of reservedInventories) {
+                  await Inventory.findByIdAndUpdate(r.inventoryId, {
+                    $inc: { availableQty: r.qty, reservedQty: -r.qty },
+                  });
+                }
+                throw new Error(
+                  `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
+                );
+              }
+
+              reservedInventories.push({
+                inventoryId: invId,
+                qty: Number(item.billQty),
+              });
+            }
+          }
+        } catch (reserveErr) {
+          throw reserveErr; // let outer catch handle skippedRows
+        }
+
         // Get adjustedCreditNoteIds and creditAmount from order if they exist
         const adjustedCreditNoteIds = order.adjustedCreditNoteIds || [];
         const creditAmount = order.creditAmount || 0;
@@ -279,7 +318,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
             const createdAtDate = new Date(Number(row._createdAtEpoch));
             const backdateResult = getOrderToBillBackdate(
               createdAtDate,
-              billDeliverySetting.enableBackdateBilling,
+              billDeliverySetting.enableBackdateOrder,
               new Date(),
             );
             billDate = backdateResult.billDate;
@@ -291,7 +330,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
                 : new Date(row.createdAt);
             const backdateResult = getOrderToBillBackdate(
               createdAtDate,
-              billDeliverySetting.enableBackdateBilling,
+              billDeliverySetting.enableBackdateOrder,
               new Date(),
             );
             billDate = backdateResult.billDate;
@@ -312,7 +351,7 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
 
             const backdateResult = getOrderToBillBackdate(
               orderCreatedAtDate,
-              billDeliverySetting.enableBackdateBilling,
+              billDeliverySetting.enableBackdateOrder,
               new Date(),
             );
             billDate = backdateResult.billDate;
@@ -357,29 +396,42 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         };
         if (billDate) billData.billDate = billDate;
 
-        const newBill = new Bill(billData);
-        const savedBill = await newBill.save();
+        // Create the bill now that stock is reserved. If bill save or subsequent updates fail,
+        // release previously reserved stock to avoid leaks.
+        let savedBill;
+        try {
+          const newBill = new Bill(billData);
+          savedBill = await newBill.save();
 
-        if (isBackdated) {
-          // Use raw collection update to guarantee the createdAt/updatedAt are set
-          await Bill.collection.updateOne(
-            { _id: savedBill._id },
-            { $set: { createdAt: billDate, updatedAt: billDate } },
+          if (isBackdated) {
+            // Use raw collection update to guarantee the createdAt/updatedAt are set
+            await Bill.collection.updateOne(
+              { _id: savedBill._id },
+              { $set: { createdAt: billDate, updatedAt: billDate } },
+            );
+          }
+
+          bills.push(savedBill);
+          successfulBillIndex++;
+
+          // Update the OrderEntry with the new bill ID
+          await OrderEntry.findByIdAndUpdate(
+            orderId,
+            {
+              $push: { billIds: savedBill?._id },
+              status: "Completed_Billed",
+            },
+            { new: true },
           );
+        } catch (postSaveErr) {
+          // rollback reserved stock
+          for (const r of reservedInventories) {
+            await Inventory.findByIdAndUpdate(r.inventoryId, {
+              $inc: { availableQty: r.qty, reservedQty: -r.qty },
+            });
+          }
+          throw postSaveErr;
         }
-
-        bills.push(savedBill);
-        successfulBillIndex++;
-
-        // Update the OrderEntry with the new bill ID
-        await OrderEntry.findByIdAndUpdate(
-          orderId,
-          {
-            $push: { billIds: savedBill?._id },
-            status: "Completed_Billed",
-          },
-          { new: true },
-        );
 
         if (
           order.adjustedCreditNoteIds &&
@@ -473,46 +525,8 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           }
         }
 
-        for (const item of billLineItems) {
-          if (item.inventoryId && item.billQty > 0) {
-            // OLD CODE (commented out - had race condition vulnerability + typo bug using 'oderQty')
-            // const inventory = await Inventory.findById(item.inventoryId);
-            // if (inventory) {
-            //   const updatedAvailableQty =
-            //     inventory.availableQty - Number(item.oderQty); // BUG: should be item.billQty
-            //   const reservedQty = inventory?.reservedQty + Number(item.oderQty); // BUG: should be item.billQty
-            //   // Update the inventory
-            //   await Inventory.findOneAndUpdate(
-            //     { _id: item.inventoryId },
-            //     { availableQty: updatedAvailableQty, reservedQty: reservedQty },
-            //     { new: true },
-            //   );
-            // }
-
-            // NEW CODE: Atomic update with stock validation to prevent negative availableQty
-            // Also fixes typo: now using item.billQty instead of item.oderQty
-            const updatedInventory = await Inventory.findOneAndUpdate(
-              {
-                _id: item.inventoryId,
-                availableQty: { $gte: Number(item.billQty) }, // Atomic check ensures sufficient stock
-              },
-              {
-                $inc: {
-                  availableQty: -Number(item.billQty), // Fixed: was item.oderQty
-                  reservedQty: Number(item.billQty), // Fixed: was item.oderQty
-                },
-              },
-              { new: true, runValidators: true },
-            );
-
-            // If update failed, stock was insufficient (concurrent update or stock exhausted)
-            if (!updatedInventory) {
-              throw new Error(
-                `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
-              );
-            }
-          }
-        }
+        // Inventory was reserved earlier in this flow using atomic updates.
+        // No further inventory updates required here.
       } catch (error) {
         skippedRows.push({
           rowIndex: index + 1,

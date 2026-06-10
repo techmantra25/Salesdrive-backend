@@ -27,9 +27,11 @@ const setBillDeliverySetting = asyncHandler(async (req, res) => {
     notes,
     isActive,
     enableBackdateBilling,
+    enableBackdateOrder,
   } = req.body;
   const isActiveFlag = parseIsActive(isActive);
   const enableBackdateBillingFlag = parseIsActive(enableBackdateBilling);
+  const enableBackdateOrderFlag = parseIsActive(enableBackdateOrder);
   const shouldUpdateDuration = hasDurationValue(deliveryDurationDays);
   const normalizedDeliveryDuration = shouldUpdateDuration
     ? Number(deliveryDurationDays)
@@ -79,6 +81,9 @@ const setBillDeliverySetting = asyncHandler(async (req, res) => {
     if (enableBackdateBillingFlag !== undefined) {
       setting.enableBackdateBilling = enableBackdateBillingFlag;
     }
+    if (enableBackdateOrderFlag !== undefined) {
+      setting.enableBackdateOrder = enableBackdateOrderFlag;
+    }
     setting.notes = notes !== undefined ? notes : setting.notes;
     setting.updatedBy = req.user._id; // Admin user ID
     await setting.save();
@@ -117,6 +122,10 @@ const setBillDeliverySetting = asyncHandler(async (req, res) => {
 
     if (enableBackdateBillingFlag !== undefined) {
       newSetting.enableBackdateBilling = enableBackdateBillingFlag;
+    }
+
+    if (enableBackdateOrderFlag !== undefined) {
+      newSetting.enableBackdateOrder = enableBackdateOrderFlag;
     }
 
     if (shouldUpdateDuration && effectiveIsActive) {
@@ -184,10 +193,16 @@ const getAllBillDeliverySettings = asyncHandler(async (req, res) => {
 });
 
 const setBillDeliverySettingForAll = asyncHandler(async (req, res) => {
-  const { deliveryDurationDays, notes, isActive, enableBackdateBilling } =
-    req.body;
+  const {
+    deliveryDurationDays,
+    notes,
+    isActive,
+    enableBackdateBilling,
+    enableBackdateOrder,
+  } = req.body;
   const isActiveFlag = parseIsActive(isActive);
   const enableBackdateBillingFlag = parseIsActive(enableBackdateBilling);
+  const enableBackdateOrderFlag = parseIsActive(enableBackdateOrder);
   const shouldUpdateDuration = hasDurationValue(deliveryDurationDays);
   const normalizedDeliveryDuration = shouldUpdateDuration
     ? Number(deliveryDurationDays)
@@ -241,6 +256,12 @@ const setBillDeliverySettingForAll = asyncHandler(async (req, res) => {
       setFields.enableBackdateBilling = enableBackdateBillingFlag;
     } else {
       setOnInsertFields.enableBackdateBilling = false;
+    }
+
+    if (enableBackdateOrderFlag !== undefined) {
+      setFields.enableBackdateOrder = enableBackdateOrderFlag;
+    } else {
+      setOnInsertFields.enableBackdateOrder = false;
     }
 
     if (shouldUpdateDuration) {

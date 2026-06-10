@@ -255,44 +255,44 @@ const purchaseOrderNumberGenerator = async (prefix) => {
   return code;
 };
 
-const generateBillNo = async (prefix, distributorId) => {
-  // Fetch the distributor to get the dbCode
-  const distributor = await Distributor.findById(distributorId);
+// const generateBillNo = async (prefix, distributorId) => {
+//   // Fetch the distributor to get the dbCode
+//   const distributor = await Distributor.findById(distributorId);
   
-  if (!distributor) {
-    throw new Error("Distributor not found");
-  }
+//   if (!distributor) {
+//     throw new Error("Distributor not found");
+//   }
   
-  const dbCode = distributor.dbCode || ""; 
-  const newdbcode = dbCode.slice(0,4);// Get dbCode or empty string if not found
+//   const dbCode = distributor.dbCode || ""; 
+//   const newdbcode = dbCode.slice(0,4);// Get dbCode or empty string if not found
   
-  // Try to get the current count, default to 0 if not found or invalid
-  const getCount = await BillSeries.findOne({ distributorId: distributorId });
-  let count = 1;
-  if (
-    getCount &&
-    typeof getCount.count === "number" &&
-    !isNaN(getCount.count)
-  ) {
-    count = getCount.count + 1;
-  }
+//   // Try to get the current count, default to 0 if not found or invalid
+//   const getCount = await BillSeries.findOne({ distributorId: distributorId });
+//   let count = 1;
+//   if (
+//     getCount &&
+//     typeof getCount.count === "number" &&
+//     !isNaN(getCount.count)
+//   ) {
+//     count = getCount.count + 1;
+//   }
   
-  // Generate bill number with dbCode included
-  // const billNo = `${newdbcode}${new Date().getFullYear().toString().slice(-2)}-${
-  //   parseInt(new Date().getFullYear().toString().slice(-2)) + 1
-  // }-${String(count).padStart(6, "0")}`;
+//   // Generate bill number with dbCode included
+//   // const billNo = `${newdbcode}${new Date().getFullYear().toString().slice(-2)}-${
+//   //   parseInt(new Date().getFullYear().toString().slice(-2)) + 1
+//   // }-${String(count).padStart(6, "0")}`;
 
-  const billNo = `${newdbcode}${String(count).padStart(10, "0")}`;
+//   const billNo = `${newdbcode}${String(count).padStart(10, "0")}`;
   
-  // Use upsert to create the document if it doesn't exist
-  await BillSeries.findOneAndUpdate(
-    { distributorId: distributorId },
-    { count: count },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
+//   // Use upsert to create the document if it doesn't exist
+//   await BillSeries.findOneAndUpdate(
+//     { distributorId: distributorId },
+//     { count: count },
+//     { new: true, upsert: true, setDefaultsOnInsert: true }
+//   );
   
-  return billNo;
-};
+//   return billNo;
+// };
 
 //generate the new billnumber
 
@@ -326,56 +326,129 @@ const generateBillNo = async (prefix, distributorId) => {
 //   return billNo;
 // }
 
-const generateNextBillNumber = async(billSeriesId, maxRetries = 3) => {
-  if(!billSeriesId){
+
+// const generateBillNo = async (prefix, distributorId) => {
+//   const distributor = await Distributor.findById(distributorId);
+ 
+//   if (!distributor) {
+//     throw new Error("Distributor not found");
+//   }
+ 
+//   const newdbcode = (distributor.dbCode || "").slice(0, 4);
+ 
+//   // Single atomic $inc — no separate findOne, no read-modify-write gap.
+//   // Two concurrent callers will always receive different count values.
+//   const updated = await BillSeries.findOneAndUpdate(
+//     { distributorId },
+//     { $inc: { count: 1 } },
+//     { new: true, upsert: true }
+//   );
+ 
+//   return `${newdbcode}${String(updated.count).padStart(10, "0")}`;
+// };
+
+
+
+const generateBillNo = async (prefix, distributorId) => {
+  const distributor = await Distributor.findById(distributorId);
+ 
+  if (!distributor) {
+    throw new Error("Distributor not found");
+  }
+ 
+  const newdbcode = (distributor.dbCode || "").slice(0, 4);
+ 
+  // Single atomic $inc — no separate findOne, no read-modify-write gap.
+  // Two concurrent callers will always receive different count values.
+  const updated = await BillSeries.findOneAndUpdate(
+    { distributorId },
+    { $inc: { count: 1 } },
+    { new: true, upsert: true }
+  );
+ 
+  return `${newdbcode}${String(updated.count).padStart(10, "0")}`;
+};
+
+
+// const generateNextBillNumber = async(billSeriesId, maxRetries = 3) => {
+//   if(!billSeriesId){
+//     throw new Error("Bill series ID is required");
+//   }
+
+//   for (let attempt = 0; attempt < maxRetries; attempt++) {
+//     // ✅ READ current state first
+//     const currentSeries = await new_billSeries.findById(billSeriesId);
+    
+//     if(!currentSeries){
+//       throw new Error("Active bill series not found");
+//     }
+    
+//     const nextNumber = currentSeries.currentNumber + 1;
+    
+//     // ✅ UPDATE only if currentNumber hasn't changed (optimistic locking)
+//     const billSeries = await new_billSeries.findOneAndUpdate(
+//       {
+//         _id: billSeriesId,
+//         currentNumber: currentSeries.currentNumber  // ← KEY: Only update if unchanged
+//       },
+//       {
+//         $set: { currentNumber: nextNumber }
+//       },
+//       { new: true }
+//     );
+    
+//     // ✅ If update succeeded, proceed
+//     if(billSeries){
+//       const paddedNumber = String(nextNumber).padStart(
+//         billSeries.series_number.length, 
+//         '0'
+//       );
+      
+//       const billNo = `${billSeries.prefix}${paddedNumber}`;
+      
+//       if(billNo.length > 16){
+//         throw new Error("Generated bill number exceeds 16 character limit");
+//       }
+      
+//       return billNo;
+//     }
+    
+//     // ✅ If update failed (number changed), retry
+//     console.log(`Bill number generation conflict on attempt ${attempt + 1}, retrying...`);
+//     await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+//   }
+  
+//   throw new Error("Failed to generate bill number after multiple attempts due to concurrent access");
+// }
+
+const generateNextBillNumber = async (billSeriesId) => {
+  if (!billSeriesId) {
     throw new Error("Bill series ID is required");
   }
 
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    // ✅ READ current state first
-    const currentSeries = await new_billSeries.findById(billSeriesId);
-    
-    if(!currentSeries){
-      throw new Error("Active bill series not found");
-    }
-    
-    const nextNumber = currentSeries.currentNumber + 1;
-    
-    // ✅ UPDATE only if currentNumber hasn't changed (optimistic locking)
-    const billSeries = await new_billSeries.findOneAndUpdate(
-      {
-        _id: billSeriesId,
-        currentNumber: currentSeries.currentNumber  // ← KEY: Only update if unchanged
-      },
-      {
-        $set: { currentNumber: nextNumber }
-      },
-      { new: true }
-    );
-    
-    // ✅ If update succeeded, proceed
-    if(billSeries){
-      const paddedNumber = String(nextNumber).padStart(
-        billSeries.series_number.length, 
-        '0'
-      );
-      
-      const billNo = `${billSeries.prefix}${paddedNumber}`;
-      
-      if(billNo.length > 16){
-        throw new Error("Generated bill number exceeds 16 character limit");
-      }
-      
-      return billNo;
-    }
-    
-    // ✅ If update failed (number changed), retry
-    console.log(`Bill number generation conflict on attempt ${attempt + 1}, retrying...`);
-    await new Promise(resolve => setTimeout(resolve, 50 * (attempt + 1))); // Exponential backoff
+  const billSeries = await new_billSeries.findOneAndUpdate(
+    { _id: billSeriesId },
+    { $inc: { currentNumber: 1 } },
+    { new: true }
+  );
+
+  if (!billSeries) {
+    throw new Error("Active bill series not found");
   }
-  
-  throw new Error("Failed to generate bill number after multiple attempts due to concurrent access");
-}
+
+  const paddedNumber = String(billSeries.currentNumber).padStart(
+    billSeries.series_number.length,
+    "0"
+  );
+
+  const billNo = `${billSeries.prefix}${paddedNumber}`;
+
+  if (billNo.length > 16) {
+    throw new Error("Generated bill number exceeds 16 character limit");
+  }
+
+  return billNo;
+};
 
 
 

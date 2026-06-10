@@ -11,34 +11,47 @@ const COMPARE_FIELDS = ["slabPercentage", "monthTotalPoints", "point"];
 // ─────────────────────────────────────────────────────────────────────────────
 
 const buildAggregatedMap = (docs, includeRetailerMeta = false) => {
+  // Group by retailerId + transactionFor to produce deterministic keys
   const grouped = new Map();
   for (const doc of docs) {
-    const key = `${doc.retailerId?._id ?? doc.retailerId}|${doc.transactionFor}`;
+    const retailerObj = doc.retailerId;
+    const retailerKey = String(retailerObj?._id ?? retailerObj ?? "");
+    const txFor = doc.transactionFor ?? "";
+    const key = `${retailerKey}|${txFor}`;
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(doc);
   }
+
   const result = new Map();
   for (const [key, group] of grouped) {
     const first = group[0];
     const retailerRef = first.retailerId;
+    const retailerIdStr = String(retailerRef?._id ?? retailerRef ?? "");
+
+    const monthTotalPoints = group.reduce(
+      (s, d) => s + (Number(d.monthTotalPoints) || 0),
+      0,
+    );
+    const point = group.reduce((s, d) => s + (Number(d.point) || 0), 0);
+
     const entry = {
-      retailerId: String(retailerRef?._id ?? retailerRef),
-      outletUID: retailerRef?.outletUID ?? "",
-      outletName: retailerRef?.outletName ?? "",
+      retailerId: retailerIdStr,
+      outletUID: retailerRef?.outletUID ?? first.outletUID ?? "",
+      outletName: retailerRef?.outletName ?? first.outletName ?? "",
       transactionFor: first.transactionFor,
       slabPercentage: first.slabPercentage ?? null,
-      monthTotalPoints: group.reduce(
-        (s, d) => s + (Number(d.monthTotalPoints) || 0),
-        0,
-      ),
-      point: group.reduce((s, d) => s + (Number(d.point) || 0), 0),
+      monthTotalPoints,
+      point,
     };
+
     if (includeRetailerMeta) {
-      entry.retailerCode = first.retailerCode ?? "";
-      entry.retailerName = first.retailerName ?? "";
+      entry.retailerCode = first.retailerCode ?? retailerRef?.outletCode ?? "";
+      entry.retailerName = first.retailerName ?? retailerRef?.outletName ?? "";
     }
+
     result.set(key, entry);
   }
+
   return result;
 };
 
@@ -59,7 +72,7 @@ const getFieldDiffs = (mainAgg, shadowAgg) => {
 };
 
 const toCsv = (fields, rows) => {
-  if (rows.length === 0) return fields.join(",");
+  if (!Array.isArray(rows) || rows.length === 0) return fields.join(",");
   const parser = new Parser({ fields });
   return parser.parse(rows);
 };
@@ -629,27 +642,31 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       year: 1,
       _id: 0,
     };
+
     const shadowProjection = {
       ...mainProjection,
       retailerCode: 1,
       retailerName: 1,
     };
+
     const outletPopulate = {
       path: "retailerId",
-      select: "outletUID outletName",
+      select: "outletUID outletName outletCode",
     };
 
-    const { month, year, retailerId, retailerIds, multiplierType } =
-      req.method === "GET" ? req.query : req.body;
+    // Support GET (query) and POST (body)
+    const src = req.method === "GET" ? req.query : req.body;
+    const { month, year, retailerId, retailerIds, multiplierType } = src || {};
 
     const filter = {};
-    if (month) filter.month = Number(month);
-    if (year) filter.year = Number(year);
+    if (month !== undefined && month !== null) filter.month = Number(month);
+    if (year !== undefined && year !== null) filter.year = Number(year);
     if (retailerId && !retailerIds) {
       filter.retailerId = retailerId;
     } else if (Array.isArray(retailerIds) && retailerIds.length > 0) {
       filter.retailerId = { $in: retailerIds };
     }
+
     if (multiplierType && multiplierType !== "all") {
       if (multiplierType === "monthly") {
         filter.transactionFor = {
@@ -674,9 +691,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
         .lean(),
     ]);
 
-    const mainMap = buildAggregatedMap(mainDocs, false);
+    const mainMap = buildAggregatedMap(mainDocs, true);
     const shadowMap = buildAggregatedMap(shadowDocs, true);
-    const totalShadow = shadowMap.size;
 
     const diffs = [];
     const matched = [];
@@ -688,8 +704,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
           retailerId: mainAgg.retailerId,
           outletUID: mainAgg.outletUID,
           outletName: mainAgg.outletName,
-          retailerCode: "",
-          retailerName: "",
+          retailerCode: mainAgg.retailerCode ?? "",
+          retailerName: mainAgg.retailerName ?? "",
           transactionFor: mainAgg.transactionFor,
           main: mainAgg,
           shadow: null,
@@ -711,8 +727,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
             retailerId: mainAgg.retailerId,
             outletUID: mainAgg.outletUID || shadowAgg.outletUID,
             outletName: mainAgg.outletName || shadowAgg.outletName,
-            retailerCode: shadowAgg.retailerCode,
-            retailerName: shadowAgg.retailerName,
+            retailerCode: shadowAgg.retailerCode ?? mainAgg.retailerCode ?? "",
+            retailerName: shadowAgg.retailerName ?? mainAgg.retailerName ?? "",
             transactionFor: mainAgg.transactionFor,
             main: mainAgg,
             shadow: shadowAgg,
@@ -736,8 +752,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
         retailerId: shadowAgg.retailerId,
         outletUID: shadowAgg.outletUID,
         outletName: shadowAgg.outletName,
-        retailerCode: shadowAgg.retailerCode,
-        retailerName: shadowAgg.retailerName,
+        retailerCode: shadowAgg.retailerCode ?? "",
+        retailerName: shadowAgg.retailerName ?? "",
         transactionFor: shadowAgg.transactionFor,
         main: null,
         shadow: shadowAgg,
@@ -754,7 +770,7 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
 
     const summary = {
       totalMain: mainMap.size,
-      totalShadow,
+      totalShadow: buildAggregatedMap(shadowDocs, true).size,
       matched: matched.length,
       onlyInMain: diffs.filter((d) => d.diffType === "onlyInMain").length,
       onlyInShadow: diffs.filter((d) => d.diffType === "onlyInShadow").length,
@@ -764,24 +780,22 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       isDifferent: diffs.length > 0,
     };
 
-    // ── JSON ──────────────────────────────────────────────────────────────────
-    if (req.query.format === "json" || !req.query.download) {
+    // JSON response (default)
+    const wantDownload = (req.query && req.query.download) || null;
+    if ((req.query && req.query.format === "json") || !wantDownload) {
       return res.status(200).json({ summary, diffs });
     }
 
-    // ── Excel audit report (.xlsx) ────────────────────────────────────────────
-    if (req.query.download === "xlsx") {
-      // Rebuild full maps (they were mutated during diff, so re-derive)
+    // Excel
+    if (req.query && req.query.download === "xlsx") {
       const freshMainMap = buildAggregatedMap(mainDocs, true);
       const freshShadowMap = buildAggregatedMap(shadowDocs, true);
-
       const wb = await buildAuditExcel({
         mainMap: freshMainMap,
         shadowMap: freshShadowMap,
         summary,
         filter: { month, year, multiplierType },
       });
-
       res.setHeader(
         "Content-Type",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -794,8 +808,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       return res.end();
     }
 
-    // ── CSV zip (legacy) ──────────────────────────────────────────────────────
-    if (req.query.download === "csv") {
+    // CSV ZIP
+    if (req.query && req.query.download === "csv") {
       const mainCsvFields = [
         "retailerId",
         "outletUID",
@@ -810,8 +824,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       ];
       const mainCsvRows = mainDocs.map((doc) => ({
         retailerId: String(doc.retailerId?._id ?? doc.retailerId),
-        outletUID: doc.retailerId?.outletUID ?? "",
-        outletName: doc.retailerId?.outletName ?? "",
+        outletUID: doc.retailerId?.outletUID ?? doc.outletUID ?? "",
+        outletName: doc.retailerId?.outletName ?? doc.outletName ?? "",
         transactionFor: doc.transactionFor,
         retailerOutletTransactionId: String(
           doc.retailerOutletTransactionId ?? "",
@@ -840,8 +854,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       ];
       const shadowCsvRows = shadowDocs.map((doc) => ({
         retailerId: String(doc.retailerId?._id ?? doc.retailerId),
-        outletUID: doc.retailerId?.outletUID ?? "",
-        outletName: doc.retailerId?.outletName ?? "",
+        outletUID: doc.retailerId?.outletUID ?? doc.outletUID ?? "",
+        outletName: doc.retailerId?.outletName ?? doc.outletName ?? "",
         retailerCode: doc.retailerCode ?? "",
         retailerName: doc.retailerName ?? "",
         transactionFor: doc.transactionFor,
@@ -882,8 +896,8 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
             retailerCode: diff.retailerCode,
             retailerName: diff.retailerName,
             transactionFor: diff.transactionFor,
-            mismatchFields: diff.mismatchFields.join(", "),
-            missingFields: diff.missingFields.join(", "),
+            mismatchFields: (diff.mismatchFields || []).join(", "),
+            missingFields: (diff.missingFields || []).join(", "),
             field: detail.field,
             main_value: detail.mainValue ?? "",
             shadow_value: detail.shadowValue ?? "",
@@ -909,6 +923,9 @@ const compareRetailerMultiplierTransactions = async (req, res) => {
       await archive.finalize();
       return;
     }
+
+    // Fallback
+    return res.status(200).json({ summary, diffs });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

@@ -163,6 +163,53 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw new Error("Failed to generate bill number");
     }
 
+    // ─── Reserve stock atomically BEFORE bill creation ────────────────────────
+    // Mirrors the multipleBillCreate pattern: reserve first, then create the bill,
+    // and rollback reservations if the bill save (or any subsequent step) fails.
+    // This closes the window between bill creation and inventory update that the
+    // old post-creation update had.
+    const reservedInventories = [];
+    try {
+      for (const item of lineItems) {
+        if (item.inventoryId && item.billQty > 0) {
+          const updatedInv = await Inventory.findOneAndUpdate(
+            {
+              _id: item.inventoryId,
+              availableQty: { $gte: Number(item.billQty) }, // Atomic check ensures sufficient stock
+            },
+            {
+              $inc: {
+                availableQty: -Number(item.billQty),
+                reservedQty: Number(item.billQty),
+              },
+            },
+            { new: true, runValidators: true },
+          );
+
+          if (!updatedInv) {
+            // Rollback any reservations already made in this loop before throwing
+            for (const r of reservedInventories) {
+              await Inventory.findByIdAndUpdate(r.inventoryId, {
+                $inc: { availableQty: r.qty, reservedQty: -r.qty },
+              });
+            }
+            res.status(400);
+            throw new Error(
+              `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
+            );
+          }
+
+          reservedInventories.push({
+            inventoryId: item.inventoryId,
+            qty: Number(item.billQty),
+          });
+        }
+      }
+    } catch (reserveErr) {
+      throw reserveErr; // propagate to outer catch
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
     //    Previously billDate was set in a separate findByIdAndUpdate AFTER create,
     //    leaving a window where the document had no billDate.
     const billDeliverySetting = await BillDeliverySetting.findOne({
@@ -182,7 +229,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         const createdAtDate = new Date(Number(req.body._createdAtEpoch));
         const result = getOrderToBillBackdate(
           createdAtDate,
-          billDeliverySetting.enableBackdateBilling,
+          billDeliverySetting.enableBackdateOrder,
           new Date(),
         );
         billDate = result.billDate;
@@ -194,7 +241,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
             : new Date(req.body.createdAt);
         const result = getOrderToBillBackdate(
           createdAtDate,
-          billDeliverySetting.enableBackdateBilling,
+          billDeliverySetting.enableBackdateOrder,
           new Date(),
         );
         billDate = result.billDate;
@@ -214,7 +261,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
         const result = getOrderToBillBackdate(
           orderCreatedAtDate,
-          billDeliverySetting.enableBackdateBilling,
+          billDeliverySetting.enableBackdateOrder,
           new Date(),
         );
         billDate = result.billDate;
@@ -260,6 +307,55 @@ const createSingleBill = asyncHandler(async (req, res) => {
       // Backdate createdAt/updatedAt when applicable
       ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
     });
+    // Create the bill — wrapped in try/catch so we can rollback reserved stock
+    // if the save or any subsequent mutation fails.
+    let newBill;
+    try {
+      newBill = await Bill.create({
+        distributorId,
+        new_billseriesid: activeBillSeries ? activeBillSeries._id : null,
+        new_billno: newbillNo,
+        billNo,
+        orderId,
+        orderNo,
+        salesmanName,
+        routeId,
+        retailerId,
+        lineItems,
+        totalLines,
+        totalBasePoints,
+        grossAmount,
+        schemeDiscount,
+        distributorDiscount,
+        taxableAmount,
+        cgst,
+        sgst,
+        igst,
+        invoiceAmount,
+        roundOffAmount,
+        cashDiscount,
+        netAmount,
+        billedType: "Single",
+        adjustedCreditNoteIds,
+        adjustedReplacementIds,
+        creditAmount,
+        cashDiscountApplied: req.body.cashDiscountApplied || false,
+        cashDiscountType: req.body.cashDiscountType || "amount",
+        cashDiscountValue: req.body.cashDiscountValue || 0,
+        billDate,
+        enabledBackDate: isBackdated,
+        // Backdate createdAt/updatedAt when applicable
+        ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
+      });
+    } catch (billSaveErr) {
+      // Rollback all reserved inventory before propagating the error
+      for (const r of reservedInventories) {
+        await Inventory.findByIdAndUpdate(r.inventoryId, {
+          $inc: { availableQty: r.qty, reservedQty: -r.qty },
+        });
+      }
+      throw billSaveErr;
+    }
 
     // Ensure createdAt/updatedAt persisted correctly even if mongoose timestamps
     // interfere; use raw collection update for reliability.
@@ -312,45 +408,51 @@ const createSingleBill = asyncHandler(async (req, res) => {
       { new: true },
     );
 
-    for (const item of billLineItems) {
-      if (item.inventoryId && item.billQty > 0) {
-        // OLD CODE (commented out - had race condition vulnerability)
-        // const inventory = await Inventory.findById(item.inventoryId);
-        // if (inventory) {
-        //   const updatedAvailableQty =
-        //     inventory.availableQty - Number(item.billQty);
-        //   const reservedQty = inventory.reservedQty + Number(item.billQty);
-        //   // Update the inventory
-        //   await Inventory.findOneAndUpdate(
-        //     { _id: item.inventoryId },
-        //     { availableQty: updatedAvailableQty, reservedQty: reservedQty },
-        //     { new: true },
-        //   );
-        // }
+    // OLD CODE (commented out) — inventory was updated AFTER bill creation,
+    // creating a race condition window between bill save and stock decrement.
+    // Also had a secondary race condition within the read-modify-write pattern.
+    // for (const item of billLineItems) {
+    //   if (item.inventoryId && item.billQty > 0) {
+    //     // OLD CODE (commented out - had race condition vulnerability)
+    //     // const inventory = await Inventory.findById(item.inventoryId);
+    //     // if (inventory) {
+    //     //   const updatedAvailableQty =
+    //     //     inventory.availableQty - Number(item.billQty);
+    //     //   const reservedQty = inventory.reservedQty + Number(item.billQty);
+    //     //   // Update the inventory
+    //     //   await Inventory.findOneAndUpdate(
+    //     //     { _id: item.inventoryId },
+    //     //     { availableQty: updatedAvailableQty, reservedQty: reservedQty },
+    //     //     { new: true },
+    //     //   );
+    //     // }
 
-        // NEW CODE: Atomic update with stock validation to prevent negative availableQty
-        const updatedInventory = await Inventory.findOneAndUpdate(
-          {
-            _id: item.inventoryId,
-            availableQty: { $gte: Number(item.billQty) }, // Atomic check ensures sufficient stock
-          },
-          {
-            $inc: {
-              availableQty: -Number(item.billQty),
-              reservedQty: Number(item.billQty),
-            },
-          },
-          { new: true, runValidators: true },
-        );
+    //     // NEW CODE (also commented out — moved to pre-bill reservation above):
+    //     // Atomic update with stock validation to prevent negative availableQty
+    //     // const updatedInventory = await Inventory.findOneAndUpdate(
+    //     //   {
+    //     //     _id: item.inventoryId,
+    //     //     availableQty: { $gte: Number(item.billQty) },
+    //     //   },
+    //     //   {
+    //     //     $inc: {
+    //     //       availableQty: -Number(item.billQty),
+    //     //       reservedQty: Number(item.billQty),
+    //     //     },
+    //     //   },
+    //     //   { new: true, runValidators: true },
+    //     // );
 
-        // If update failed, stock was insufficient (concurrent update or stock exhausted)
-        if (!updatedInventory) {
-          throw new Error(
-            `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
-          );
-        }
-      }
-    }
+    //     // If update failed, stock was insufficient (concurrent update or stock exhausted)
+    //     // if (!updatedInventory) {
+    //     //   throw new Error(
+    //     //     `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
+    //     //   );
+    //     // }
+    //   }
+    // }
+    // Inventory was already reserved atomically before bill creation above.
+    // No further inventory updates are required here.
 
     const newBillId = newBill?._id;
 

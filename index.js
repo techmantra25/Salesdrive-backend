@@ -4,6 +4,7 @@ const { PORT, NODE_ENV } = require("./config/server.config");
 const { corsOptions } = require("./config/cors.config");
 const v1Routes = require("./routes/v1.routes");
 const v2Routes = require("./routes/v2.routes");
+const v3Routes = require("./routes/v3.routes");
 const { errorHandler, notFound } = require("./middlewares/error.middleware");
 const connectDB = require("./db/db");
 const { app: expressApp, server } = require("./server");
@@ -81,6 +82,7 @@ app.get("/", (req, res) => {
 // Routes
 app.use("/api/v1/", v1Routes);
 app.use("/api/v2/", v2Routes);
+app.use("/api/v3/", v3Routes);
 
 // Other queues
 // require("./jobs/syncInventoryQueue");
