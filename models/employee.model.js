@@ -27,8 +27,8 @@ const employeeSchema = new mongoose.Schema(
     },
     empId: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true,
     },
     password: {
       type: String,
@@ -84,6 +84,15 @@ const employeeSchema = new mongoose.Schema(
     },
     phone: {
       type: String,
+      required: true,
+    },
+    whatsapp: {
+      type: String,
+      required: true,
+    },
+
+    alternateMobile: {
+      type: String,
     },
     dob: {
       type: Date,
@@ -98,6 +107,7 @@ const employeeSchema = new mongoose.Schema(
       type: String,
       unique: true,
       lowercase: true,
+      required: true,
     },
     tenure: {
       type: Number,

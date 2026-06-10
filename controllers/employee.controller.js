@@ -202,19 +202,42 @@ const createEmployee = asyncHandler(async (req, res) => {
       dob,
       joiningDate,
       headquarter,
+      whatsapp,
+      alternateMobile,
+
       tenure,
       stateId,
-    } = req.body; // Validate employee ID is provided and not empty
-    if (!empId || empId === "") {
+    } = req.body;
+
+
+    if (!name || !phone || !whatsapp || !email || !desgId) {
       res.status(400);
-      throw new Error("Employee ID is required");
+      throw new Error(
+        "Name, Phone, WhatsApp, Email and Designation are required"
+      );
     }
 
+
+    // Validate employee ID is provided and not empty
+    // if (!empId || empId === "") {
+    //   res.status(400);
+    //   throw new Error("Employee ID is required");
+    // }
+
     // Check if employee with the same empId already exists
-    const employeeExist = await Employee.findOne({ empId });
-    if (employeeExist) {
-      res.status(400);
-      throw new Error(`Employee with ID '${empId}' already exists`);
+    // const employeeExist = await Employee.findOne({ empId });
+    // if (employeeExist) {
+    //   res.status(400);
+    //   throw new Error(`Employee with ID '${empId}' already exists`);
+    // }
+
+    if (empId) {
+      const employeeExist = await Employee.findOne({ empId });
+
+      if (employeeExist) {
+        res.status(400);
+        throw new Error(`Employee with ID '${empId}' already exists`);
+      }
     }
 
     // Fetch the designation details
@@ -230,14 +253,17 @@ const createEmployee = asyncHandler(async (req, res) => {
     }
 
     // Create distributor mapping history for each distributor
-    const distributorMappingHistory = distributorId.map((id) => ({
+
+    // Generate password for employee
+    // Create distributor mapping history for each distributor
+    const distributorMappingHistory = (distributorId || []).map((id) => ({
       distributorId: id,
       mappedDate: new Date(),
       currentStatus: true,
     }));
 
     // Generate password for employee
-    const generatedPassword = Math.random().toString(36).slice(-8); // Create the employee with all distributorIds stored
+    const generatedPassword = Math.random().toString(36).slice(-8);// Create the employee with all distributorIds stored
     let employeeData = await Employee.create({
       name,
       empId,
@@ -251,6 +277,8 @@ const createEmployee = asyncHandler(async (req, res) => {
       distributorId,
       password: generatedPassword,
       email,
+      whatsapp,
+      alternateMobile,
       employeeLabel,
       phone,
       dob,
@@ -325,6 +353,8 @@ const updateEmployee = asyncHandler(async (req, res) => {
       status,
       employeeLabel,
       phone,
+      whatsapp,
+      alternateMobile,
       dob,
       joiningDate,
       headquarter,
@@ -333,10 +363,10 @@ const updateEmployee = asyncHandler(async (req, res) => {
       stateId,
     } = req.body;
 
-    if (empId === "") {
-      res.status(400);
-      throw new Error("Employee ID cannot be empty");
-    }
+    // if (empId === "") {
+    //   res.status(400);
+    //   throw new Error("Employee ID cannot be empty");
+    // }
 
     // Check if empId is being updated
     if (empId) {
@@ -405,127 +435,129 @@ const updateEmployee = asyncHandler(async (req, res) => {
     }
 
     let finalBeatId = employee.beatId || [];
-if (regionId !== undefined) {
-  const existingRegionIds = (employee.regionId || []).map((id) => id.toString());
-  const newRegionIds = Array.isArray(regionId) 
-    ? regionId.map((id) => id.toString()) 
-    : [];
+    if (regionId !== undefined) {
+      const existingRegionIds = (employee.regionId || []).map((id) => id.toString());
+      const newRegionIds = Array.isArray(regionId)
+        ? regionId.map((id) => id.toString())
+        : [];
 
-  // Find removed regions
-  const removedRegionIds = existingRegionIds.filter(
-    (id) => !newRegionIds.includes(id)
-  );
+      // Find removed regions
+      const removedRegionIds = existingRegionIds.filter(
+        (id) => !newRegionIds.includes(id)
+      );
 
-  // If regions were removed, fetch and remove their associated beats
-  if (removedRegionIds.length > 0) {
-    // Fetch beats that belong to removed regions
-    const beatsToRemove = await Beat.find({
-      regionId: { $in: removedRegionIds.map(id => new mongoose.Types.ObjectId(id)) }
-    }).select('_id');
+      // If regions were removed, fetch and remove their associated beats
+      if (removedRegionIds.length > 0) {
+        // Fetch beats that belong to removed regions
+        const beatsToRemove = await Beat.find({
+          regionId: { $in: removedRegionIds.map(id => new mongoose.Types.ObjectId(id)) }
+        }).select('_id');
 
-    const beatIdsToRemove = beatsToRemove.map(beat => beat._id.toString());
+        const beatIdsToRemove = beatsToRemove.map(beat => beat._id.toString());
 
-    // Filter out beats that belong to removed regions
-    finalBeatId = finalBeatId.filter(
-      beatId => !beatIdsToRemove.includes(beatId.toString())
-    );
-  }
-}
+        // Filter out beats that belong to removed regions
+        finalBeatId = finalBeatId.filter(
+          beatId => !beatIdsToRemove.includes(beatId.toString())
+        );
+      }
+    }
 
 
 
     // Handle Distributor ID - Add new distributors instead of overwriting
-   // Handle Distributor ID - Replace with new array (not merge)
-let finalDistributorId = employee.distributorId || [];
-let newDistributorMappingHistory = [...(employee.distributorMappingHistory || [])];
+    // Handle Distributor ID - Replace with new array (not merge)
+    let finalDistributorId = employee.distributorId || [];
+    let newDistributorMappingHistory = [...(employee.distributorMappingHistory || [])];
 
-if (distributorId !== undefined) {
-  const existingDistributorIds = finalDistributorId.map((id) => id.toString());
-  const newDistributorIds = Array.isArray(distributorId) 
-    ? distributorId.map((id) => id.toString()) 
-    : [];
+    if (distributorId !== undefined) {
+      const existingDistributorIds = finalDistributorId.map((id) => id.toString());
+      const newDistributorIds = Array.isArray(distributorId)
+        ? distributorId.map((id) => id.toString())
+        : [];
 
-  // Find removed distributors (exist in old but not in new)
-  const removedDistributorIds = existingDistributorIds.filter(
-    (id) => !newDistributorIds.includes(id)
-  );
-  
-  // Find added distributors (exist in new but not in old)
-  const addedDistributorIds = newDistributorIds.filter(
-    (id) => !existingDistributorIds.includes(id)
-  );
+      // Find removed distributors (exist in old but not in new)
+      const removedDistributorIds = existingDistributorIds.filter(
+        (id) => !newDistributorIds.includes(id)
+      );
 
-  // Mark removed distributors as unmapped in history
-  if (removedDistributorIds.length > 0) {
-    newDistributorMappingHistory = newDistributorMappingHistory.map(
-      (record) => {
-        if (
-          removedDistributorIds.includes(record.distributorId.toString()) &&
-          record.currentStatus
-        ) {
-          return {
-            _id: record?._id,
-            distributorId: new mongoose.Types.ObjectId(record.distributorId),
-            mappedDate: record?.mappedDate,
-            currentStatus: false,
-            unMappedDate: new Date(),
-          };
-        }
-        return record;
+      // Find added distributors (exist in new but not in old)
+      const addedDistributorIds = newDistributorIds.filter(
+        (id) => !existingDistributorIds.includes(id)
+      );
+
+      // Mark removed distributors as unmapped in history
+      if (removedDistributorIds.length > 0) {
+        newDistributorMappingHistory = newDistributorMappingHistory.map(
+          (record) => {
+            if (
+              removedDistributorIds.includes(record.distributorId.toString()) &&
+              record.currentStatus
+            ) {
+              return {
+                _id: record?._id,
+                distributorId: new mongoose.Types.ObjectId(record.distributorId),
+                mappedDate: record?.mappedDate,
+                currentStatus: false,
+                unMappedDate: new Date(),
+              };
+            }
+            return record;
+          }
+        );
       }
-    );
-  }
 
-  // Add new distributors to history
-  if (addedDistributorIds.length > 0) {
-    newDistributorMappingHistory = [
-      ...newDistributorMappingHistory,
-      ...addedDistributorIds.map((id) => ({
-        distributorId: new mongoose.Types.ObjectId(id),
-        mappedDate: new Date(),
-        currentStatus: true,
-      })),
-    ];
-  }
+      // Add new distributors to history
+      if (addedDistributorIds.length > 0) {
+        newDistributorMappingHistory = [
+          ...newDistributorMappingHistory,
+          ...addedDistributorIds.map((id) => ({
+            distributorId: new mongoose.Types.ObjectId(id),
+            mappedDate: new Date(),
+            currentStatus: true,
+          })),
+        ];
+      }
 
-  // REPLACE with new distributor array (not merge)
-  if (Array.isArray(distributorId) && distributorId.length > 0) {
-    finalDistributorId = distributorId.map((id) => new mongoose.Types.ObjectId(id));
-  } else {
-    // Clear distributors if empty array sent
-    finalDistributorId = [];
-  }
-}
+      // REPLACE with new distributor array (not merge)
+      if (Array.isArray(distributorId) && distributorId.length > 0) {
+        finalDistributorId = distributorId.map((id) => new mongoose.Types.ObjectId(id));
+      } else {
+        // Clear distributors if empty array sent
+        finalDistributorId = [];
+      }
+    }
 
 
 
     // Update employee details in the database
-const updatedEmployee = await Employee.findByIdAndUpdate(
-  id,
-  {
-    name: name || employee.name,
-    empId: empId || employee.empId,
-    desgId: desgId || employee.desgId,
-    zoneId: zoneId || employee.zoneId,
-    regionId: finalRegionId,
-    brandId: brandId || employee.brandId,
-    area: area || employee.area,
-    leaving_date: leaving_date || employee.leaving_date,
-    distributorId: finalDistributorId,
-    status: status ?? employee.status,
-    distributorMappingHistory: newDistributorMappingHistory,
-    employeeLabel: employeeLabel || employee.employeeLabel,
-    phone: phone || employee.phone,
-    dob: dob || employee.dob,
-    joiningDate: joiningDate || employee.joiningDate,
-    headquarter: headquarter || employee.headquarter,
-    email: email || employee.email,
-    tenure: tenure ?? employee.tenure,
-    stateId: stateId || employee.stateId,
-    beatId: finalBeatId, // ADD THIS LINE
-  },
-  { new: true }
-);
+    const updatedEmployee = await Employee.findByIdAndUpdate(
+      id,
+      {
+        name: name || employee.name,
+        empId: empId || employee.empId,
+        desgId: desgId || employee.desgId,
+        zoneId: zoneId || employee.zoneId,
+        regionId: finalRegionId,
+        brandId: brandId || employee.brandId,
+        area: area || employee.area,
+        leaving_date: leaving_date || employee.leaving_date,
+        distributorId: finalDistributorId,
+        status: status ?? employee.status,
+        distributorMappingHistory: newDistributorMappingHistory,
+        employeeLabel: employeeLabel || employee.employeeLabel,
+        phone: phone || employee.phone,
+        whatsapp: whatsapp || employee.whatsapp,
+        alternateMobile: alternateMobile || employee.alternateMobile,
+        dob: dob || employee.dob,
+        joiningDate: joiningDate || employee.joiningDate,
+        headquarter: headquarter || employee.headquarter,
+        email: email || employee.email,
+        tenure: tenure ?? employee.tenure,
+        stateId: stateId || employee.stateId,
+        beatId: finalBeatId, // ADD THIS LINE
+      },
+      { new: true }
+    );
 
     return res.status(200).json({
       status: 200,
