@@ -658,10 +658,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const productsToInsert = [];
 
                   console.log(
-                    `Processing batch ${
-                      Math.floor(batchStart / BATCH_SIZE) + 1
-                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${
-                      batchStart + 1
+                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
+                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1
                     }-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
                   );
 
@@ -1438,11 +1436,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 existingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${
-                    price.regionId || "null"
-                  }_${
-                    price.distributorId || "null"
-                  }`;
+                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"
+                    }_${price.distributorId || "null"
+                    }`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1456,9 +1452,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${
-                  row.regionId || "null"
-                }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
+                  }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1880,9 +1875,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 activeExistingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${
-                    price.distributorId || "null"
-                  }`;
+                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${price.distributorId || "null"
+                    }`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1896,9 +1890,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${
-                  row.regionId || "null"
-                }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
+                  }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -2613,8 +2606,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 for (let i = 0; i < finalValidRows.length; i += BATCH_SIZE) {
                   const batch = finalValidRows.slice(i, i + BATCH_SIZE);
                   console.log(
-                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${
-                      batch.length
+                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${batch.length
                     }`,
                   );
 
@@ -2867,9 +2859,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const requiredFields = [
                   "Outlet Name",
                   "Owner Name",
-                  "Employee Code",
                   "Beat Code",
                   "State Code",
+                  "WhatsApp Number",
                 ];
 
                 // Step 4: Process data in batches
@@ -3282,9 +3274,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         sellingBrands: sellingBrands,
                         competitorBrands: row["Competitor Brands"]
                           ? row["Competitor Brands"]
-                              .split(",")
-                              .map((brand) => brand.trim())
-                              .filter((brand) => brand.length > 0)
+                            .split(",")
+                            .map((brand) => brand.trim())
+                            .filter((brand) => brand.length > 0)
                           : [],
                         existingRetailer: existingRetailerBool,
                         outletStatus: "Approved",
@@ -3905,7 +3897,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   existingEmpIds: new Set(
-                    existingEmployees.map((emp) => emp.empId),
+                    existingEmployees.map(() => emp.empId),
                   ),
                   designations: new Map(
                     designations.map((desg) => [desg.code, desg]),
@@ -3968,8 +3960,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const batch = results.slice(batchStart, batchEnd);
 
                   console.log(
-                    `Processing batch ${
-                      Math.floor(batchStart / BATCH_SIZE) + 1
+                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
                     }: rows ${batchStart + 1}-${batchEnd}`,
                   );
 

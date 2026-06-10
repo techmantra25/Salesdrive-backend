@@ -45,9 +45,9 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     const requiredFields = [
       "outletName",
       "ownerName",
-      "employeeCode",
       "beatCode",
       "stateCode",
+      "whatsappNumber",
     ];
 
     const missingFields = requiredFields.filter(
@@ -65,15 +65,19 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // EMPLOYEE VALIDATION
     // =========================
 
-    const employee = await Employee.findOne({
-      empId: data.employeeCode.trim(),
-    });
+    let employee = null;
 
-    if (!employee) {
-      return res.status(400).json({
-        status: false,
-        message: "Employee not found",
+    if (data.employeeCode?.trim()) {
+      employee = await Employee.findOne({
+        empId: data.employeeCode.trim(),
       });
+
+      if (!employee) {
+        return res.status(400).json({
+          status: false,
+          message: "Employee not found",
+        });
+      }
     }
 
     // =========================
@@ -129,22 +133,22 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // =========================
     // EMPLOYEE + BEAT VALIDATION
     // =========================
+    if (employee) {
+      const employeeExistsInBeat = beats.some(
+        (beat) =>
+          beat.employeeId
+            ?.map((id) => id.toString())
+            .includes(employee._id.toString())
+      );
 
-    const employeeExistsInBeat = beats.some(
-      (beat) =>
-        beat.employeeId
-          ?.map((id) => id.toString())
-          .includes(employee._id.toString())
-    );
-
-    if (!employeeExistsInBeat) {
-      return res.status(400).json({
-        status: false,
-        message:
-          "Selected employee is not mapped with selected beat",
-      });
+      if (!employeeExistsInBeat) {
+        return res.status(400).json({
+          status: false,
+          message:
+            "Selected employee is not mapped with selected beat",
+        });
+      }
     }
-
     // =========================
     // REGION VALIDATION
     // =========================
@@ -234,6 +238,25 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // =========================
 
     const mobile1 = getMobile1();
+    const whatsappNumber =
+      data.whatsappNumber?.toString().trim();
+
+    if (!whatsappNumber) {
+      return res.status(400).json({
+        status: false,
+        message: "WhatsApp number is required",
+      });
+    }
+
+    const mobileRegex = /^[6-9]\d{9}$/;
+
+    if (!mobileRegex.test(whatsappNumber)) {
+      return res.status(400).json({
+        status: false,
+        message:
+          "Invalid WhatsApp number. Must be 10 digit Indian mobile number",
+      });
+    }
 
     if (mobile1) {
       const mobileRegex = /^[6-9]\d{9}$/;
@@ -579,7 +602,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     const outlet = await OutletApproved.create({
       leadId,
 
-      employeeId: employee._id,
+      employeeId: employee?._id || null,
 
       zoneId,
       stateId: state._id,
