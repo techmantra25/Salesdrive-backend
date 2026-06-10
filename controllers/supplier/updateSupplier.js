@@ -16,6 +16,7 @@ const updateSupplier = asyncHandler(async (req, res) => {
       contactNo,
       email,
       pinCode,
+      panNo,
       status,
     } = req.body;
 
@@ -30,6 +31,7 @@ const updateSupplier = asyncHandler(async (req, res) => {
         distributorId,
         stateId,
         gstNo,
+        panNo,
         contactNo,
         email,
         pinCode,

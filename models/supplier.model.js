@@ -44,6 +44,10 @@ const supplierSchema = new mongoose.Schema(
       type: String,
       //required: true,
     },
+    panNo: {
+      type: String,
+      default: "",
+    },
     email: {
       type: String,
       // required: true,
