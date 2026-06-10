@@ -10,7 +10,7 @@ const { default: axios } = require("axios");
 
 const beatReport = asyncHandler(async (req, res) => {
   try {
-    let { status, regionId, distributorId } = req.query;
+    let { status, regionId, subDivisionId, distributorId } = req.query;
 
     let filter = {};
     if (status) {
@@ -18,6 +18,9 @@ const beatReport = asyncHandler(async (req, res) => {
     }
     if (regionId) {
       filter.regionId = regionId;
+    }
+    if (subDivisionId) {
+      filter.subDivisionId = subDivisionId;
     }
     if (distributorId) {
       filter.distributorId = { $in: [distributorId] };
@@ -31,6 +34,10 @@ const beatReport = asyncHandler(async (req, res) => {
         },
         {
           path: "distributorId",
+          select: "",
+        },
+        {
+          path: "subDivisionId",
           select: "",
         },
         {
@@ -60,6 +67,8 @@ const beatReport = asyncHandler(async (req, res) => {
             "Beat Type": beat?.beat_type,
             "Region Code": beat?.regionId?.code,
             "Region Name": beat?.regionId?.name,
+            "Sub Division Code": beat?.subDivisionId?.code || "",
+            "Sub Division Name": beat?.subDivisionId?.name || "",
             "Distributor Code": distributor?.dbCode || "",
             "Distributor Name": distributor?.name || "",
             Status: beat.status ? "Active" : "Inactive",
@@ -74,6 +83,8 @@ const beatReport = asyncHandler(async (req, res) => {
           "Beat Type": beat?.beat_type,
           "Region Code": beat?.regionId?.code,
           "Region Name": beat?.regionId?.name,
+          "Sub Division Code": beat?.subDivisionId?.code || "",
+          "Sub Division Name": beat?.subDivisionId?.name || "",
           "Distributor Code": "",
           "Distributor Name": "",
           Status: beat.status ? "Active" : "Inactive",
@@ -89,6 +100,8 @@ const beatReport = asyncHandler(async (req, res) => {
       { label: "Beat Type", value: "Beat Type" },
       { label: "Region Code", value: "Region Code" },
       { label: "Region Name", value: "Region Name" },
+      { label: "Sub Division Code", value: "Sub Division Code" },
+      { label: "Sub Division Name", value: "Sub Division Name" },
       { label: "Distributor Code", value: "Distributor Code" },
       { label: "Distributor Name", value: "Distributor Name" },
       { label: "Status", value: "Status" },

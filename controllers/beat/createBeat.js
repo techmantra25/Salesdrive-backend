@@ -4,7 +4,8 @@ const { generateCode } = require("../../utils/codeGenerator");
 
 const createBeat = asyncHandler(async (req, res) => {
   try {
-    const { name, beat_type, regionId, distributorId, beatIds } = req.body;
+    const { name, beat_type, regionId, distributorId, beatIds, subDivisionId } =
+      req.body;
 
     let beatExist = await Beat.findOne({
       $and: [{ name: req.body.name }, { regionId: req.body.regionId }],
@@ -35,6 +36,7 @@ const createBeat = asyncHandler(async (req, res) => {
       beat_type,
       regionId,
       beatIds,
+      subDivisionId,
       distributorId: distributorIds,
       code: BeatCode,
     });

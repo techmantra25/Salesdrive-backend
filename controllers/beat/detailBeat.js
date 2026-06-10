@@ -14,6 +14,10 @@ const detailBeat = asyncHandler(async (req, res) => {
         select: "name code",
       },
       {
+        path: "subDivisionId",
+        select: "",
+      },
+      {
         path: "employeeId",
         select: "",
         populate: [

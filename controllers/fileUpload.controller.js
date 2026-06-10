@@ -3410,12 +3410,16 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               const skippedRowsForBeat = [];
               const regionCodes = new Set();
+              const subDivisionCodesForBeat = new Set();
               const distributorCodes = new Set();
               const beatNames = new Set();
 
               results.forEach((row) => {
                 if (row["Region Code"]?.trim()) {
                   regionCodes.add(row["Region Code"].trim());
+                }
+                if (row["Sub Division Code"]?.trim()) {
+                  subDivisionCodesForBeat.add(row["Sub Division Code"].trim());
                 }
                 if (row["Distributor Codes"]?.trim()) {
                   // Split comma-separated distributor codes and add each one
@@ -3430,8 +3434,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   beatNames.add(row["Beat Name"].trim());
                 }
               }); // Step 2: Batch fetch regions, distributors, and existing beats
-              const [regions, distributors, existingBeats] = await Promise.all([
+              const [regions, subDivisions, distributors, existingBeats] =
+                await Promise.all([
                 Region.find({ code: { $in: Array.from(regionCodes) } }).lean(),
+                SubDivision.find({
+                  code: { $in: Array.from(subDivisionCodesForBeat) },
+                }).lean(),
                 Distributor.find({
                   dbCode: { $in: Array.from(distributorCodes) },
                 }).lean(),
@@ -3440,6 +3448,12 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   .lean(),
               ]); // Step 3: Create lookup maps
               const regionMap = new Map(regions.map((r) => [r.code, r]));
+              const subDivisionMap = new Map(
+                subDivisions.map((subDivision) => [
+                  subDivision.code,
+                  subDivision,
+                ]),
+              );
               const distributorMap = new Map(
                 distributors.map((d) => [d.dbCode, d]),
               );
@@ -3457,6 +3471,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               console.log(
                 `Found ${regions.length} regions and ${distributors.length} distributors in database`,
+              );
+              console.log(
+                `Found ${subDivisions.length} sub divisions in database`,
               );
               console.log(
                 `Found ${existingBeats.length} existing beats with matching names`,
@@ -3506,6 +3523,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const beatName = row["Beat Name"].trim();
                 const beatType = row["Beat Type"].trim().toLowerCase();
                 const regionCode = row["Region Code"].trim();
+                const subDivisionCode = row["Sub Division Code"]?.trim();
                 const distributorCodesStr = row["Distributor Codes"].trim();
 
                 // Parse comma-separated distributor codes
@@ -3547,6 +3565,18 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     reason: `Region with code "${regionCode}" not found at row ${row.index}`,
                   });
                   continue;
+                }
+
+                let subDivision = null;
+                if (subDivisionCode) {
+                  subDivision = subDivisionMap.get(subDivisionCode);
+                  if (!subDivision) {
+                    skippedRowsForBeat.push({
+                      ...row,
+                      reason: `Sub Division with code "${subDivisionCode}" not found at row ${row.index}`,
+                    });
+                    continue;
+                  }
                 }
 
                 // Validate region name matches (if provided)
@@ -3663,6 +3693,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   beatName,
                   beatType,
                   region,
+                  subDivision,
                   distributors: validDistributors,
                   beatIds: beatIds, // Add beatIds to validated row data
                 });
@@ -3694,6 +3725,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       beatIds: validRow.beatIds || [], // Add beatIds field
                       beat_type: validRow.beatType,
                       regionId: validRow.region._id,
+                      subDivisionId: validRow.subDivision?._id,
                       distributorId: validRow.distributors.map((d) => d._id),
                       status: true,
                     }),
