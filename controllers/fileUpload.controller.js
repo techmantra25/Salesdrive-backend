@@ -20,6 +20,7 @@ const Outlet = require("../models/outlet.model");
 const Employee = require("../models/employee.model");
 const Beat = require("../models/beat.model");
 const District = require("../models/district.model");
+const SubDivision = require("../models/subDivision.model");
 const Designation = require("../models/designation.model");
 const EmployeeMapping = require("../models/employeeMapping.model");
 const EmployeePassword = require("../models/employeePassword.model");
@@ -238,6 +239,103 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               } else {
                 console.warn("No valid results to save after filtering");
               }
+              break;
+            }
+
+            case "SubDivision":
+            case "subDivision": {
+              const districtCodes = new Set();
+              const subDivisionCodes = new Set();
+              const duplicateCodesInCsv = new Set();
+
+              for (const row of results) {
+                const districtCode = row["District Code"]?.trim();
+                const subDivisionCode = row["Sub Division Code"]?.trim();
+
+                if (districtCode) {
+                  districtCodes.add(districtCode);
+                }
+
+                if (subDivisionCode) {
+                  if (subDivisionCodes.has(subDivisionCode)) {
+                    duplicateCodesInCsv.add(subDivisionCode);
+                  }
+                  subDivisionCodes.add(subDivisionCode);
+                }
+              }
+
+              const [districts, existingSubDivisions] = await Promise.all([
+                District.find({
+                  code: { $in: Array.from(districtCodes) },
+                }).lean(),
+                SubDivision.find({
+                  code: { $in: Array.from(subDivisionCodes) },
+                })
+                  .select("code")
+                  .lean(),
+              ]);
+
+              const districtMap = new Map(
+                districts.map((district) => [district.code, district]),
+              );
+              const existingSubDivisionCodes = new Set(
+                existingSubDivisions.map((subDivision) => subDivision.code),
+              );
+              const validSubDivisions = [];
+
+              for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                row.index = i + 1;
+
+                const subDivisionCode = row["Sub Division Code"]?.trim();
+                const subDivisionName = row["Sub Division Name"]?.trim();
+                const districtCode = row["District Code"]?.trim();
+
+                if (!subDivisionCode || !subDivisionName || !districtCode) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Missing required fields at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                if (duplicateCodesInCsv.has(subDivisionCode)) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Duplicate Sub Division Code in CSV at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                if (existingSubDivisionCodes.has(subDivisionCode)) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `Sub Division already exists at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                const district = districtMap.get(districtCode);
+
+                if (!district) {
+                  skippedRows.push({
+                    ...row,
+                    reason: `District not found at row ${row.index}`,
+                  });
+                  continue;
+                }
+
+                validSubDivisions.push({
+                  name: subDivisionName,
+                  code: subDivisionCode,
+                  districtId: district._id,
+                });
+              }
+
+              if (validSubDivisions.length > 0) {
+                resp = await SubDivision.insertMany(validSubDivisions);
+              }
+
               break;
             }
 
