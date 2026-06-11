@@ -244,13 +244,17 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
             case "SubDivision":
             case "subDivision": {
+              const getSubDivisionCode = (row) =>
+                row["Sub Division Code"]?.trim() || row["Zone Code"]?.trim();
+              const getSubDivisionName = (row) =>
+                row["Sub Division Name"]?.trim() || row["Zone Name"]?.trim();
               const districtCodes = new Set();
               const subDivisionCodes = new Set();
               const duplicateCodesInCsv = new Set();
 
               for (const row of results) {
                 const districtCode = row["District Code"]?.trim();
-                const subDivisionCode = row["Sub Division Code"]?.trim();
+                const subDivisionCode = getSubDivisionCode(row);
 
                 if (districtCode) {
                   districtCodes.add(districtCode);
@@ -287,8 +291,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const row = results[i];
                 row.index = i + 1;
 
-                const subDivisionCode = row["Sub Division Code"]?.trim();
-                const subDivisionName = row["Sub Division Name"]?.trim();
+                const subDivisionCode = getSubDivisionCode(row);
+                const subDivisionName = getSubDivisionName(row);
                 const districtCode = row["District Code"]?.trim();
 
                 if (!subDivisionCode || !subDivisionName || !districtCode) {
