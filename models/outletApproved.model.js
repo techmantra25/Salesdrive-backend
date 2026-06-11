@@ -25,7 +25,7 @@ const outletApprovedSchema = new mongoose.Schema(
     employeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
-     default: null,
+      default: null,
     },
     zoneId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -95,7 +95,7 @@ const outletApprovedSchema = new mongoose.Schema(
       type: String,
     },
     beatId: {
-      type:[ mongoose.Schema.Types.ObjectId],
+      type: [mongoose.Schema.Types.ObjectId],
       ref: "Beat",
       required: true,
     },
@@ -135,10 +135,19 @@ const outletApprovedSchema = new mongoose.Schema(
     poaBackImage: {
       type: String,
     },
-    panImage:{
+    gstImage: {
       type: String,
     },
-     aadharImage:{
+
+    panImage: {
+      type: String,
+    },
+
+    aadharImage: {
+      type: String,
+    },
+
+    bankImage: {
       type: String,
     },
     enrollmentForm: {
@@ -235,9 +244,9 @@ const outletApprovedSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    massistRefIds:[
+    massistRefIds: [
       {
-        type:String,
+        type: String,
       }
     ],
     isUpdatedOutletCode: {
@@ -248,16 +257,16 @@ const outletApprovedSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    deletedByApp:{
+    deletedByApp: {
       type: Boolean,
-      default:false,
+      default: false,
     },
     mergedPoints: {
       type: Number,
       default: 0,
       min: 0, // balance can't be negative
     },
-  
+
 
   },
   {
@@ -265,12 +274,12 @@ const outletApprovedSchema = new mongoose.Schema(
   }
 );
 
-outletApprovedSchema.index({beatId:1,status:1});
+outletApprovedSchema.index({ beatId: 1, status: 1 });
 
 outletApprovedSchema.index({
-  outletName:"text",
-  outletCode:"text",
-  outletUID:"text",
+  outletName: "text",
+  outletCode: "text",
+  outletUID: "text",
 });
 
 

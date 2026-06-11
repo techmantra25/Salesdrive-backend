@@ -71,6 +71,21 @@ const outletSchema = new mongoose.Schema(
     pin: {
       type: String,
     },
+    gstImage: {
+  type: String,
+},
+
+panImage: {
+  type: String,
+},
+
+aadharImage: {
+  type: String,
+},
+
+bankImage: {
+  type: String,
+},
     district: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "District",

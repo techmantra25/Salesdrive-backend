@@ -646,6 +646,16 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
 
       panNumber:
         data.panNumber || null,
+      gstImage: data.gstImage || null,
+
+      panImage: data.panImage || null,
+
+      aadharImage:
+        data.aadhaarImage ||
+        data.aadharImage ||
+        null,
+
+      bankImage: data.bankImage || null,
 
       gstin: data.gstin || null,
 
