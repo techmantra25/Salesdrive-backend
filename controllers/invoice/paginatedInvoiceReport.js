@@ -137,8 +137,8 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
       "Product Name",
       "Brand",
       "Sub Brand",
-      "Plant Code",
-      "Plant Name",
+      // "Plant Code",
+      // "Plant Name",
       "Goods Type",
       "Price",
       "UOM",
@@ -156,7 +156,7 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
       "SGST",
       "IGST",
       "Net Amount",
-      "Base Point",
+      // "Base Point",
     ];
 
     const csvStream = format({ headers });
@@ -211,8 +211,8 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
             ? `${item.product.brand.code} - ${item.product.brand.desc}`
             : "",
           "Sub Brand": item?.product?.subBrand?.name || "",
-          "Plant Code": item?.plant?.plantCode || "",
-          "Plant Name": item?.plant?.plantShortName || "",
+          // "Plant Code": item?.plant?.plantCode || "",
+          // "Plant Name": item?.plant?.plantShortName || "",
           "Goods Type": item?.goodsType || "",
           Price: item?.mrp || 0,
           UOM: item?.product?.uom || "",
@@ -230,7 +230,7 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
           SGST: item?.sgst || 0,
           IGST: item?.igst || 0,
           "Net Amount": item?.netAmount || 0,
-          "Base Point": basePoint,
+          // "Base Point": basePoint,
         });
       });
     });

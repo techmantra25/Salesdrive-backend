@@ -125,7 +125,7 @@ const poReport = asyncHandler(async (req, res) => {
       "Supplier Name",
       "PO Created Date",
       "Expected Delivery Date",
-      "Plant",
+      // "Plant",
       "Product Code",
       "Product Name",
       "UOM",
@@ -141,9 +141,9 @@ const poReport = asyncHandler(async (req, res) => {
       "Net Amount (Line)",
       "Total Net Amount (PO)",
       "Order Status",
-      "Quotation Status",
-      "SAP Quotation No",
-      "SAP Sales Order No",
+      // "Quotation Status",
+      // "SAP Quotation No",
+      // "SAP Sales Order No",
     ];
 
     // Create CSV stream
@@ -175,7 +175,7 @@ const poReport = asyncHandler(async (req, res) => {
                 .tz("Asia/Kolkata")
                 .format("YYYY-MM-DD")
             : "",
-          Plant: "",
+          // Plant: "",
           "Product Code": "",
           "Product Name": "",
           UOM: "",
@@ -191,9 +191,9 @@ const poReport = asyncHandler(async (req, res) => {
           "Net Amount (Line)": "",
           "Total Net Amount (PO)": po?.netAmount || 0,
           "Order Status": po?.status || "",
-          "Quotation Status": po?.sapStatus || "",
-          "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
-          "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
+          // "Quotation Status": po?.sapStatus || "",
+          // "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
+          // "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
         });
       } else {
         // Write one row per line item
@@ -213,7 +213,7 @@ const poReport = asyncHandler(async (req, res) => {
                   .tz("Asia/Kolkata")
                   .format("YYYY-MM-DD")
               : "",
-            Plant: lineItem?.plant?.plantName || "",
+            // Plant: lineItem?.plant?.plantName || "",
             "Product Code": lineItem?.product?.product_code || "",
             "Product Name": lineItem?.product?.name || "",
             UOM: lineItem?.lineItemUOM || "",
@@ -235,9 +235,9 @@ const poReport = asyncHandler(async (req, res) => {
             "Net Amount (Line)": lineItem?.netAmt || "",
             "Total Net Amount (PO)": po?.netAmount || 0,
             "Order Status": po?.status || "",
-            "Quotation Status": po?.sapStatus || "",
-            "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
-            "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
+            // "Quotation Status": po?.sapStatus || "",
+            // "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
+            // "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
           });
         });
       }
