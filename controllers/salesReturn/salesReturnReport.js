@@ -98,7 +98,7 @@ const generateSalesReturnReport = asyncHandler(async (req, res) => {
       "Order No",
       "Distributor Code",
       "Distributor Name",
-      "Distributor's Zone",
+      // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
       "Retailer UID",
@@ -118,7 +118,7 @@ const generateSalesReturnReport = asyncHandler(async (req, res) => {
       "SGST",
       "IGST",
       "Net Amount",
-      "Base Point",
+      // "Base Point",
       "Remark",
     ];
 
@@ -161,7 +161,7 @@ const generateSalesReturnReport = asyncHandler(async (req, res) => {
           "Order No": salesReturn.billId?.orderNo || "",
           "Distributor Code": salesReturn.distributorId?.dbCode || "",
           "Distributor Name": salesReturn.distributorId?.name || "",
-          "Distributor's Zone": salesReturn.distributorId?.stateId?.zoneId?.name || "",
+          // "Distributor's Zone": salesReturn.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": salesReturn.distributorId?.stateId?.name || "",
           "Distributor's City": salesReturn.distributorId?.city || "",
           "Retailer UID": salesReturn.retailerId?.outletUID || "",
@@ -181,7 +181,7 @@ const generateSalesReturnReport = asyncHandler(async (req, res) => {
           SGST: item.totalSGST || 0,
           IGST: item.totalIGST || 0,
           "Net Amount": item.netAmt || 0,
-          "Base Point": basePoint,
+          // "Base Point": basePoint,
           Remark: item.salesReturnRemark || "",
         });
       });

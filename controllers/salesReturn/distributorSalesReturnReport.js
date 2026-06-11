@@ -105,7 +105,7 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
       "Order No",
       "Distributor Code",
       "Distributor Name",
-      "Distributor's Zone",
+      // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
       "Retailer UID",
@@ -125,7 +125,7 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
       "SGST",
       "IGST",
       "Net Amount",
-      "Base Point",
+      // "Base Point",
       "Remark",
     ];
 
@@ -169,7 +169,7 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
           "Order No": salesReturn.billId?.orderNo || "",
           "Distributor Code": salesReturn.distributorId?.dbCode || "",
           "Distributor Name": salesReturn.distributorId?.name || "",
-          "Distributor's Zone": salesReturn.distributorId?.stateId?.zoneId?.name || "",
+          // "Distributor's Zone": salesReturn.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": salesReturn.distributorId?.stateId?.name || "",
           "Distributor's City": salesReturn.distributorId?.city || "",
           "Retailer UID": salesReturn.retailerId?.outletUID || "",

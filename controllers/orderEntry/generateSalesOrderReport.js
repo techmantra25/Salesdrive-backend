@@ -128,7 +128,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
     const headers = [
       "Distributor ID",
       "Distributor Name",
-      "Distributor's Zone",
+      // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
       "Order Number",
@@ -188,8 +188,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
         csvStream.write({
           "Distributor ID": order.distributorId?.dbCode || "",
           "Distributor Name": escapeCSVValue(order.distributorId?.name),
-          "Distributor's Zone":
-            order.distributorId?.stateId?.zoneId?.name || "",
+          // "Distributor's Zone":
+          //   order.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": order.distributorId?.stateId?.name || "",
           "Distributor's City": order.distributorId?.city || "",
           "Order Number": order.orderNo || "",

@@ -124,7 +124,7 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
     const headers = [
       "Distributor Code",
       "Distributor Name",
-      "Distributor's Zone",
+      // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
       "Invoice No",
@@ -192,7 +192,7 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
         csvStream.write({
           "Distributor Code": invoice?.distributorId?.dbCode || "",
           "Distributor Name": invoice?.distributorId?.name || "",
-          "Distributor's Zone": invoice?.distributorId?.stateId?.zoneId?.name || "",
+          // "Distributor's Zone": invoice?.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": invoice?.distributorId?.stateId?.name || "",
           "Distributor's City": invoice?.distributorId?.city || "",
           "Invoice No": invoice?.invoiceNo || "",
