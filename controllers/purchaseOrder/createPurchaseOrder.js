@@ -203,30 +203,30 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     const savedPurchaseOrder = await newPurchaseOrder.save();
     const purchaseOrderId = savedPurchaseOrder._id;
 
-    try {
-      await axios.get(
-        `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
-      );
-    } catch (error) {
-      await PurchaseOrder.findByIdAndUpdate(
-        purchaseOrderId,
-        {
-          $set: {
-            approvedStatus: "Not Approved",
-            approved_by: null,
-            approvedByType: null,
-            quotationSuccess: false,
-          },
-        },
-        { new: true }
-      );
+    // try {
+    //   await axios.get(
+    //     `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
+    //   );
+    // } catch (error) {
+    //   await PurchaseOrder.findByIdAndUpdate(
+    //     purchaseOrderId,
+    //     {
+    //       $set: {
+    //         approvedStatus: "Not Approved",
+    //         approved_by: null,
+    //         approvedByType: null,
+    //         quotationSuccess: false,
+    //       },
+    //     },
+    //     { new: true }
+    //   );
 
-      res.status(400);
-      throw new Error(
-        `Error sending quotation: ${error?.response?.data?.message || error.message
-        }`
-      );
-    }
+    //   res.status(400);
+    //   throw new Error(
+    //     `Error sending quotation: ${error?.response?.data?.message || error.message
+    //     }`
+    //   );
+    // }
 
     res.status(200).json({
       status: 200,
