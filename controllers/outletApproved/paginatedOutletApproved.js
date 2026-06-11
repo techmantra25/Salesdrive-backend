@@ -6,21 +6,20 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
   try {
     const query = {};
 
-
     if (req.query.search) {
       query.$or = [
         { outletCode: { $regex: req.query.search, $options: "i" } },
         { outletUID: { $regex: req.query.search, $options: "i" } },
         { outletName: { $regex: req.query.search, $options: "i" } },
         { ownerName: { $regex: req.query.search, $options: "i" } },
-        { mobile1: { $regex: req.query.search, $options: "i" } },  
+        { mobile1: { $regex: req.query.search, $options: "i" } },
         { massistRefIds: { $regex: req.query.search, $options: "i" } },
       ];
     }
     if (req.query.phoneSearch) {
       // Remove all non-numeric characters from search term
-      const cleanedPhone = req.query.phoneSearch.replace(/\D/g, '');
-      
+      const cleanedPhone = req.query.phoneSearch.replace(/\D/g, "");
+
       // Search for phone numbers with or without +91
       query.$or = [
         { mobile1: { $regex: cleanedPhone, $options: "i" } },
@@ -30,12 +29,12 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
     }
 
     if (req.query.statusFilter && req.query.statusFilter !== "All") {
-  query.status = req.query.statusFilter === "active";
-}
+      query.status = req.query.statusFilter === "active";
+    }
 
-if (req.query.outletSource) {
-  query.outletSource = req.query.outletSource;
-}
+    if (req.query.outletSource) {
+      query.outletSource = req.query.outletSource;
+    }
 
     if (req.query.regionId) {
       query.regionId = req.query.regionId;
@@ -59,38 +58,39 @@ if (req.query.outletSource) {
     }
 
     if (req.query.massistRefIds) {
-      const massistRefIds = Array.isArray(req.query.massistRefIds) ? req.query.massistRefIds : [req.query.massistRefIds];
+      const massistRefIds = Array.isArray(req.query.massistRefIds)
+        ? req.query.massistRefIds
+        : [req.query.massistRefIds];
       query.massistRefIds = { $in: massistRefIds };
     }
 
-  // CREATED DATE FILTER
-if (req.query.fromDate && req.query.toDate) {
-  query.createdAt = {};
+    // CREATED DATE FILTER
+    if (req.query.fromDate && req.query.toDate) {
+      query.createdAt = {};
 
-  const start = new Date(req.query.fromDate);
-  start.setHours(0, 0, 0, 0);
+      const start = new Date(req.query.fromDate);
+      start.setHours(0, 0, 0, 0);
 
-  const end = new Date(req.query.toDate);
-  end.setHours(23, 59, 59, 999);
+      const end = new Date(req.query.toDate);
+      end.setHours(23, 59, 59, 999);
 
-  query.createdAt.$gte = start;
-  query.createdAt.$lte = end;
-}
+      query.createdAt.$gte = start;
+      query.createdAt.$lte = end;
+    }
 
-// UPDATED DATE FILTER
-if (req.query.updatedFromDate && req.query.updatedToDate) {
-  query.updatedAt = {};
+    // UPDATED DATE FILTER
+    if (req.query.updatedFromDate && req.query.updatedToDate) {
+      query.updatedAt = {};
 
-  const start = new Date(req.query.updatedFromDate);
-  start.setHours(0, 0, 0, 0);
+      const start = new Date(req.query.updatedFromDate);
+      start.setHours(0, 0, 0, 0);
 
-  const end = new Date(req.query.updatedToDate);
-  end.setHours(23, 59, 59, 999);
+      const end = new Date(req.query.updatedToDate);
+      end.setHours(23, 59, 59, 999);
 
-  query.updatedAt.$gte = start;
-  query.updatedAt.$lte = end;
-}
-
+      query.updatedAt.$gte = start;
+      query.updatedAt.$lte = end;
+    }
 
     // SORTING
     let sortOption = { _id: -1 };
@@ -133,8 +133,11 @@ if (req.query.updatedFromDate && req.query.updatedToDate) {
         {
           path: "beatId",
           select: "",
+          populate: {
+            path: "subDivisionId",
+            select: "",
+          },
         },
-
         {
           path: "distributorId",
           select: "",
