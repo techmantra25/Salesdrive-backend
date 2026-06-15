@@ -10,7 +10,6 @@ const Brand = require("../../models/brand.model");
 const Distributor = require("../../models/distributor.model");
 const OutletApproved = require("../../models/outletApproved.model");
 
-
 const { generateCode } = require("../../utils/codeGenerator");
 
 const createSingleOutlet = asyncHandler(async (req, res) => {
@@ -42,12 +41,12 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // REQUIRED FIELD VALIDATION
     // =========================
 
+    // REMOVED 'whatsappNumber' from required fields to make it non-mandatory
     const requiredFields = [
       "outletName",
       "ownerName",
       "beatCode",
       "stateCode",
-      "whatsappNumber",
     ];
 
     const missingFields = requiredFields.filter(
@@ -103,9 +102,6 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       stateId: state._id,
     });
 
-    // =========================
-    // BEAT VALIDATION
-    // =========================
     // =========================
     // BEAT VALIDATION
     // =========================
@@ -234,33 +230,20 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     }
 
     // =========================
-    // MOBILE VALIDATION
+    // MOBILE & WHATSAPP VALIDATION
     // =========================
 
     const mobile1 = getMobile1();
     const whatsappNumber =
       data.whatsappNumber?.toString().trim();
 
-    if (!whatsappNumber) {
-      return res.status(400).json({
-        status: false,
-        message: "WhatsApp number is required",
-      });
-    }
+    // REMOVED: Hard check for whatsappNumber presence
+    // REMOVED: Regex check for whatsappNumber format (allowing it to be skipped)
 
     const mobileRegex = /^[6-9]\d{9}$/;
 
-    if (!mobileRegex.test(whatsappNumber)) {
-      return res.status(400).json({
-        status: false,
-        message:
-          "Invalid WhatsApp number. Must be 10 digit Indian mobile number",
-      });
-    }
-
+    // CHANGED: Mobile 1 is now optional. If provided, validate format.
     if (mobile1) {
-      const mobileRegex = /^[6-9]\d{9}$/;
-
       if (!mobileRegex.test(mobile1)) {
         return res.status(400).json({
           status: false,
@@ -358,8 +341,6 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
         message: "Outlet code already exists in approved outlets",
       });
     }
-
-
 
     // =========================
     // BRAND VALIDATION
@@ -566,7 +547,6 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       });
     }
 
-
     // =========================
     // LEAD ID
     // =========================
@@ -623,7 +603,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       mobile2: getMobile2() || null,
 
       whatsappNumber:
-        data.whatsappNumber || null,
+        whatsappNumber || null,
 
       preferredLanguage:
         data.preferredLanguage || null,
