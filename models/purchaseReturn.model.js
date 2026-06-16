@@ -28,6 +28,13 @@ const LineItemSchema = new mongoose.Schema({
   sgst: { type: Number, default: 0 },
   igst: { type: Number, default: 0 },
   netAmount: { type: Number },
+  uom: {
+    type: String,
+    enum: {
+      values: ["pcs", "bndl", "box", "coil"],
+      message: "Values allowed pcs/box/bndl/coil",
+    },
+  },
   usedBasePoint: { type: Number, default: null },
 });
 

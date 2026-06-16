@@ -30,6 +30,10 @@ const LineItemSchema = new mongoose.Schema({
   },
   lineItemUOM: {
     type: String,
+    enum: {
+      values: ["pcs", "bndl", "box", "coil"],
+      message: "Values allowed pcs/box/bndl/coil",
+    },
   },
 
   boxOrderQty: {
