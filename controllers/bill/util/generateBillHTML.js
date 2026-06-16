@@ -1,14 +1,7 @@
 const numberToWords = require("./numberToWords");
 const QRCode = require("qrcode");
 
-/**
- * Generates HTML for a bill/invoice using the provided bill object
- * @param {Object} bill - The bill object containing all invoice data
- * @param {Object} options - Additional options for layout
- * @returns {string} - HTML string for the invoice
- */
 async function generateBillHTML(bill, options = {}) {
-  // Format date
   const formatDate = (dateString) => {
     if (!dateString) return "";
     const date = new Date(dateString);
@@ -19,856 +12,757 @@ async function generateBillHTML(bill, options = {}) {
     });
   };
 
-  // Format currency
   const formatCurrency = (amount) => {
     if (amount === undefined || amount === null) return "0.00";
-    return parseFloat(amount).toFixed(2);
+    return parseFloat(amount).toLocaleString("en-IN", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   };
 
-  // Get box quantity calculation
-  const getBoxQty = (item, qtyNumber) => {
-    const piecesPerBox = Number(item?.product?.no_of_pieces_in_a_box) || 1;
-    let qty = qtyNumber;
-    return (qty / piecesPerBox).toFixed(2);
-  };
-
-  // Get distributor details
   const distributor = bill.distributorId || {};
-
-  // Get bank data
   const bankData = bill.bankData || {};
-
-  // Get UPI data from bill object (already fetched in controller)
   const upiData = bill.upiData || null;
-
-  // Get retailer details
   const retailer = bill.retailerId || {};
-
-  // Get order details
   const order = bill.orderId || {};
-
-  // Get salesman details
   const salesman = bill.salesmanName || {};
-
-  // Get route details
   const route = bill.routeId || {};
 
-  // Get Terms & Conditions
-  const termConditions = bill.termConditions || [];
+  const eInvoice = bill.eInvoice || {};
+  const irn = eInvoice.irn || bill.irn || "";
+  const ackNo = eInvoice.ackNo || bill.ackNo || "";
+  const ackDate = eInvoice.ackDate ? formatDate(eInvoice.ackDate) : (bill.ackDate ? formatDate(bill.ackDate) : "");
+  const eWayBillNo = eInvoice.eWayBillNo || bill.eWayBillNo || "";
 
-  // Filter valid line items
   const validLineItems = (bill.lineItems || []).filter(
-    (item) => item?.billQty > 0,
+    (item) => item?.billQty > 0
   );
 
-  // Generate UPI QR Code
   const generateUpiQR = async (upiId) => {
     if (!upiId) return "";
-
     try {
-      // Generate QR code as data URL
-      const qrDataUrl = await QRCode.toDataURL(
-        `upi://pay?pa=${upiId}&pn=Payment`,
-      );
-      return qrDataUrl;
+      return await QRCode.toDataURL(`upi://pay?pa=${upiId}&pn=Payment`);
     } catch (error) {
       console.error("QR Code generation error:", error);
       return "";
     }
   };
 
-  // Generate QR code if UPI data exists
   let upiQRCode = "";
   if (upiData?.upiId) {
     upiQRCode = await generateUpiQR(upiData.upiId);
   }
 
-  // Generate Terms & Conditions HTML
-  let termConditionsHTML = "";
-  termConditions.forEach((term, index) => {
-    termConditionsHTML += `<li>${term}</li>`;
-  });
-
-  // Generate line items HTML
   let lineItemsHTML = "";
   validLineItems.forEach((item, index) => {
     const product = item.product || {};
+    const discPct = formatCurrency(item.totalDiscountPercentage || 0);
+    const amount = formatCurrency(item.netAmt);
 
     lineItemsHTML += `
-      <tr style="border-bottom: 1px solid #eee;">
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: center;">
-          ${index + 1}
+      <tr>
+        <td class="cell center">${index + 1}</td>
+        <td class="cell left">
+          <strong>${(product.name || "").replace(/\b\d{3}\b/g, "<b>$&</b>")} ${product.product_code || ""}</strong>
         </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: left;">
-          ${(product.name || "").replace(
-            /\b\d{3}\b/g,
-            "<strong>$&</strong>",
-          )} ${product.product_code || ""}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: center;">
-          ${product.product_hsn_code || ""}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: center;">
-          ${item.billQty || 0}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: center;">
-          ${getBoxQty(item, item.billQty) || 1}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-          ${formatCurrency(item.price?.rlp_price || 0)}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-          ${formatCurrency(item.grossAmt)}
-        </td>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-  ${formatCurrency(item.distributorDisc)}
-</td>
-
-<td style="border-right: 1px solid #000; padding: 2px; text-align: center; font-weight: bold;">
-  ${formatCurrency(item.totalDiscountPercentage || 0)}%
-</td>
-
-<td style="border-right: 1px solid #000; padding: 2px; text-align: right;">
-  ${formatCurrency(item.totalCGST + item.totalSGST + item.totalIGST)}
-</td>
-        <td style="padding: 2px; font-weight: bold; text-align: right;">
-          ${formatCurrency(item.netAmt)}
-        </td>
+        <td class="cell center">${product.product_hsn_code || ""}</td>
+        <td class="cell center"><strong>${item.billQty || 0} Pcs</strong></td>
+        <td class="cell right">${formatCurrency(item.price?.rlp_price || 0)}</td>
+        <td class="cell center">Pcs</td>
+        <td class="cell center">${discPct}%</td>
+        <td class="cell right"><strong>${amount}</strong></td>
       </tr>
     `;
   });
 
-  // Fill empty rows to reach 30 total rows for consistent layout
-  const emptyRowsCount = Math.max(0, 28 - validLineItems.length);
-  for (let i = 0; i < emptyRowsCount; i++) {
-    lineItemsHTML += `
-      <tr>
-        <td style="border-right: 1px solid #000; padding: 2px; text-align: center;">-</td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-        <td style="border-right: 1px solid #000; padding: 2px;"></td>
-<td style="border-right: 1px solid #000; padding: 2px;"></td>
-<td style="padding: 2px;"></td>
-      </tr>
-    `;
-  }
-
-  // Get amount in words
   const amountInWords = () => {
     const amount = bill.netAmount || 0;
     const rupees = Math.floor(amount);
     const paise = Math.round((amount - rupees) * 100);
-
     let result = numberToWords(rupees) + " Rupees";
-    if (paise > 0) {
-      result += " and " + numberToWords(paise) + " Paise";
-    }
+    if (paise > 0) result += " and " + numberToWords(paise) + " Paise";
     return result + " Only";
   };
 
-  // Generate the HTML
+  const totalQty = validLineItems.reduce((s, i) => s + (i.billQty || 0), 0);
+  const igstVisible = bill?.igst && parseFloat(bill.igst) > 0;
+
+  // Build HSN/SAC tax breakup rows
+  const cgstRate = bill?.cgstRate || 9;
+  const sgstRate = bill?.sgstRate || 9;
+  const hsnMap = {};
+  validLineItems.forEach(item => {
+    const hsn = item.product?.product_hsn_code || "";
+    const taxableAmt = item.netAmt || 0;
+    if (!hsnMap[hsn]) hsnMap[hsn] = { taxable: 0 };
+    hsnMap[hsn].taxable += taxableAmt;
+  });
+
+  let hsnRowsHTML = "";
+  let grandTaxable = 0, grandCgst = 0, grandSgst = 0;
+  Object.entries(hsnMap).forEach(([hsn, data]) => {
+    const taxable = bill?.netAmount || 0;
+    const cgstAmt = taxable * cgstRate / 100;
+    const sgstAmt = taxable * sgstRate / 100;
+    grandTaxable += taxable;
+    grandCgst += cgstAmt;
+    grandSgst += sgstAmt;
+    hsnRowsHTML += `<tr>
+      <td class="hcell">${hsn}</td>
+      <td class="hcell right">${formatCurrency(bill?.netAmount)}</td>
+      <td class="hcell center">${cgstRate}%</td>
+      <td class="hcell right">${formatCurrency(cgstAmt)}</td>
+      <td class="hcell center">${sgstRate}%</td>
+      <td class="hcell right">${formatCurrency(sgstAmt)}</td>
+      <td class="hcell right">${formatCurrency(cgstAmt + sgstAmt)}</td>
+    </tr>`;
+  });
+  hsnRowsHTML += `<tr class="hsn-total-row">
+    <td class="hcell right"><strong>Total</strong></td>
+    <td class="hcell right"><strong>${formatCurrency(bill?.netAmount)}</strong></td>
+    <td class="hcell"></td>
+    <td class="hcell right"><strong>${formatCurrency(grandCgst)}</strong></td>
+    <td class="hcell"></td>
+    <td class="hcell right"><strong>${formatCurrency(grandSgst)}</strong></td>
+    <td class="hcell right"><strong>${formatCurrency(grandCgst + grandSgst)}</strong></td>
+  </tr>`;
+
+
+
+  const totalTaxAmount = grandCgst + grandSgst + (bill.igst || 0);
+
+  const taxAmountInWords = () => {
+    const rupees = Math.floor(totalTaxAmount);
+    const paise = Math.round((totalTaxAmount - rupees) * 100);
+
+    let result = numberToWords(rupees) + " Rupees";
+
+    if (paise > 0) {
+      result += " and " + numberToWords(paise) + " Paise";
+    }
+
+    return result + " Only";
+  };
+
+
+  let emptyRowsHTML = "";
+
+  const emptyRowCount = Math.max(0, 18 - validLineItems.length);
+
+  for (let i = 0; i < emptyRowCount; i++) {
+    emptyRowsHTML += `
+    <tr class="empty-row">
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+      <td class="empty-cell"></td>
+    </tr>
+  `;
+  }
+
   return `<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>
-      ${
-        bill.new_billno || bill.billNo
-          ? `Invoice_${bill.new_billno || bill.billNo}`
-          : "Invoice"
-      }
-    </title>
-    <style>
-      @page {
-        size: A4;
-        margin: 5mm 5mm 5mm 5mm;
-      }
-      * {
-        box-sizing: border-box;
-      }
-      body {
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
-        font-size: 9px;
-        line-height: 1.1;
-        color: #000;
-      }
-      .invoice-container {
-        border: 1px solid #000;
-        max-width: 900px;
-        margin: 0 auto;
-        background: white;
-        display: flex;
-        flex-direction: column;
-        min-height: 100vh;
-      }
-      .header-section {
-        position: relative;
-        text-align: center;
-        padding: 8px 0 4px 0;
-        border-bottom: 1px solid #000;
-      }
-      .logo-container {
-        position: absolute;
-        top: -5px;
-        right: 10px;
-        width: 80px;
-      }
-      .logo-container img {
-        width: 100%;
-        max-height: 60px;
-        object-fit: contain;
-      }
-      .invoice-title {
-        text-align: center;
-        padding: 4px 0;
-        border-bottom: 1px solid #000;
-      }
-      .billing-details {
-        page-break-inside: avoid;
-      }
-      .items-section {
-        flex-grow: 1;
-      }
-      .items-table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      .items-table thead {
-        display: table-header-group;
-      }
-      .summary-section {
-        page-break-inside: avoid;
-      }
-      .bank-details {
-        page-break-inside: avoid;
-      }
-      .terms-conditions {
-        page-break-inside: avoid;
-      }
-      .signature-section {
-        break-inside: avoid;
-        page-break-inside: avoid;
-      }
-      table {
-        page-break-inside: auto;
-      }
-      tr {
-        page-break-inside: avoid;
-        page-break-after: auto;
-      }
-      th,
-      td {
-        page-break-inside: avoid;
-      }
-      h2,
-      h3 {
-        margin: 0;
-      }
-      p {
-        margin: 4px 0;
-      }
-      @media print {
-        body {
-          -webkit-print-color-adjust: exact;
-          print-color-adjust: exact;
-        }
-        .invoice-container {
-          border: 1px solid #000 !important;
-          min-height: auto;
-        }
-        table,
-        th,
-        td {
-          border-color: #000 !important;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="invoice-container">
-      <!-- Header Section -->
-      <div class="header-section">
-        <!-- Top Right Logo -->
-        <div class="logo-container">
-          <img
-            src="${options.logoBase64 || "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media"}"
-            alt="Company Logo"
-            onerror="this.style.display='none'"
-          />
-        </div>
-        <h2 style="margin: 0; font-size: 16px">
-          ${distributor.name || "Company Name"}
-        </h2>
-        <p style="margin: 3px 0; font-size: 9px">
-          ${distributor.address1 || ""}, ${distributor.address2 || ""}
-        </p>
-        <table style="width: 100%; margin-top: 3px; font-size: 9px">
-          <tbody>
-            <tr>
-              <td style="width: 20%; text-align: left; padding-left: 20px">
-                <strong>GSTIN No</strong>
-              </td>
-              <td style="width: 30%; text-align: left">
-                : ${distributor.gst_no || ""}
-              </td>
-              <td style="width: 20%; text-align: left">
-                <strong>Email Id</strong>
-              </td>
-              <td style="width: 30%; text-align: left">
-                : ${distributor.email || ""}
-              </td>
-            </tr>
-            <tr>
-              <td style="text-align: left; padding-left: 20px">
-                <strong>State</strong>
-              </td>
-              <td style="text-align: left">
-                : ${distributor?.stateId?.name || ""}${
-                  distributor?.stateId?.slug && distributor?.stateId?.code
-                    ? ` (${distributor?.stateId?.slug}) (${distributor?.stateId?.code})`
-                    : ""
-                }
-              </td>
-              <td style="text-align: left">
-                <strong>Phone No.</strong>
-              </td>
-              <td style="text-align: left; font-weight: bold">: ${distributor.phone || ""}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${bill.new_billno || bill.billNo ? "Invoice_" + (bill.new_billno || bill.billNo) : "Invoice"}</title>
+  <style>
+    @page { size: A4; margin: 6mm 6mm 6mm 6mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; min-height: 100%; }
+    body {
+      font-family: Arial, sans-serif;
+      font-size: 10px;
+      color: #000;
+      background: #e0e0e0;
+      padding: 20px 0;
+    }
 
-      <!-- Invoice Title -->
-      <div class="invoice-title">
-        <h3 style="margin: 0; font-size: 16px">TAX INVOICE</h3>
-      </div>
+    .page {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      border: 1px solid #000;
+      background: #fff;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
+      display: flex;
+      flex-direction: column;
+    }
+    @media print {
+      body { background: #fff !important; padding: 0 !important; }
+      .page {
+        width: 100% !important;
+        min-height: calc(297mm - 12mm) !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+      }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
 
-      <!-- Billing and Invoice Details -->
-      <div class="billing-details">
-        <table
-          style="
-            width: 100%;
-            border-collapse: collapse;
-            border-bottom: 1px solid #000;
-          "
-        >
-          <tbody>
-            <tr>
-              <!-- Billing Details -->
-              <td
-                style="
-                  width: 50%;
-                  padding: 2px;
-                  border-right: 1px solid #000;
-                  vertical-align: top;
-                "
-              >
-                <table style="width: 100%">
-                  <tbody>
-                    <tr>
-                      <td colspan="2" style="font-weight: bold">
-                        Billing Details (Bill To)
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Name</td>
-                      <td style="font-weight: bold">
-                        : ${retailer?.outletName || ""} (${
-                          retailer?.outletUID || ""
-                        })
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Address</td>
-                      <td>
-                        : ${retailer.address1 || ""}, ${retailer.city || ""}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Village/City</td>
-                      <td>: ${retailer.city || ""}</td>
-                    </tr>
-                    <tr>
-                      <td>Pin Code</td>
-                      <td>: ${retailer.pin || ""}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
+    /* TOP HEADER */
+    .top-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 6px 10px 5px;
+      border-bottom: 1px solid #000;
+    }
+    .top-header-center { text-align: center; flex: 1; }
+    .top-header-center .title-row {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 30px;
+    }
+    .tax-invoice-title { font-size: 17px; font-weight: bold; }
+    .original-label { font-style: italic; font-size: 11px; }
+    .e-invoice-label { font-size: 12px; font-weight: bold; }
+    .irn-block { margin-top: 4px; font-size: 10px; }
+    .irn-block p { margin: 2px 0; }
+    .qr-block { text-align: right; }
+    .qr-block img { width: 90px; height: 90px; border: 1px solid #ccc; }
+    .qr-placeholder {
+      width: 90px; height: 90px; border: 1px solid #ccc;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; color: #aaa;
+    }
 
-              <!-- Invoice Details -->
-              <td style="width: 50%; padding: 2px; vertical-align: top">
-                <table style="width: 100%">
-                  <tbody>
-                    <tr>
-                      <td style="width: 20%">Invoice No.</td>
-                      <td style="font-weight: bold">: ${bill.new_billno || bill.billNo}</td>
-                    </tr>
-                    <tr>
-                      <td style="width: 20%">Order No.</td>
-                      <td>: ${order?.orderNo || ""}</td>
-                    </tr>
-                    <tr>
-                      <td>Sales Man</td>
-                      <td>
-                        : ${salesman.name || ""} (${salesman?.empId || ""})
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Beat</td>
-                      <td>: ${route.name || ""} (${route?.code || ""})</td>
-                    </tr>
-                    <tr>
-                      <td>Phone No.</td>
-                      <td style="font-weight: bold">: ${retailer.mobile1 || ""}</td>
-                    </tr>
-                    <tr>
-                      <td>GSTIN No.</td>
-                      <td>: ${retailer.gstin || ""}</td>
-                    </tr>
-                    <tr>
-                      <td>Date</td>
-                      <td style="font-weight: bold">: ${formatDate(bill?.createdAt)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+    /* SELLER META */
+    .seller-meta { display: flex; border-bottom: 1px solid #000; }
+    .seller-box { width: 45%; border-right: 1px solid #000; padding: 6px 8px; }
+    .seller-box .company-name { font-size: 13px; font-weight: bold; margin-bottom: 3px; }
+    .seller-box p { margin: 2px 0; font-size: 10px; }
+    .meta-box { width: 55%; padding: 0; }
+    .meta-grid { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .meta-grid td {
+      border-bottom: 1px solid #000;
+      border-right: 1px solid #000;
+      padding: 4px 6px;
+      vertical-align: top;
+    }
+    .meta-grid td:last-child { border-right: none; }
+    .meta-grid tr:last-child td { border-bottom: none; }
+    .meta-label { font-size: 9px; color: #444; }
+    .meta-value { font-weight: bold; font-size: 10px; }
 
-      <!-- Items Table -->
-      <div class="items-section">
-        <table class="items-table" style="border-bottom: 1px solid #000">
-          <thead>
-            <tr style="border-bottom: 1px solid #000">
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                No
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: left;
-                "
-              >
-                Item Description
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                HSN/SAC
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Qty<br />PCS
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Qty<br />BOX
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Basic<br />Rate
-              </th>
-              <th
-                style="
-                  border-right: 1px solid #000;
-                  padding: 2px;
-                  text-align: center;
-                "
-              >
-                Gross<br />Amount
-              </th>
-             <th
-  style="
-    border-right: 1px solid #000;
-    padding: 2px;
-    text-align: center;
-  "
->
-  Disc Amt
-</th>
+    /* PARTIES */
+    .parties-meta-row { display: flex; border-bottom: 1px solid #000; }
+    .parties-stack { width: 45%; border-right: 1px solid #000; display: flex; flex-direction: column; }
+    .party-box { padding: 5px 8px; }
+    .party-box + .party-box { border-top: 1px solid #000; }
+    .party-box .party-title { font-size: 10px; font-weight: bold; text-decoration: underline; margin-bottom: 3px; }
+    .party-box .party-name { font-weight: bold; font-size: 11px; }
+    .party-box p { margin: 2px 0; font-size: 10px; }
+    .meta-box-right { width: 55%; padding: 0; }
+    .meta-grid-right { width: 100%; border-collapse: collapse; font-size: 10px; height: 100%; }
+    .meta-grid-right td {
+      border-bottom: 1px solid #000;
+      border-right: 1px solid #000;
+      padding: 4px 6px;
+      vertical-align: top;
+    }
+    .meta-grid-right td:last-child { border-right: none; }
+    .meta-grid-right tr:last-child td { border-bottom: none; }
 
-<th
-  style="
-    border-right: 1px solid #000;
-    padding: 2px;
-    text-align: center;
-  "
->
-  Total Discount
-</th>
+    /* ITEMS SECTION */
+    .items-section {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid #000;
+      overflow: hidden;
+    }
+    .items-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      table-layout: fixed;
+    }
+    .items-table th {
+      background: #f0f0f0;
+      border: 1px solid #000;
+      padding: 4px 5px;
+      text-align: center;
+      font-size: 10px;
+    }
+    .items-table th.left { text-align: left; }
+ .items-table td.cell {
+  border-left: 1px solid #000;
+  border-right: 1px solid #000;
+  border-top: none;
+  border-bottom: none;
+  padding: 4px 5px;
+  vertical-align: top;
+}
+  .empty-cell {
+  height: 22px;
 
-<th
-  style="
-    border-right: 1px solid #000;
-    padding: 2px;
-    text-align: center;
-  "
->
-  Tax Amount
-</th>
-              <th style="padding: 2px; text-align: center">Net Amount</th>
-            </tr>
-          </thead>
-          <tbody">
-            ${lineItemsHTML}
-          </tbody>
-        </table>
-      </div>
+  /* only vertical lines */
+  border-left: 1px solid #000;
+  border-right: 1px solid #000;
 
-      <!-- Summary Section -->
-      <div class="summary-section">
-        <table
-          style="
-            width: 100%;
-            border-collapse: collapse;
-            border-top: 1px solid #000;
-          "
-        >
-          <tbody>
-            <tr>
-              <!-- Left Side -->
-              <td
-                style="
-                  width: 50%;
-                  padding: 2px;
-                  
-                  vertical-align: top;
-                "
-              >
-                <table style="width: 100%">
-                  <tbody>
-                    <tr>
-                      <td colspan="3" style="font-weight: bold">E & O.E</td>
-                    </tr>
-                    ${
-                      distributor?.RBPSchemeMapped === "yes"
-                        ? `
-                    <tr>
-                      <td colspan="2">
-                        Total points accrued at the time of this invoice
-                        creation
-                      </td>
-                      <td>: ${bill?.totalBasePoints || 0}</td>
-                    </tr>
-                    <tr>
-                      <td colspan="2">Points in this Invoice</td>
-                      <td>: ${bill?.totalBasePoints || 0}</td>
-                    </tr>
-                    `
-                        : ""
-                    }
-                    <tr>
-                      <td colspan="2">Number of Items</td>
-                      <td>: ${bill?.totalLines || 0}</td>
-                    </tr>
-                    <tr>
-                      <td colspan="2">Total Qty In PCS :</td>
-                      <td>
-                        : ${validLineItems.reduce(
-                          (sum, item) => sum + (item.billQty || 0),
-                          0,
-                        )}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td colspan="3" style="padding-top: 10px">
-                        Amount In Words :
-                      </td>
-                    </tr>
-                    <tr>
-                      <td colspan="3" style="font-weight: bold">
-                        ${amountInWords()}
-                      </td>
-                    </tr>
-                    ${
-                      distributor?.RBPSchemeMapped === "yes"
-                        ? `
-                    <tr>
-                      <td colspan="3" style="padding-top: 10px">
-                        Retailer Current Point Balance:
-                      </td>
-                    </tr>
-                    <tr>
-                      <td colspan="3" style="font-weight: bold">
-                        ${retailer?.currentPointBalance} Points
-                      </td>
-                    </tr>
-                    `
-                        : ""
-                    }
-                  </tbody>
-                </table>
-              </td>
+  /* no horizontal lines */
+  border-top: none;
+  border-bottom: none;
 
-              <!-- Right Side -->
-              <td style="width: 50%; padding: 2px; vertical-align: top">
-                <table style="width: 100%">
-                  <tbody>
-                    <tr>
-                      <td style="width: 60%">Gross Amount :</td>
-                      <td style="width: 10%; text-align: center">:</td>
-                      <td style="width: 30%; text-align: right">
-                        ${formatCurrency(bill?.grossAmount)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <tr>
-                      <td>Discount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.distributorDiscount)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Taxable Amount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.taxableAmount)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>CGST</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.cgst)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>SGST</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.sgst)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>IGST</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.igst)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Invoice Amount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.invoiceAmount)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Round of Amount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.roundOffAmount)}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td>Credit Note Adjustment Amount</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.creditAmount)}
-                      </td>
-                    </tr>
-                    <tr style="font-weight: bold">
-                      <td>Net Amount (Incl. GST)</td>
-                      <td style="text-align: center">:</td>
-                      <td style="text-align: right">
-                        ${formatCurrency(bill?.netAmount)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+  padding: 0;
+}
+  .empty-row td {
+  height: 22px;
+}
+    .items-table tbody tr td.cell:first-child { border-left: 1px solid #000; }
+    .items-table tbody tr td.cell:last-child  { border-right: 1px solid #000; }
+    .items-table td.center { text-align: center; }
+    .items-table td.right  { text-align: right; }
+    .items-table td.left   { text-align: left; }
+    .items-table-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .items-table-wrap .items-table { height: 100%; }
+  
+    .subtotal-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      table-layout: fixed;
+      flex-shrink: 0;
+      border-top: 2px solid #000;
+    }
+    .subtotal-table td { padding: 3px 5px; border: none; }
+    .subtotal-table .amount-col {
+      text-align: right;
+      font-weight: bold;
+      border-left: 1px solid #000;
+      border-right: 1px solid #000;
+      border-bottom: 1px solid #ccc;
+    }
+    .subtotal-table .label-col {
+      font-style: italic;
+      font-weight: bold;
+      text-align: right;
+    }
 
-      <!-- Bank Details -->
-      <div class="bank-details">
-        <table
-          style="
-            width: 100%;
-            border-collapse: collapse;
-            border-top: 1px solid #000;
-          "
-        >
-          <tbody>
-            <tr>
-              <!-- Left Side -->
-              <td
-                style="
-                  width: 70%;
-                  padding: 2px;
-                  vertical-align: top;
-                "
-              >
-                <table style="width: 100%">
-                  <tbody>
-                    <tr>
-                      <td colspan="3" style="font-weight: bold">Bank Details</td>
-                    </tr>
-                        <td style="width: 30%; padding: 0px 5px">Bank Name</td>
-                        <td>: ${bankData?.bankName || ""}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding: 0px 5px">Branch</td>
-                        <td style="font-weight: bold">: ${bankData?.branchCode || ""}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding: 0px 5px">IFSC Code</td>
-                        <td style="font-weight: bold">: ${bankData?.ifscCode || ""}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding: 0px 5px">Account Type</td>
-                        <td style="font-weight: bold">: ${bankData?.accountType || ""}</td>
-                      </tr>
-                      <tr>
-                        <td style="padding: 0px 5px">Account Number</td>
-                        <td style="font-weight: bold">: ${bankData?.accountNumber || ""}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </td>
-                <td
-                  style="
-                    width: 30%;
-                    text-align: right;
-                    vertical-align: top;
-                    horizontal-align: right;
-                    padding: 3px;
-                  "
-                >
-                  <div
-                    style="
-                      border: 2px solid #000;
-                      padding: 1px;
-                      display: inline-block;
-                    "
-                  >
-                    ${
-                      upiQRCode
-                        ? `<img src="${upiQRCode}" alt="UPI QR Code" style="width: 100px; height: 100px;" />`
-                        : `<div style="width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; color: #929292;">QR</div>`
-                    }
-                    <p
-                      style="
-                        margin: 3px 12px 0 0;
-                        font-size: 8px;
-                        font-weight: bold;
-                      "
-                    >
-                      Scan to Pay via UPI
-                    </p>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-      </div>
+    /* ── AMOUNT IN WORDS ROW ── */
+    .aow-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-top: 2px solid #000;
+      border-bottom: 1px solid #000;
+      padding: 4px 8px;
+      font-size: 10px;
+    }
+    .aow-left { flex: 1; }
+    .aow-words { font-weight: bold; font-size: 11px; margin-top: 2px; }
+    .aow-right { font-style: italic; font-size: 10px; white-space: nowrap; margin-left: 10px; }
 
-      <!-- Declarations -->
-      <div class="terms-conditions">
-        <div style="padding: 2px 2px 5px 3px;border-top: 1px solid #000; border-bottom: 1px solid #000">
-          <p style="margin: 2px 0 2px 1px; font-weight: bold">Declarations:</p>
-          <p style="margin: 0">${termConditionsHTML}</p>
-        </div>
-      </div>
+    /* ── HSN/SAC TAX TABLE ── */
+    .hsn-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+      border-bottom: 1px solid #000;
+    }
+    .hsn-table th {
+      border: 1px solid #000;
+      padding: 3px 5px;
+      text-align: center;
+      background: #f0f0f0;
+      font-size: 10px;
+    }
+    .hsn-table td.hcell {
+      border: 1px solid #000;
+      padding: 3px 6px;
+      font-size: 10px;
+    }
+    .hsn-table td.right { text-align: right; }
+    .hsn-table td.center { text-align: center; }
+    .hsn-total-row td { border-top: 2px solid #000 !important; }
 
-      <!-- Signature Section (never breaks across pages) -->
-      <div class="signature-section">
-        <table
-          style="width: 100%; border-collapse: collapse; padding: 8px 0 5px 0"
-        >
-          <tbody>
-            <tr>
-              <td
-                style="
-                  width: 50%;
-                  text-align: center;
-                  vertical-align: top;
-                  padding-top: 5px;
-                "
-              >
-                <p style="margin: 0; font-weight: bold; font-size: 9px">
-                  RECEIVED THE MATERIAL IN GOOD CONDITION
-                </p>
-                <p
-                  style="
-                    margin: 20px 0 0 0;
-                    font-weight: bold;
-                    padding-top: 3px;
-                    font-size: 9px;
-                  "
-                >
-                  RECEIVER'S SIGNATURE AND SEAL
-                </p>
-              </td>
-              <td
-                style="
-                  width: 50%;
-                  text-align: center;
-                  vertical-align: top;
-                  padding-top: 5px;
-                "
-              >
-                <p style="margin: 0; font-weight: bold; font-size: 9px">
-                  For ${distributor.name || "Company Name"}
-                </p>
-                <p
-                  style="
-                    margin: 20px 0 0 0;
-                    font-weight: bold;
-                    padding-top: 3px;
-                    font-size: 9px;
-                  "
-                >
-                  Authorized Signatory
-                </p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+    /* ── TAX AMOUNT IN WORDS ── */
+    .tax-words-section {
+      border-bottom: 1px solid #000;
+      padding: 4px 8px;
+      font-size: 10px;
+    }
+
+    /* ── BOTTOM: DECLARATION + BANK ── */
+    .bottom-section {
+      display: flex;
+      font-size: 10px;
+      border-bottom: 1px solid #000;
+      min-height: 90px;
+    }
+    .bottom-left {
+      width: 45%;
+      border-right: 1px solid #000;
+      padding: 6px 8px;
+    }
+    .declaration-title {
+      font-weight: bold;
+      text-decoration: underline;
+      margin-bottom: 4px;
+      font-size: 10px;
+    }
+    .bottom-right {
+      width: 55%;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+    }
+    .bank-title {
+      font-weight: bold;
+      text-decoration: underline;
+      margin-bottom: 4px;
+      font-size: 10px;
+    }
+    .bank-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    .bank-table td { padding: 2px 4px; vertical-align: top; }
+    .bank-table td:first-child { width: 42%; white-space: nowrap; }
+.bottom-right {
+  width: 55%;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.company-sign {
+  margin-top: auto;
+  padding-bottom: 30px;   /* pushes block upward */
+  font-weight: bold;
+  font-size: 10px;
+  text-align: right;
+}
+
+.authorised-sign {
+  font-size: 10px;
+  text-align: right;
+}  /* ── FOOTER ── */
+    .page-footer {
+      border-top: 1px solid #000;
+      text-align: center;
+      font-size: 10px;
+      padding: 4px;
+      color: #444;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TOP HEADER -->
+  <div class="top-header">
+    <div class="irn-block">
+      <div style="margin-top:36px;">
+        <p><strong>IRN</strong> : ${irn || ""}</p>
+        <p><strong>Ack No.</strong> : ${ackNo || ""}</p>
+        <p><strong>Ack Date</strong> : ${ackDate || ""}</p>
       </div>
     </div>
-  </body>
+    <div class="top-header-center">
+      <div class="title-row">
+        <span class="tax-invoice-title">Tax Invoice</span>
+        <span class="original-label">(ORIGINAL FOR RECIPIENT)</span>
+        <span class="e-invoice-label">e-Invoice</span>
+      </div>
+    </div>
+    <div class="qr-block">
+      ${upiQRCode
+      ? `<img src="${upiQRCode}" alt="QR Code" />`
+      : `<div class="qr-placeholder">QR</div>`}
+    </div>
+  </div>
+
+  <!-- SELLER + META -->
+  <div class="seller-meta">
+    <div class="seller-box">
+      <div class="company-name">${distributor.name || "Company Name"}</div>
+      <p>${distributor.address1 || ""}, ${distributor.address2 || ""}</p>
+      <p>GSTIN/UIN: ${distributor.gst_no || ""}</p>
+      <p>State Name: ${distributor?.stateId?.name || ""}${distributor?.stateId?.slug ? ", Code: " + (distributor?.stateId?.code || "") : ""}</p>
+      <p>E-Mail: ${distributor.email || ""}</p>
+      <p>Phone: ${distributor.phone || ""}</p>
+    </div>
+    <div class="meta-box">
+      <table class="meta-grid">
+        <tr>
+          <td style="width:50%">
+            <div class="meta-label">Invoice No.</div>
+            <div class="meta-value">${bill.new_billno || bill.billNo || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">e-Way Bill No.</div>
+            <div class="meta-value">${eWayBillNo || "-"}</div>
+          </td>
+          <td>
+            <div class="meta-label">Dated</div>
+            <div class="meta-value">${formatDate(bill?.createdAt)}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Order No.</div>
+            <div class="meta-value">${order?.orderNo || "-"}</div>
+          </td>
+          <td colspan="2">
+            <div class="meta-label">Mode/Terms of Payment</div>
+            <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Sales Man</div>
+            <div class="meta-value">${salesman.name || ""} (${salesman?.empId || ""})</div>
+          </td>
+          <td colspan="2">
+            <div class="meta-label">Beat / Route</div>
+            <div class="meta-value">${route.name || ""} (${route?.code || ""})</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- CONSIGNEE + BUYER -->
+  <div class="parties-meta-row">
+    <div class="parties-stack">
+      <div class="party-box">
+        <div class="party-title">Consignee (Ship to)</div>
+        <div class="party-name">${retailer?.outletName || ""} (${retailer?.outletUID || ""})</div>
+        <p>${retailer.address1 || ""}, ${retailer.city || ""}</p>
+        <p>Pin Code: ${retailer.pin || ""}</p>
+        <p>GSTIN/UIN : ${retailer.gstin || ""}</p>
+        <p>State Name : ${retailer?.stateId?.name || retailer.state || ""}</p>
+      </div>
+      <div class="party-box">
+        <div class="party-title">Buyer (Bill to)</div>
+        <div class="party-name">${retailer?.outletName || ""} (${retailer?.outletUID || ""})</div>
+        <p>${retailer.address1 || ""}, ${retailer.city || ""}</p>
+        <p>Pin Code: ${retailer.pin || ""}</p>
+        <p>GSTIN/UIN : ${retailer.gstin || ""}</p>
+        <p>Phone: ${retailer.mobile1 || ""}</p>
+      </div>
+    </div>
+    <div class="meta-box-right">
+      <table class="meta-grid-right">
+        <tr>
+          <td style="width:50%">
+            <div class="meta-label">Delivery Note</div>
+            <div class="meta-value">${bill.deliveryNote || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Mode/Terms of Payment</div>
+            <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Reference No. &amp; Date.</div>
+            <div class="meta-value">${bill.referenceNo || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Other References</div>
+            <div class="meta-value">${bill.otherReferences || ""}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Buyer's Order No.</div>
+            <div class="meta-value">${order?.buyerOrderNo || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Dated</div>
+            <div class="meta-value">${order?.buyerOrderDate ? formatDate(order.buyerOrderDate) : ""}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Dispatch Doc No.</div>
+            <div class="meta-value">${bill.dispatchDocNo || bill.new_billno || bill.billNo || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Delivery Note Date</div>
+            <div class="meta-value">${bill.deliveryNoteDate ? formatDate(bill.deliveryNoteDate) : ""}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Dispatched through</div>
+            <div class="meta-value">${bill.dispatchedThrough || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Destination</div>
+            <div class="meta-value">${bill.destination || ""}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="meta-label">Bill of Lading/LR-RR No.</div>
+            <div class="meta-value">${bill.lrNo || ""}</div>
+          </td>
+          <td>
+            <div class="meta-label">Motor Vehicle No.</div>
+            <div class="meta-value">${bill.motorVehicleNo || ""}</div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2">
+            <div class="meta-label">Terms of Delivery</div>
+            <div class="meta-value">${bill.termsOfDelivery || ""}</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ITEMS SECTION -->
+  <div class="items-section">
+    <table class="items-table" style="flex-shrink:0;">
+      <colgroup>
+        <col style="width:3%"><col style="width:35%"><col style="width:8%">
+        <col style="width:10%"><col style="width:9%"><col style="width:5%">
+        <col style="width:8%"><col style="width:12%">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Sl<br>No.</th>
+          <th class="left">Description of<br>Goods and Services</th>
+          <th>HSN/SAC</th>
+          <th>Quantity</th>
+          <th>Rate</th>
+          <th>Per</th>
+          <th>Disc. %</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+    </table>
+
+    <div class="items-table-wrap">
+      <table class="items-table" style="height:100%;">
+        <colgroup>
+          <col style="width:3%"><col style="width:35%"><col style="width:8%">
+          <col style="width:10%"><col style="width:9%"><col style="width:5%">
+          <col style="width:8%"><col style="width:12%">
+        </colgroup>
+        <tbody>
+        ${lineItemsHTML}
+        ${emptyRowsHTML}
+
+        </tbody>
+      </table>
+    </div>
+
+    <table class="subtotal-table">
+      <colgroup>
+        <col style="width:3%"><col style="width:35%"><col style="width:8%">
+        <col style="width:10%"><col style="width:9%"><col style="width:5%">
+        <col style="width:8%"><col style="width:12%">
+      </colgroup>
+      <tbody>
+        <tr>
+          <td colspan="3"></td>
+          <td class="amount-col" style="text-align:center; font-weight:bold;">${totalQty} Pcs</td>
+          <td colspan="3"></td>
+          <td class="amount-col">${formatCurrency(bill?.grossAmount)}</td>
+        </tr>
+        <tr>
+          <td colspan="6" class="label-col">CGST @ ${cgstRate}%</td>
+          <td></td>
+          <td class="amount-col">${formatCurrency(bill?.cgst)}</td>
+        </tr>
+        <tr>
+          <td colspan="6" class="label-col">SGST @ ${sgstRate}%</td>
+          <td></td>
+          <td class="amount-col">${formatCurrency(bill?.sgst)}</td>
+        </tr>
+        ${igstVisible ? `
+        <tr>
+          <td colspan="6" class="label-col">IGST @ ${bill?.igstRate || "18"}%</td>
+          <td></td>
+          <td class="amount-col">${formatCurrency(bill?.igst)}</td>
+        </tr>` : ""}
+        
+      </tbody>
+    </table>
+  </div>
+
+  <!-- AMOUNT CHARGEABLE IN WORDS + AMOUNT + E.&O.E -->
+  <div class="aow-row">
+    <div class="aow-left">
+      <p style="font-size:9px; margin-bottom:2px;">Amount Chargeable (in words)</p>
+      <p class="aow-words">INR ${amountInWords()}</p>
+    </div>
+    <div class="aow-right">
+      <div style="text-align:right; font-size:9px; margin-bottom:2px;">E. &amp; O.E</div>
+      <div style="text-align:right; font-weight:bold; font-size:12px;">&#8377; ${formatCurrency(bill?.netAmount)}</div>
+    </div>
+  </div>
+
+  <!-- HSN/SAC TAX BREAKUP TABLE -->
+  <table class="hsn-table">
+    <thead>
+      <tr>
+        <th rowspan="2" style="width:28%; text-align:center;">HSN/SAC</th>
+        <th rowspan="2" style="width:14%;">Taxable<br>Value</th>
+        <th colspan="2" style="border-bottom:1px solid #000;">CGST</th>
+        <th colspan="2" style="border-bottom:1px solid #000;">SGST/UTGST</th>
+        <th rowspan="2" style="width:13%;">Total<br>Tax Amount</th>
+      </tr>
+      <tr>
+        <th style="width:7%">Rate</th>
+        <th style="width:10%">Amount</th>
+        <th style="width:7%">Rate</th>
+        <th style="width:10%">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${hsnRowsHTML}
+    </tbody>
+  </table>
+
+  <!-- TAX AMOUNT IN WORDS -->
+  <div class="tax-words-section">
+  <strong>Tax Amount (in words) :</strong>
+  <strong>&nbsp;INR ${taxAmountInWords()}</strong>
+</div>
+
+  <!-- BOTTOM: DECLARATION (left) | BANK DETAILS + SIGN (right) -->
+  <div class="bottom-section">
+    <div class="bottom-left">
+      <div class="declaration-title">Declaration</div>
+      <p>We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</p>
+    </div>
+    <div class="bottom-right">
+      <div class="bank-title">Company's Bank Details</div>
+      <table class="bank-table">
+        <tr><td>A/c Holder's Name</td><td>: <strong>${distributor.name || ""}</strong></td></tr>
+        <tr><td>Bank Name</td><td>: <strong>${bankData?.bankName || ""}</strong></td></tr>
+        <tr><td>A/c No.</td><td>: <strong>${bankData?.accountNumber || ""}</strong></td></tr>
+        <tr><td>Branch &amp; IFS Code</td><td>: <strong>${bankData?.branchCode || ""}${bankData?.ifscCode ? " & " + bankData.ifscCode : ""}</strong></td></tr>
+      </table>
+      <div class="company-sign">for ${distributor.name || ""}</div>
+      <div class="authorised-sign">Authorised Signatory</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="page-footer">
+    SUBJECT TO ${distributor?.stateId?.name?.toUpperCase() || "KOLKATA"} JURISDICTION ONLY &nbsp;|&nbsp; This is a Computer Generated Invoice
+  </div>
+
+</div>
+</body>
 </html>`;
 }
 
