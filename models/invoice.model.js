@@ -35,8 +35,8 @@ const LineItemSchema = new mongoose.Schema({
     type: String,
     default: "pcs",
     enum: {
-      values: ["pcs", "box"],
-      message: "values allowed pcs/box",
+      values: ["pcs", "bndl", "box", "coil"],
+      message: "Values allowed pcs/box/bndl/coil",
     },
   },
   damageQty: { type: Number, default: 0 },
@@ -44,8 +44,8 @@ const LineItemSchema = new mongoose.Schema({
     type: String,
     default: "pcs",
     enum: {
-      values: ["pcs", "box"],
-      message: "values allowed pcs/box",
+      values: ["pcs", "bndl", "box", "coil"],
+      message: "Values allowed pcs/box/bndl/coil",
     },
   },
 
@@ -176,6 +176,7 @@ const invoiceSchema = new mongoose.Schema(
     },
 
     // NEW: Track overall adjustment status
+
     adjustmentSummary: {
       totalProducts: { type: Number, default: 0 },
       successfulAdjustments: { type: Number, default: 0 },
