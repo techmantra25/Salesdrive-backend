@@ -86,6 +86,9 @@ async function generateBillHTML(bill, options = {}) {
 
   const totalQty = validLineItems.reduce((s, i) => s + (i.billQty || 0), 0);
   const igstVisible = bill?.igst && parseFloat(bill.igst) > 0;
+  const cgstVisible = bill?.cgst && parseFloat(bill.cgst) > 0;
+  const sgstVisible = bill?.sgst && parseFloat(bill.sgst) > 0;
+
 
   // Build HSN/SAC tax breakup rows
   const cgstRate = bill?.cgstRate || 9;
@@ -676,16 +679,19 @@ async function generateBillHTML(bill, options = {}) {
           <td colspan="3"></td>
           <td class="amount-col">${formatCurrency(bill?.grossAmount)}</td>
         </tr>
+        
+      ${cgstVisible ? `
         <tr>
           <td colspan="6" class="label-col">CGST @ ${cgstRate}%</td>
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.cgst)}</td>
-        </tr>
+        </tr>` : ""}
+        ${sgstVisible ? `
         <tr>
           <td colspan="6" class="label-col">SGST @ ${sgstRate}%</td>
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.sgst)}</td>
-        </tr>
+        </tr>` : ""}
         ${igstVisible ? `
         <tr>
           <td colspan="6" class="label-col">IGST @ ${bill?.igstRate || "18"}%</td>
