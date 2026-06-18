@@ -176,7 +176,7 @@ async function generateBillHTML(bill, options = {}) {
     html, body { width: 100%; min-height: 100%; }
     body {
       font-family: Arial, sans-serif;
-      font-size: 10px;
+      font-size: 12px;
       color: #000;
       background: #e0e0e0;
       padding: 20px 0;
@@ -218,26 +218,26 @@ async function generateBillHTML(bill, options = {}) {
       align-items: center;
       gap: 30px;
     }
-    .tax-invoice-title { font-size: 17px; font-weight: bold; }
-    .original-label { font-style: italic; font-size: 11px; }
-    .e-invoice-label { font-size: 12px; font-weight: bold; }
-    .irn-block { margin-top: 4px; font-size: 10px; }
+    .tax-invoice-title { font-size: 20px; font-weight: bold; }
+    .original-label { font-style: italic; font-size: 13px; }
+    .e-invoice-label { font-size: 14px; font-weight: bold; }
+    .irn-block { margin-top: 4px; font-size: 12px; }
     .irn-block p { margin: 2px 0; }
     .qr-block { text-align: right; }
     .qr-block img { width: 90px; height: 90px; border: 1px solid #ccc; }
     .qr-placeholder {
       width: 90px; height: 90px; border: 1px solid #ccc;
       display: inline-flex; align-items: center; justify-content: center;
-      font-size: 10px; color: #aaa;
+      font-size: 12px; color: #aaa;
     }
 
     /* SELLER META */
     .seller-meta { display: flex; border-bottom: 1px solid #000; }
     .seller-box { width: 45%; border-right: 1px solid #000; padding: 6px 8px; }
-    .seller-box .company-name { font-size: 13px; font-weight: bold; margin-bottom: 3px; }
-    .seller-box p { margin: 2px 0; font-size: 10px; }
+    .seller-box .company-name { font-size: 16px; font-weight: bold; margin-bottom: 3px; }
+    .seller-box p { margin: 2px 0; font-size: 12px; }
     .meta-box { width: 55%; padding: 0; }
-    .meta-grid { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .meta-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
     .meta-grid td {
       border-bottom: 1px solid #000;
       border-right: 1px solid #000;
@@ -246,19 +246,19 @@ async function generateBillHTML(bill, options = {}) {
     }
     .meta-grid td:last-child { border-right: none; }
     .meta-grid tr:last-child td { border-bottom: none; }
-    .meta-label { font-size: 9px; color: #444; }
-    .meta-value { font-weight: bold; font-size: 10px; }
+    .meta-label { font-size: 11px; color: #444; }
+    .meta-value { font-weight: bold; font-size: 12px; }
 
     /* PARTIES */
     .parties-meta-row { display: flex; border-bottom: 1px solid #000; }
     .parties-stack { width: 45%; border-right: 1px solid #000; display: flex; flex-direction: column; }
     .party-box { padding: 5px 8px; }
     .party-box + .party-box { border-top: 1px solid #000; }
-    .party-box .party-title { font-size: 10px; font-weight: bold; text-decoration: underline; margin-bottom: 3px; }
-    .party-box .party-name { font-weight: bold; font-size: 11px; }
-    .party-box p { margin: 2px 0; font-size: 10px; }
+    .party-box .party-title { font-size: 12px; font-weight: bold; text-decoration: underline; margin-bottom: 3px; }
+    .party-box .party-name { font-weight: bold; font-size: 13px; }
+    .party-box p { margin: 2px 0; font-size: 12px; }
     .meta-box-right { width: 55%; padding: 0; }
-    .meta-grid-right { width: 100%; border-collapse: collapse; font-size: 10px; height: 100%; }
+    .meta-grid-right { width: 100%; border-collapse: collapse; font-size: 12px; height: 100%; }
     .meta-grid-right td {
       border-bottom: 1px solid #000;
       border-right: 1px solid #000;
@@ -279,7 +279,7 @@ async function generateBillHTML(bill, options = {}) {
     .items-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 10px;
+      font-size: 12px;
       table-layout: fixed;
     }
     .items-table th {
@@ -287,7 +287,7 @@ async function generateBillHTML(bill, options = {}) {
       border: 1px solid #000;
       padding: 4px 5px;
       text-align: center;
-      font-size: 10px;
+      font-size: 12px;
     }
     .items-table th.left { text-align: left; }
  .items-table td.cell {
@@ -330,7 +330,7 @@ async function generateBillHTML(bill, options = {}) {
     .subtotal-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 10px;
+      font-size: 12px;
       table-layout: fixed;
       flex-shrink: 0;
       border-top: 2px solid #000;
@@ -357,17 +357,17 @@ async function generateBillHTML(bill, options = {}) {
       border-top: 2px solid #000;
       border-bottom: 1px solid #000;
       padding: 4px 8px;
-      font-size: 10px;
+      font-size: 12px;
     }
     .aow-left { flex: 1; }
-    .aow-words { font-weight: bold; font-size: 11px; margin-top: 2px; }
-    .aow-right { font-style: italic; font-size: 10px; white-space: nowrap; margin-left: 10px; }
+    .aow-words { font-weight: bold; font-size: 13px; margin-top: 2px; }
+    .aow-right { font-style: italic; font-size: 12px; white-space: nowrap; margin-left: 10px; }
 
     /* ── HSN/SAC TAX TABLE ── */
     .hsn-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 10px;
+      font-size: 12px;
       border-bottom: 1px solid #000;
     }
     .hsn-table th {
@@ -375,12 +375,12 @@ async function generateBillHTML(bill, options = {}) {
       padding: 3px 5px;
       text-align: center;
       background: #f0f0f0;
-      font-size: 10px;
+      font-size: 12px;
     }
     .hsn-table td.hcell {
       border: 1px solid #000;
       padding: 3px 6px;
-      font-size: 10px;
+      font-size: 12px;
     }
     .hsn-table td.right { text-align: right; }
     .hsn-table td.center { text-align: center; }
@@ -390,13 +390,13 @@ async function generateBillHTML(bill, options = {}) {
     .tax-words-section {
       border-bottom: 1px solid #000;
       padding: 4px 8px;
-      font-size: 10px;
+      font-size: 12px;
     }
 
     /* ── BOTTOM: DECLARATION + BANK ── */
     .bottom-section {
       display: flex;
-      font-size: 10px;
+      font-size: 12px;
       border-bottom: 1px solid #000;
       min-height: 90px;
     }
@@ -409,7 +409,7 @@ async function generateBillHTML(bill, options = {}) {
       font-weight: bold;
       text-decoration: underline;
       margin-bottom: 4px;
-      font-size: 10px;
+      font-size: 12px;
     }
     .bottom-right {
       width: 55%;
@@ -421,12 +421,12 @@ async function generateBillHTML(bill, options = {}) {
       font-weight: bold;
       text-decoration: underline;
       margin-bottom: 4px;
-      font-size: 10px;
+      font-size: 12px;
     }
     .bank-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 10px;
+      font-size: 12px;
     }
     .bank-table td { padding: 2px 4px; vertical-align: top; }
     .bank-table td:first-child { width: 42%; white-space: nowrap; }
@@ -441,18 +441,18 @@ async function generateBillHTML(bill, options = {}) {
   margin-top: auto;
   padding-bottom: 30px;   /* pushes block upward */
   font-weight: bold;
-  font-size: 10px;
+  font-size: 12px;
   text-align: right;
 }
 
 .authorised-sign {
-  font-size: 10px;
+  font-size: 12px;
   text-align: right;
 }  /* ── FOOTER ── */
     .page-footer {
       border-top: 1px solid #000;
       text-align: center;
-      font-size: 10px;
+      font-size: 12px;
       padding: 4px;
       color: #444;
     }
@@ -567,11 +567,11 @@ async function generateBillHTML(bill, options = {}) {
           </td>
         </tr>
         <tr>
-          <td>
+          <td style="padding-top:6px; padding-bottom:10px;">
             <div class="meta-label"><b>Reference No. &amp; Date.</b></div>
             <div class="meta-value">${bill.referenceNo || ""}</div>
           </td>
-          <td>
+          <td style="padding-top:6px; padding-bottom:10px;">
             <div class="meta-label"><b>Other References</b></div>
             <div class="meta-value">${bill.otherReferences || ""}</div>
           </td>
@@ -700,12 +700,12 @@ async function generateBillHTML(bill, options = {}) {
   <!-- AMOUNT CHARGEABLE IN WORDS + AMOUNT + E.&O.E -->
   <div class="aow-row">
     <div class="aow-left">
-      <p style="font-size:9px; margin-bottom:2px;">Amount Chargeable (in words)</p>
+      <p style="font-size: 11px; margin-bottom:2px;">Amount Chargeable (in words)</p>
       <p class="aow-words">INR ${amountInWords()}</p>
     </div>
     <div class="aow-right">
-      <div style="text-align:right; font-size:9px; margin-bottom:2px;">E. &amp; O.E</div>
-      <div style="text-align:right; font-weight:bold; font-size:12px;">&#8377; ${formatCurrency(bill?.netAmount)}</div>
+      <div style="text-align:right; font-size: 11px; margin-bottom:2px;">E. &amp; O.E</div>
+      <div style="text-align:right; font-weight:bold; font-size: 14px;">&#8377; ${formatCurrency(bill?.netAmount)}</div>
     </div>
   </div>
 
