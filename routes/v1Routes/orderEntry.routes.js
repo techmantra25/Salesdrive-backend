@@ -34,8 +34,10 @@ const {
 } = require("../../controllers/orderEntry/salesOrderPrintPDF.js");
 const {dayBookReport }= require("../../controllers/orderEntry/dayBookReport.js");
 const {editOrderEntry} = require("../../controllers/orderEntry/editOrderEntry.js");
+const {advicePrint} = require("../../controllers/orderEntry/advicePrint.js");
 const orderEntryRoutes = express.Router();
 
+orderEntryRoutes.route("/advice-print/:orderId").get(protect, advicePrint);
 orderEntryRoutes.route("/create").post(protectDisRoute, createOrderEntry);
 orderEntryRoutes
   .route("/import-sales-order")
