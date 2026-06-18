@@ -498,35 +498,35 @@ async function generateBillHTML(bill, options = {}) {
       <table class="meta-grid">
         <tr>
           <td style="width:50%">
-            <div class="meta-label">Invoice No.</div>
+            <div class="meta-label"><b>Invoice No.</b></div>
             <div class="meta-value">${bill.new_billno || bill.billNo || ""}</div>
           </td>
           <td>
-            <div class="meta-label">e-Way Bill No.</div>
+            <div class="meta-label"><b>e-Way Bill No.</b></div>
             <div class="meta-value">${eWayBillNo || "-"}</div>
           </td>
           <td>
-            <div class="meta-label">Dated</div>
+            <div class="meta-label"><b>Dated</b></div>
             <div class="meta-value">${formatDate(bill?.createdAt)}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Order No.</div>
+            <div class="meta-label"><b>Order No.</b></div>
             <div class="meta-value">${order?.orderNo || "-"}</div>
           </td>
           <td colspan="2">
-            <div class="meta-label">Mode/Terms of Payment</div>
+            <div class="meta-label"><b>Mode/Terms of Payment</b></div>
             <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Sales Man</div>
+            <div class="meta-label"><b>Sales Man</b></div>
             <div class="meta-value">${salesman.name || ""} (${salesman?.empId || ""})</div>
           </td>
           <td colspan="2">
-            <div class="meta-label">Beat / Route</div>
+            <div class="meta-label"><b>Beat / Route</b></ div>
             <div class="meta-value">${route.name || ""} (${route?.code || ""})</div>
           </td>
         </tr>
@@ -558,67 +558,67 @@ async function generateBillHTML(bill, options = {}) {
       <table class="meta-grid-right">
         <tr>
           <td style="width:50%">
-            <div class="meta-label">Delivery Note</div>
+            <div class="meta-label"><b>Delivery Note</b></div>
             <div class="meta-value">${bill.deliveryNote || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Mode/Terms of Payment</div>
+            <div class="meta-label"><b>Mode/Terms of Payment</b></div>
             <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Reference No. &amp; Date.</div>
+            <div class="meta-label"><b>Reference No. &amp; Date.</b></div>
             <div class="meta-value">${bill.referenceNo || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Other References</div>
+            <div class="meta-label"><b>Other References</b></div>
             <div class="meta-value">${bill.otherReferences || ""}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Buyer's Order No.</div>
+            <div class="meta-label"><b>Buyer's Order No.</b></div>
             <div class="meta-value">${order?.buyerOrderNo || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Dated</div>
+            <div class="meta-label"><b>Dated</b></div>
             <div class="meta-value">${order?.buyerOrderDate ? formatDate(order.buyerOrderDate) : ""}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Dispatch Doc No.</div>
+            <div class="meta-label"><b>Dispatch Doc No.</b></div>
             <div class="meta-value">${bill.dispatchDocNo || bill.new_billno || bill.billNo || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Delivery Note Date</div>
+            <div class="meta-label"><b>Delivery Note Date</b></div>
             <div class="meta-value">${bill.deliveryNoteDate ? formatDate(bill.deliveryNoteDate) : ""}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Dispatched through</div>
+            <div class="meta-label"><b>Dispatched through</b></div>
             <div class="meta-value">${bill.dispatchedThrough || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Destination</div>
+            <div class="meta-label"><b>Destination</b></div>
             <div class="meta-value">${bill.destination || ""}</div>
           </td>
         </tr>
         <tr>
           <td>
-            <div class="meta-label">Bill of Lading/LR-RR No.</div>
+            <div class="meta-label"><b>Bill of Lading/LR-RR No.</b></div>
             <div class="meta-value">${bill.lrNo || ""}</div>
           </td>
           <td>
-            <div class="meta-label">Motor Vehicle No.</div>
+            <div class="meta-label"><b>Motor Vehicle No.</b></div>
             <div class="meta-value">${bill.motorVehicleNo || ""}</div>
           </td>
         </tr>
         <tr>
           <td colspan="2">
-            <div class="meta-label">Terms of Delivery</div>
+            <div class="meta-label"><b>Terms of Delivery</b></div>
             <div class="meta-value">${bill.termsOfDelivery || ""}</div>
           </td>
         </tr>
