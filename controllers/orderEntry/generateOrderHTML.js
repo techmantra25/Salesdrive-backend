@@ -15,26 +15,33 @@ const formatDate = (date) => {
 const generateOrderHTML = (data) => {
   const items = data?.items || [];
 
-  const productRows = items
-    .map(
-      (item, index) => `
+const productRows = items
+  .map(
+    (item, index) => `
 <tr>
   <td>${index + 1}</td>
-  <td>${item.code || item.newCode || item.oldCode || ""}</td>
+  <td>${item.code || ""}</td>
   <td class="left">${item.description || ""}</td>
-  <td>${item.delQty || ""}</td>
-  <td>${item.orderQty || ""}</td>
-  <td>${item.stdBox || ""}</td>
-  <td>${item.stdPkt || ""}</td>
-  <td>${item.stock || ""}</td>
-  <td>₹ ${formatCurrency(item.mrp)}</td>
-  <td>${item.discount || 0}%</td>
-  <td>₹ ${formatCurrency(item.grossAmt)}</td>
-  <td>${item.boxQty || ""}</td>
+
+  <td>${item.delQty ?? 0}</td>
+  <td>${item.orderQty ?? 0}</td>
+
+  <td>${item.stdBox ?? 0}</td>
+  <td>${item.stdPkt ?? 0}</td>
+
+  <td>${item.stock ?? 0}</td>
+
+  <td>₹ ${formatCurrency(item.mrp ?? 0)}</td>
+
+  <td>${item.discount ?? 0}%</td>
+
+  <td>₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
+
+  <td>${item.boxQty ?? 0}</td>
 </tr>
 `
-    )
-    .join("");
+  )
+  .join("");
 
   const emptyRows = Array.from({
     length: Math.max(0, 20 - items.length),
@@ -80,7 +87,7 @@ body {
 
 .a4-page {
   background: #fff;
-  width: 297mm;
+  width: 100%;          /* was: 297mm */
   min-height: 210mm;
   padding: 8mm;
   box-shadow: 0 2px 12px rgba(0,0,0,0.35);
@@ -96,7 +103,7 @@ body {
   .a4-page {
     width: 100%;
     min-height: unset;
-    padding: 0;
+    padding: 0;          /* @page margin already handles spacing */
     box-shadow: none;
   }
 }
@@ -158,8 +165,11 @@ td, th {
     <td>${data.lorryNo || ""}</td>
   </tr>
   <tr>
-    <td class="label">Party Name &amp; Mob:</td>
-    <td>${data.retailer?.name || ""}</td>
+   <td class="label">Party Name &amp; Mob:</td>
+<td>
+  ${data.retailer?.outletName || ""}
+  ${data.retailer?.mobile1 ? ` - ${data.retailer.mobile1}` : ""}
+</td>
     <td class="label">Driver Name &amp; Number :</td>
     <td>${data.driverName || ""}</td>
   </tr>
@@ -173,17 +183,17 @@ td, th {
     <td class="label">Sales Officer Name &amp; Number :</td>
     <td>${data.salesman?.name || ""}</td>
     <td class="label">Total Pipe Packets :</td>
-    <td>${data.summary?.totalPipePackets || 0}</td>
+   <td>${data.summary?.totalPipePackets || 0}</td>
   </tr>
   <tr>
     <td class="label">Beat &amp; Route:</td>
-    <td>${data.route?.name || ""}</td>
+    <td>${data.beatName || ""}</td>
     <td class="label">Total Loose Pipes :</td>
-    <td>${data.summary?.totalLoosePipes || 0}</td>
+    <td>${data.summary?.totalLoosePipes || 0}</td> 
   </tr>
   <tr>
-    <td class="label">Ph Number</td>
-    <td>${data.retailer?.mobile || ""}</td>
+   <td class="label">Ph Number</td>
+<td>${data.retailer?.mobile1 || ""}</td>
     <td class="label">Material Sorted By :</td>
     <td>${data.materialSortedBy || ""}</td>
   </tr>

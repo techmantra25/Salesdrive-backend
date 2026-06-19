@@ -4,6 +4,8 @@ const OrderEntry = require("../../models/orderEntry.model");
 const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
 const DBUpi = require("../../models/dbUpi.model");
+const Retailer = require("../../models/outletApproved.model");
+const Beat = require("../../models/beat.model");
 
 const generateOrderHTML = require("./generateOrderHTML");
 
@@ -15,6 +17,12 @@ const advicePrint = asyncHandler(async (req, res) => {
       .populate("distributorId")
       .populate("retailerId")
       .populate("salesmanName")
+      .populate({
+        path: "retailerId",
+        populate: {
+          path: "beatId"
+        }
+      })
       .populate("routeId")
       .populate({
         path: "lineItems.product",
@@ -33,6 +41,7 @@ const advicePrint = asyncHandler(async (req, res) => {
       });
     }
 
+
     const [bankDetails, rules, upiDetails] = await Promise.all([
       DbBank.findOne({
         distributorId: order.distributorId?._id,
@@ -48,9 +57,39 @@ const advicePrint = asyncHandler(async (req, res) => {
     ]);
 
     const totalBoxes = order.lineItems.reduce(
-      (sum, item) => sum + Number(item.boxOrderQty || 0),
+      (sum, item) =>
+        sum + Number(item.boxOrderQty || 0),
       0
     );
+
+    const totalPipePackets = order.lineItems.reduce(
+      (sum, item) => {
+        const qty = Number(item.oderQty || 0);
+        const perBox = Number(
+          item.product?.no_of_pieces_in_a_box || 0
+        );
+
+        if (!perBox) return sum;
+
+        return sum + Math.floor(qty / perBox);
+      },
+      0
+    );
+
+    const totalLoosePipes = order.lineItems.reduce(
+      (sum, item) => {
+        const qty = Number(item.oderQty || 0);
+        const perBox = Number(
+          item.product?.no_of_pieces_in_a_box || 0
+        );
+
+        if (!perBox) return sum + qty;
+
+        return sum + (qty % perBox);
+      },
+      0
+    );
+
 
     const dispatchAdviceData = {
       adviceNo: `DA-${order.orderNo}`,
@@ -60,8 +99,16 @@ const advicePrint = asyncHandler(async (req, res) => {
       distributor: order.distributorId,
       retailer: order.retailerId,
       salesman: order.salesmanName,
+      beatName:
+  order.retailerId?.beatId?.[0]?.name || "",
       route: order.routeId,
-
+      lorryNo: "",
+      driverName: "",
+      tallyBillingName:
+        order.retailerId?.outletName || "",
+      materialSortedBy: "",
+      verifiedBy: "",
+      freightCharge: "",
       bankDetails,
       upiDetails,
 
@@ -78,15 +125,55 @@ const advicePrint = asyncHandler(async (req, res) => {
         igst: order.igst,
         schemeDiscount: order.schemeDiscount,
         distributorDiscount: order.distributorDiscount,
+
         totalBoxes,
+        totalPipePackets,
+        totalLoosePipes,
       },
 
       remarks: order.remark || "",
 
       items: order.lineItems.map((item, index) => ({
         slNo: index + 1,
-        ...item.toObject(),
-      })),
+
+        code: item.product?.product_code || "",
+
+        description: item.product?.name || "",
+
+        delQty: Number(item.oderQty || 0),
+
+        orderQty: Number(item.oderQty || 0),
+
+        stdBox:
+          Number(item.product?.no_of_pieces_in_a_box || 0),
+
+        stdPkt:
+          Number(item.product?.pack || 0),
+
+        stock:
+          Number(item.inventoryId?.availableQty || 0),
+
+        mrp:
+          Number(
+            item.price?.mrp_price ||
+            item.price?.rlp_price ||
+            item.price?.dlp_price ||
+            0
+          ),
+
+        discount:
+          Number(
+            item.totalDiscountPercentage ||
+            item.distributorDisc ||
+            0
+          ),
+
+        grossAmt:
+          Number(item.grossAmt || 0),
+
+        boxQty:
+          Number(item.boxOrderQty || 0),
+      }))
     };
 
     let htmlContent = generateOrderHTML(dispatchAdviceData);
