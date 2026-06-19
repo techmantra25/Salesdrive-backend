@@ -698,6 +698,12 @@ async function generateBillHTML(bill, options = {}) {
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.igst)}</td>
         </tr>` : ""}
+        ${Number(bill?.freightCharges || 0) > 0 ? `
+<tr>
+  <td colspan="6" class="label-col">Freight Charges ₹</td>
+  <td></td>
+  <td class="amount-col">${formatCurrency(bill?.freightCharges)}</td>
+</tr>` : ""}
         
       </tbody>
     </table>

@@ -87,7 +87,7 @@ body {
 
 .a4-page {
   background: #fff;
-  width: 297mm;
+  width: 100%;          /* was: 297mm */
   min-height: 210mm;
   padding: 8mm;
   box-shadow: 0 2px 12px rgba(0,0,0,0.35);
@@ -103,7 +103,7 @@ body {
   .a4-page {
     width: 100%;
     min-height: unset;
-    padding: 0;
+    padding: 0;          /* @page margin already handles spacing */
     box-shadow: none;
   }
 }
