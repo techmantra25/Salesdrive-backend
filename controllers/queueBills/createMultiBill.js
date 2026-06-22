@@ -75,6 +75,7 @@ const resolveBillDate = (row, order, billDeliverySetting) => {
 // --- Controller ---------------------------------------------------------------
 
 const multipleBillCreate = asyncHandler(async (req, res) => {
+  console.log("Received request to create multiple bills");
   try {
     const distributorId = req.user._id;
     const { data } = req.body;
@@ -144,12 +145,6 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
 
           billedType,
         } = row;
-
-        console("all charges data:", {
-          freightCharges,
-          deliveryCharges,
-          handlingCharges,
-        });
 
         // 4a. Line items presence
         if (!lineItems || lineItems.length === 0) {
@@ -268,9 +263,9 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           roundOffAmount,
           cashDiscount,
           netAmount,
-          freightCharges: freightCharges || 0,
-          deliveryCharges: deliveryCharges || 0,
-          handlingCharges: handlingCharges || 0,
+          freightCharges,
+          deliveryCharges,
+          handlingCharges,
           billedType: billedType ?? "Bulk",
           adjustedCreditNoteIds: order.adjustedCreditNoteIds || [],
           creditAmount: order.creditAmount || 0,
