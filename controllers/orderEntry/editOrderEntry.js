@@ -257,11 +257,114 @@ const editOrderEntry = asyncHandler(async (req, res) => {
             };
         })
     );
+    // ======================================
+    // RECALCULATE TOTALS FROM LINE ITEMS
+    // ======================================
 
+    const calculatedGrossAmount = formattedLineItems.reduce(
+        (sum, item) => sum + Number(item.grossAmt || 0),
+        0
+    );
+
+    const calculatedTaxableAmount = formattedLineItems.reduce(
+        (sum, item) => sum + Number(item.taxableAmt || 0),
+        0
+    );
+
+    // Charges
+    const freightCharges =
+        Number(existingOrder.freightCharges || 0);
+
+    const deliveryCharges =
+        Number(existingOrder.deliveryCharges || 0);
+
+    const handlingCharges =
+        Number(existingOrder.handlingCharges || 0);
+
+    // GST Taxable Value
+    const gstTaxableAmount =
+        calculatedTaxableAmount +
+        freightCharges +
+        deliveryCharges +
+        handlingCharges;
+
+    // Detect GST Type
+    const isIGST = formattedLineItems.some(
+        (item) => Number(item.totalIGST || 0) > 0
+    );
+
+    // GST %
+    let gstPercentage = 18;
+
+    const firstLine = formattedLineItems[0];
+
+    if (firstLine?.taxableAmt > 0) {
+        const lineGST =
+            Number(firstLine.totalCGST || 0) +
+            Number(firstLine.totalSGST || 0) +
+            Number(firstLine.totalIGST || 0);
+
+        gstPercentage =
+            Number(
+                ((lineGST / Number(firstLine.taxableAmt)) * 100).toFixed(2)
+            ) || 18;
+    }
+
+    // Recalculate GST on Taxable + Charges
+    let calculatedCGST = 0;
+    let calculatedSGST = 0;
+    let calculatedIGST = 0;
+
+    const totalGST =
+        Number(
+            ((gstTaxableAmount * gstPercentage) / 100).toFixed(2)
+        );
+
+    if (isIGST) {
+        calculatedIGST = totalGST;
+    } else {
+        calculatedCGST = Number((totalGST / 2).toFixed(2));
+        calculatedSGST = Number((totalGST / 2).toFixed(2));
+    }
+
+    // Total discount amount
+    const calculatedDiscount = formattedLineItems.reduce(
+        (sum, item) =>
+            sum +
+            (
+                (Number(item.grossAmt || 0) -
+                    Number(item.taxableAmt || 0))
+            ),
+        0
+    );
+
+
+
+    // Invoice Amount
+    const calculatedInvoiceAmount =
+        calculatedTaxableAmount +
+        freightCharges +
+        deliveryCharges +
+        handlingCharges +
+        calculatedCGST +
+        calculatedSGST +
+        calculatedIGST;
+
+    // Round Off
+    const calculatedRoundOffAmount =
+        Math.round(calculatedInvoiceAmount);
+
+    // Credit
+    const calculatedCreditAmount =
+        Number(creditAmount || 0);
+
+    // Net Amount
+    const calculatedNetAmount =
+        calculatedRoundOffAmount -
+        calculatedCreditAmount;
     // ==================================================
     // UPDATE ORDER
     // ==================================================
-
     existingOrder.salesmanName = salesmanName;
     existingOrder.routeId = routeId;
     existingOrder.retailerId = retailerId;
@@ -269,50 +372,42 @@ const editOrderEntry = asyncHandler(async (req, res) => {
     existingOrder.paymentMode = paymentMode;
     existingOrder.orderType = orderType;
 
+    // VERY IMPORTANT
     existingOrder.lineItems = formattedLineItems;
 
-    existingOrder.totalLines =
-        Number(totalLines || 0);
+    existingOrder.totalLines = formattedLineItems.length;
 
     existingOrder.totalBasePoints =
         Number(totalBasePoints || 0);
-
     existingOrder.grossAmount =
-        Number(grossAmount || 0);
-
-    existingOrder.schemeDiscount =
-        Number(schemeDiscount || 0);
+        Number(calculatedGrossAmount.toFixed(2));
 
     existingOrder.distributorDiscount =
-        Number(distributorDiscount || 0);
+        Number(calculatedDiscount.toFixed(2));
 
     existingOrder.taxableAmount =
-        Number(taxableAmount || 0);
+        Number(calculatedTaxableAmount.toFixed(2));
 
     existingOrder.cgst =
-        Number(cgst || 0);
+        Number(calculatedCGST.toFixed(2));
 
     existingOrder.sgst =
-        Number(sgst || 0);
+        Number(calculatedSGST.toFixed(2));
 
     existingOrder.igst =
-        Number(igst || 0);
+        Number(calculatedIGST.toFixed(2));
 
     existingOrder.invoiceAmount =
-        Number(invoiceAmount || 0);
+        Number(calculatedInvoiceAmount.toFixed(2));
 
     existingOrder.roundOffAmount =
-        Number(roundOffAmount || 0);
-
-    existingOrder.cashDiscount =
-        Number(cashDiscount || 0);
+        calculatedRoundOffAmount;
 
     existingOrder.creditAmount =
-        Number(creditAmount || 0);
+        calculatedCreditAmount;
 
     existingOrder.netAmount =
-        Number(netAmount || 0);
-
+        Number(calculatedNetAmount.toFixed(2));
     // ==================================================
     // SAVE
     // ==================================================
