@@ -347,6 +347,8 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     );
   }
 
+  const orderNo = await orderNumberGeneratorNew("ORD");
+
   if (validationErrors.length > 0) {
     throw {
       message: "Sales order cancelled due to validation errors",
@@ -359,12 +361,22 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
           )
           .map((error) => error.reason);
 
+        const failedProductCodes = validationErrors
+          .filter(
+            (error) =>
+              String(error.productCode).trim() !==
+              String(row.productCode).trim(),
+          )
+          .map((error) => String(error.productCode).trim());
+
+        const uniqueFailedCodes = [...new Set(failedProductCodes)];
+
         return {
           ...row,
           reason:
             matchedErrors.length > 0
               ? matchedErrors.join(" | ")
-              : "Cancelled because another product in same order failed",
+              : `Cancelled because Product Code(s) ${uniqueFailedCodes.join(", ")} in Order ${orderNo} failed`,
         };
       }),
     };
@@ -415,8 +427,6 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       })),
     };
   }
-
-  const orderNo = await orderNumberGeneratorNew("ORD");
 
   const orderData = {
     distributorId: distributor._id,
