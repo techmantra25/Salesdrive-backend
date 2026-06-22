@@ -106,7 +106,6 @@ const isPriceValid = (price) => {
 };
 
 const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
-  // Single query — fetch all active prices for this product
   const allPrices = await Price.find({
     productId,
     status: true,
@@ -280,7 +279,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   const lineItems = [];
   const isIgst = getIsIgst({ distributor, retailer: orderMeta.retailer });
 
-  // regionId is a raw ObjectId (not populated) — safe to toString() directly
+  // regionId is raw ObjectId (not populated) — safe to toString() directly
   const regionId = distributor?.regionId?.toString() || null;
 
   for (const item of mergeRowsByProduct(rows)) {
@@ -310,10 +309,13 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       regionId,
     });
 
-    if (!price || !price.rlp_price) {
+    // ✅ Reject if price missing OR rlp_price is zero
+    if (!price || safeNumber(price.rlp_price) <= 0) {
       validationErrors.push({
         ...item,
-        reason: `Price not found for Product Code ${item.productCode}`,
+        reason: !price
+          ? `Price not found for Product Code ${item.productCode}`
+          : `RLP price is zero for Product Code ${item.productCode}`,
       });
       continue;
     }
@@ -465,7 +467,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
 
     const distributorId = req.user.id;
 
-    // ✅ Only populate stateId — regionId stays as raw ObjectId for correct toString()
+    // ✅ Only populate stateId — regionId stays as raw ObjectId
     const distributor =
       await Distributor.findById(distributorId).populate("stateId");
 
