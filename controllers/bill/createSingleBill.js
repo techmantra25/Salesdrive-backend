@@ -61,6 +61,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adviceSlipLink,
     } = req.body;
 
+    console.log("All Data Are", req.body)
+
     const today = new Date();
 
     const activeBillSeries = await new_billSeries
@@ -337,9 +339,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
         invoiceAmount,
         roundOffAmount,
         cashDiscount,
-          freightCharges,
-  deliveryCharges,
-  handlingCharges,
+        freightCharges,
+        deliveryCharges,
+        handlingCharges,
         netAmount,
         billedType: "Single",
         adjustedCreditNoteIds,
@@ -376,22 +378,35 @@ const createSingleBill = asyncHandler(async (req, res) => {
     await OrderEntry.findByIdAndUpdate(
       orderId,
       {
-        $push: { billIds: newBill?._id },
+        $push: { billIds: newBill._id },
 
         $set: {
+          freightCharges,
+          deliveryCharges,
+          handlingCharges,
+
+          grossAmount,
+          taxableAmount,
+          cgst,
+          sgst,
+          igst,
+          invoiceAmount,
+          roundOffAmount,
+          netAmount,
+          creditAmount,
+
           lineItems: lineItems.map((item) => ({
             ...item,
             totalDiscountAmount: Number(
               item?.totalDiscountAmount || 0
             ),
-
             totalDiscountPercentage: Number(
               item?.totalDiscountPercentage || 0
             ),
           })),
         },
       },
-      { new: true },
+      { new: true }
     );
 
     const orderEntry = await OrderEntry.findById(orderId).populate([
