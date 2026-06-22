@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const moment = require("moment");
+const moment = require("moment-timezone");
 const OrderEntry = require("../../models/orderEntry.model");
 const Distributor = require("../../models/distributor.model");
 const Employee = require("../../models/employee.model");
@@ -15,10 +15,7 @@ const safeNumber = (value) => {
 };
 
 const safeOptionalNumber = (value) => {
-  if (value === undefined || value === null || value === "") {
-    return null;
-  }
-
+  if (value === undefined || value === null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -38,42 +35,33 @@ const getFirstValue = (row, keys) => {
       return row[key];
     }
   }
-
   return "";
 };
 
 const isBlankRow = (row) =>
   Object.values(row || {}).every(
-    (value) => value === undefined || value === null || String(value).trim() === "",
+    (value) =>
+      value === undefined || value === null || String(value).trim() === "",
   );
 
 const getStateIdentity = (state) => {
-  if (!state) {
-    return "";
-  }
-
+  if (!state) return "";
   if (typeof state === "object") {
     return String(state.code || state.slug || state._id || state).trim();
   }
-
   return String(state).trim();
 };
 
 const getIsIgst = ({ distributor, retailer }) => {
   const distributorState = getStateIdentity(distributor?.stateId);
   const retailerState = getStateIdentity(retailer?.stateId);
-
   return (
-    distributorState &&
-    retailerState &&
-    distributorState !== retailerState
+    distributorState && retailerState && distributorState !== retailerState
   );
 };
 
 const parseOrderDate = (value) => {
-  if (!value) {
-    return new Date();
-  }
+  if (!value) return new Date();
 
   const parsed = moment(
     String(value).trim(),
@@ -90,29 +78,74 @@ const parseOrderDate = (value) => {
     true,
   );
 
-  if (!parsed.isValid()) {
-    return null;
-  }
-
+  if (!parsed.isValid()) return null;
   return parsed.startOf("day").toDate();
 };
 
-const getPriceForProduct = async ({ productId, distributorId }) => {
-  let price = await Price.findOne({
-    productId,
-    distributorId,
-    status: true,
-  }).sort({ createdAt: -1 });
+const isPriceValid = (price) => {
+  const nowDateTime = moment().tz("Asia/Kolkata").toDate();
 
-  if (!price) {
-    price = await Price.findOne({
-      productId,
-      price_type: "national",
-      status: true,
-    }).sort({ createdAt: -1 });
+  const effectiveDate = moment(price?.effective_date)
+    .tz("Asia/Kolkata")
+    .startOf("day")
+    .toDate();
+
+  if (price?.expiresAt) {
+    const expiresAt = moment(price?.expiresAt)
+      .tz("Asia/Kolkata")
+      .endOf("day")
+      .toDate();
+
+    return (
+      moment(effectiveDate).isSameOrBefore(nowDateTime) &&
+      moment(expiresAt).isSameOrAfter(nowDateTime)
+    );
   }
 
-  return price;
+  return moment(effectiveDate).isSameOrBefore(nowDateTime);
+};
+
+const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
+  // Single query — fetch all active prices for this product
+  const allPrices = await Price.find({
+    productId,
+    status: true,
+  })
+    .sort({ _id: -1 })
+    .lean();
+
+  const distributorIdStr = distributorId?.toString();
+  const regionIdStr = regionId?.toString();
+
+  // Level 1 — Distributor-specific price
+  if (distributorIdStr && regionIdStr) {
+    const distributorPrice = allPrices.find(
+      (p) =>
+        p.price_type === "distributor" &&
+        p.distributorId?.toString() === distributorIdStr &&
+        p.regionId?.toString() === regionIdStr &&
+        isPriceValid(p),
+    );
+    if (distributorPrice) return distributorPrice;
+  }
+
+  // Level 2 — Regional price
+  if (regionIdStr) {
+    const regionalPrice = allPrices.find(
+      (p) =>
+        p.price_type === "regional" &&
+        p.regionId?.toString() === regionIdStr &&
+        isPriceValid(p),
+    );
+    if (regionalPrice) return regionalPrice;
+  }
+
+  // Level 3 — National fallback
+  const nationalPrice = allPrices.find(
+    (p) => p.price_type === "national" && isPriceValid(p),
+  );
+
+  return nationalPrice || null;
 };
 
 const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
@@ -170,8 +203,12 @@ const buildLineItem = ({
   );
   const taxableAmt = toTwoDecimal(grossAmt - distributorDiscount);
   const taxRate = getApplicableTaxRate({ product, taxableAmt, qty });
-  const totalCGST = isIgst ? 0 : toTwoDecimal(taxableAmt * (taxRate.cgst / 100));
-  const totalSGST = isIgst ? 0 : toTwoDecimal(taxableAmt * (taxRate.sgst / 100));
+  const totalCGST = isIgst
+    ? 0
+    : toTwoDecimal(taxableAmt * (taxRate.cgst / 100));
+  const totalSGST = isIgst
+    ? 0
+    : toTwoDecimal(taxableAmt * (taxRate.sgst / 100));
   const igstRate = taxRate.igst || taxRate.cgst + taxRate.sgst;
   const totalIGST = isIgst ? toTwoDecimal(taxableAmt * (igstRate / 100)) : 0;
   const netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
@@ -214,16 +251,16 @@ const mergeRowsByProduct = (rows) => {
       const weightedDiscount =
         totalQty > 0
           ? (safeNumber(map[productCode].specialDiscount) * existingQty +
-            safeNumber(row.specialDiscount) * newQty) /
-          totalQty
+              safeNumber(row.specialDiscount) * newQty) /
+            totalQty
           : 0;
       const weightedEffectivePrice =
         totalQty > 0 &&
-          map[productCode].effectivePrice !== null &&
-          row.effectivePrice !== null
+        map[productCode].effectivePrice !== null &&
+        row.effectivePrice !== null
           ? (safeNumber(map[productCode].effectivePrice) * existingQty +
-            safeNumber(row.effectivePrice) * newQty) /
-          totalQty
+              safeNumber(row.effectivePrice) * newQty) /
+            totalQty
           : null;
 
       map[productCode].orderQty += row.orderQty;
@@ -236,18 +273,15 @@ const mergeRowsByProduct = (rows) => {
 };
 
 const buildErrorRows = (items, reason) =>
-  items.map((item) => ({
-    ...item.originalRow,
-    Reason: reason,
-  }));
+  items.map((item) => ({ ...item.originalRow, Reason: reason }));
 
 const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   const validationErrors = [];
   const lineItems = [];
-  const isIgst = getIsIgst({
-    distributor,
-    retailer: orderMeta.retailer,
-  });
+  const isIgst = getIsIgst({ distributor, retailer: orderMeta.retailer });
+
+  // regionId is a raw ObjectId (not populated) — safe to toString() directly
+  const regionId = distributor?.regionId?.toString() || null;
 
   for (const item of mergeRowsByProduct(rows)) {
     const product = await Product.findOne({
@@ -273,6 +307,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     const price = await getPriceForProduct({
       productId: product._id,
       distributorId: distributor._id,
+      regionId,
     });
 
     if (!price || !price.rlp_price) {
@@ -344,21 +379,29 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   }
 
   const total = (field) =>
-    toTwoDecimal(lineItems.reduce((sum, item) => sum + safeNumber(item[field]), 0));
+    toTwoDecimal(
+      lineItems.reduce((sum, item) => sum + safeNumber(item[field]), 0),
+    );
+
   const totalBasePoints = toTwoDecimal(
     lineItems.reduce(
-      (sum, item) => sum + safeNumber(item.usedBasePoint) * safeNumber(item.oderQty),
+      (sum, item) =>
+        sum + safeNumber(item.usedBasePoint) * safeNumber(item.oderQty),
       0,
     ),
   );
+
   const netAmount = total("netAmt");
+
   const totalDistributorDiscount = toTwoDecimal(
     lineItems.reduce(
       (sum, item) =>
-        sum + safeNumber(item.grossAmt) * (safeNumber(item.distributorDisc) / 100),
+        sum +
+        safeNumber(item.grossAmt) * (safeNumber(item.distributorDisc) / 100),
       0,
     ),
   );
+
   const orderDate = parseOrderDate(orderMeta.orderDate);
 
   if (!orderDate) {
@@ -372,6 +415,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   }
 
   const orderNo = await orderNumberGeneratorNew("ORD");
+
   const orderData = {
     distributorId: distributor._id,
     orderNo,
@@ -420,9 +464,10 @@ const importSalesOrder = asyncHandler(async (req, res) => {
     }
 
     const distributorId = req.user.id;
-    const distributor = await Distributor.findById(distributorId).populate(
-      "stateId",
-    );
+
+    // ✅ Only populate stateId — regionId stays as raw ObjectId for correct toString()
+    const distributor =
+      await Distributor.findById(distributorId).populate("stateId");
 
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
@@ -433,63 +478,25 @@ const importSalesOrder = asyncHandler(async (req, res) => {
     let skippedRowCount = 0;
 
     for (const row of rows) {
-      if (isBlankRow(row)) {
-        continue;
-      }
+      if (isBlankRow(row)) continue;
 
-
-
-
-
-
-
-      const salesmanCode = String(
-        getFirstValue(row, ["Salesman Code"]),
-      ).trim();
-
-      const retailerCode = String(
-        getFirstValue(row, ["Retailer Code"]),
-      ).trim();
-
-      const retailerName = String(
-        getFirstValue(row, ["Retailer Name"]),
-      ).trim();
-
+      const salesmanCode = String(getFirstValue(row, ["Salesman Code"])).trim();
+      const retailerCode = String(getFirstValue(row, ["Retailer Code"])).trim();
+      const retailerName = String(getFirstValue(row, ["Retailer Name"])).trim();
       const orderDate = getFirstValue(row, ["Order Date"]);
-
-      const productCode = String(
-        getFirstValue(row, ["Product Code"]),
-      ).trim();
-
-      const orderQty = safeNumber(
-        getFirstValue(row, ["Order Quantity"]),
-      );
-
+      const productCode = String(getFirstValue(row, ["Product Code"])).trim();
+      const orderQty = safeNumber(getFirstValue(row, ["Order Quantity"]));
       const orderType = DEFAULT_ORDER_TYPE;
-
       const paymentMode = DEFAULT_PAYMENT_MODE;
-
       const effectivePrice = safeOptionalPositiveNumber(
         getFirstValue(row, ["Effective Price"]),
       );
-
       const netAmount = safeOptionalPositiveNumber(
         getFirstValue(row, ["Net Amt ( Incl. GST)"]),
       );
-
       const specialDiscount = undefined;
 
-
-
-
-
-
-      if (
-        !salesmanCode ||
-        !retailerCode ||
-        !retailerName ||
-        !productCode
-      ) {
+      if (!salesmanCode || !retailerCode || !retailerName || !productCode) {
         skippedRowCount += 1;
         errorCsv.push({
           ...row,
@@ -615,7 +622,10 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           message: error.message || "Sales order import failed",
         });
 
-        if (Array.isArray(error.validationErrors) && error.validationErrors.length) {
+        if (
+          Array.isArray(error.validationErrors) &&
+          error.validationErrors.length
+        ) {
           error.validationErrors.forEach((item) => {
             errorCsv.push({
               ...item.originalRow,
