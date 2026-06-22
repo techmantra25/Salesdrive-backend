@@ -137,8 +137,19 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           roundOffAmount,
           cashDiscount,
           netAmount,
+
+          freightCharges,
+          deliveryCharges,
+          handlingCharges,
+
           billedType,
         } = row;
+
+        console("all charges data:", {
+          freightCharges,
+          deliveryCharges,
+          handlingCharges,
+        });
 
         // 4a. Line items presence
         if (!lineItems || lineItems.length === 0) {
@@ -257,6 +268,9 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           roundOffAmount,
           cashDiscount,
           netAmount,
+          freightCharges: freightCharges || 0,
+          deliveryCharges: deliveryCharges || 0,
+          handlingCharges: handlingCharges || 0,
           billedType: billedType ?? "Bulk",
           adjustedCreditNoteIds: order.adjustedCreditNoteIds || [],
           creditAmount: order.creditAmount || 0,
@@ -383,6 +397,9 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
           error: err.message,
         });
 
+
+
+        
         // Reclaim the new_billSeries number for this specific failed bill so
         // no gap is left. billNo (INV series) was generated inside
         // processSingleBill and is handled there — no reclaim needed here.
@@ -394,6 +411,8 @@ const multipleBillCreate = asyncHandler(async (req, res) => {
         }
       }
     }
+
+
 
     if (savedBills.length > 0) billPrintUtil(savedBills.map((b) => b._id));
 

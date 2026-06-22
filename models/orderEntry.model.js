@@ -203,6 +203,15 @@ const OrderEntrySchema = new mongoose.Schema(
   type: Number,
   default: 0,
 },
+deliveryCharges: {
+  type: Number,
+  default: 0,
+},
+
+handlingCharges: {
+  type: Number,
+  default: 0,
+},
     netAmount: {
       type: Number,
       default: 0,

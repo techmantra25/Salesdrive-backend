@@ -41,6 +41,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
       totalLines,
       totalBasePoints,
       freightCharges,
+      deliveryCharges,
+      handlingCharges,
       grossAmount,
       schemeDiscount,
       distributorDiscount,
@@ -335,7 +337,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
         invoiceAmount,
         roundOffAmount,
         cashDiscount,
-        freightCharges,
+          freightCharges,
+  deliveryCharges,
+  handlingCharges,
         netAmount,
         billedType: "Single",
         adjustedCreditNoteIds,
@@ -369,26 +373,26 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // update the order with the new bill
-   await OrderEntry.findByIdAndUpdate(
-  orderId,
-  {
-    $push: { billIds: newBill?._id },
+    await OrderEntry.findByIdAndUpdate(
+      orderId,
+      {
+        $push: { billIds: newBill?._id },
 
-    $set: {
-      lineItems: lineItems.map((item) => ({
-        ...item,
-        totalDiscountAmount: Number(
-          item?.totalDiscountAmount || 0
-        ),
+        $set: {
+          lineItems: lineItems.map((item) => ({
+            ...item,
+            totalDiscountAmount: Number(
+              item?.totalDiscountAmount || 0
+            ),
 
-        totalDiscountPercentage: Number(
-          item?.totalDiscountPercentage || 0
-        ),
-      })),
-    },
-  },
-  { new: true },
-);
+            totalDiscountPercentage: Number(
+              item?.totalDiscountPercentage || 0
+            ),
+          })),
+        },
+      },
+      { new: true },
+    );
 
     const orderEntry = await OrderEntry.findById(orderId).populate([
       { path: "billIds", select: "" },

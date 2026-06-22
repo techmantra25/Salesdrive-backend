@@ -21,6 +21,8 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       freightCharges,
+      deliveryCharges,
+      handlingCharges,
       paymentMode,
       lineItems,
       totalLines,
@@ -52,11 +54,6 @@ const createOrderEntry = asyncHandler(async (req, res) => {
 
     // Validate each line item for product, price, and inventory
     for (const item of lineItems) {
-      console.log("TOTAL DISCOUNT DATA:", {
-  product: item.product,
-  totalDiscountAmount: item.totalDiscountAmount,
-  totalDiscountPercentage: item.totalDiscountPercentage,
-});
       const product = await Product.findById(item.product);
       if (!product) {
         return res
@@ -103,6 +100,8 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       lineItems,
       totalLines,
       freightCharges,
+      deliveryCharges,
+      handlingCharges,
       totalBasePoints,
       grossAmount,
       schemeDiscount,

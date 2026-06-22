@@ -246,9 +246,18 @@ const BillSchema = new mongoose.Schema(
       default: 0,
     },
     freightCharges: {
-  type: Number,
-  default: 0,
-},
+      type: Number,
+      default: 0,
+    },
+    deliveryCharges: {
+      type: Number,
+      default: 0,
+    },
+
+    handlingCharges: {
+      type: Number,
+      default: 0,
+    },
     netAmount: {
       type: Number,
       default: 0,
