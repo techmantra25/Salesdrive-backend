@@ -234,6 +234,8 @@ const createOrderEntry = asyncHandler(async (req, res) => {
     let billData = null;
     let billError = null;
 
+
+
     if (savedOrderEntry && isBillCreate) {
       try {
         // Fetch the order entry details with population

@@ -58,6 +58,9 @@ const processSingleBill = async (
     totalLines,
     totalBasePoints,
     grossAmount,
+    freightCharges,
+    deliveryCharges,
+    handlingCharges,
     schemeDiscount,
     distributorDiscount,
     taxableAmount,
@@ -297,6 +300,9 @@ const processSingleBill = async (
       retailerId,
       lineItems: modifiedLineItems,
       totalLines: totalLines ?? 0,
+      freightCharges: freightCharges || 0,
+      deliveryCharges: deliveryCharges || 0,
+      handlingCharges: handlingCharges || 0,
       totalBasePoints: totalBasePoints ?? 0,
       grossAmount: grossAmount ?? 0,
       schemeDiscount: schemeDiscount ?? 0,
@@ -540,17 +546,17 @@ const processBillUpdate = async ({ bid, previousBillData, newBillData }) => {
 
   const sanitisedLineItems = Array.isArray(newBillData.lineItems)
     ? newBillData.lineItems.map((it) => {
-        const sanitised = {
-          ...it,
-          product: getId(it.product) || null,
-          price: getId(it.price) || null,
-          inventoryId: getId(it.inventoryId) || null,
-        };
-        if (sanitised._id && String(sanitised._id).startsWith("new_")) {
-          delete sanitised._id;
-        }
-        return sanitised;
-      })
+      const sanitised = {
+        ...it,
+        product: getId(it.product) || null,
+        price: getId(it.price) || null,
+        inventoryId: getId(it.inventoryId) || null,
+      };
+      if (sanitised._id && String(sanitised._id).startsWith("new_")) {
+        delete sanitised._id;
+      }
+      return sanitised;
+    })
     : newBillData.lineItems;
 
   const sanitisedBillData = { ...newBillData, lineItems: sanitisedLineItems };
@@ -811,7 +817,7 @@ const processBillCancel = async ({ billIds }) => {
   if (inventoryUpdateErrors.length > 0) {
     throw new Error(
       `Inventory release failed for ${inventoryUpdateErrors.length} item(s): ` +
-        inventoryUpdateErrors.map((e) => e.error).join(" | "),
+      inventoryUpdateErrors.map((e) => e.error).join(" | "),
     );
   }
 
@@ -925,7 +931,7 @@ const handleBillCreateJob = async (job) => {
         bill.activeBillSeriesId || null,
       );
       savedBills.push(savedBill);
-      
+
     } catch (err) {
       console.error(`❌ Bill ${i + 1} in batch failed: ${err.message}`);
       skippedBills.push({
