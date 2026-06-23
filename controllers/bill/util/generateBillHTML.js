@@ -679,27 +679,21 @@ async function generateBillHTML(bill, options = {}) {
           <td colspan="3"></td>
           <td class="amount-col">${formatCurrency(bill?.grossAmount)}</td>
         </tr>
-        ${(
-  Number(bill?.freightCharges || 0) +
-  Number(bill?.deliveryCharges || 0) +
-  Number(bill?.handlingCharges || 0)
-) > 0 ? `
+     
 <tr>
   <td colspan="6" class="label-col">
-    Freight (₹ ${formatCurrency (bill?.freightCharges || 0)})
-    + Delivery (₹ ${formatCurrency(bill?.deliveryCharges || 0)})
+    Freight And Delivery (₹ ${formatCurrency(bill?.freightCharges || 0)})
     + Handling (₹ ${formatCurrency(bill?.handlingCharges || 0)})
   </td>
   <td></td>
   <td class="amount-col">
     ${formatCurrency(
-      Number(bill?.freightCharges || 0) +
-      Number(bill?.deliveryCharges || 0) +
-      Number(bill?.handlingCharges || 0)
-    )}
+        Number(bill?.freightCharges || 0) +
+        Number(bill?.deliveryCharges || 0) +
+        Number(bill?.handlingCharges || 0)
+      )}
   </td>
-</tr>` : ""}
-        
+</tr>     
       ${cgstVisible ? `
         <tr>
           <td colspan="6" class="label-col">CGST @ ${cgstRate}%</td>
