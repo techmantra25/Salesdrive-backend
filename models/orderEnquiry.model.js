@@ -142,6 +142,15 @@ const OrderEnquirySchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    freightCharges: {
+  type: Number,
+  default: 0,
+},
+
+handlingCharges: {
+  type: Number,
+  default: 0,
+},
     taxableAmount: {
       type: Number,
       default: 0,
