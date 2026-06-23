@@ -30,7 +30,7 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-   totalDiscountAmount: {
+  totalDiscountAmount: {
     type: Number,
     default: 0,
   },
@@ -143,14 +143,14 @@ const OrderEnquirySchema = new mongoose.Schema(
       default: 0,
     },
     freightCharges: {
-  type: Number,
-  default: 0,
-},
+      type: Number,
+      default: 0,
+    },
 
-handlingCharges: {
-  type: Number,
-  default: 0,
-},
+    handlingCharges: {
+      type: Number,
+      default: 0,
+    },
     taxableAmount: {
       type: Number,
       default: 0,
