@@ -63,6 +63,8 @@ const convertOrderEnquiryToOrderEntry = asyncHandler(async (req, res) => {
       igst: source.igst,
       invoiceAmount: source.invoiceAmount,
       roundOffAmount: source.roundOffAmount,
+      freightCharges: source.freightCharges || 0,
+      handlingCharges: source.handlingCharges || 0,
       cashDiscount: source.cashDiscount,
       cashDiscountApplied: source.cashDiscountApplied,
       cashDiscountType: source.cashDiscountType,
