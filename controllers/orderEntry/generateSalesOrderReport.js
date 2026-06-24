@@ -154,6 +154,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       "MRP",
       "RLP",
       "Gross Amount",
+      "Freight And Delivery Charges",
+      "Handling Charges",
       "Scheme Discount",
       "Special Disc Amount",
       "Total Disc %",
@@ -218,6 +220,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           MRP: item?.price?.mrp_price || 0,
           RLP: item?.price?.rlp_price || 0,
           "Gross Amount": item?.grossAmt || 0,
+          "Freight And Delivery Charges": order.freightCharges || 0,
+          "Handling Charges": order.handlingCharges || 0,
           "Scheme Discount": item?.schemeDisc || 0,
           "Special Disc Amount": item?.distributorDisc || 0,
           "Total Disc %": item?.totalDiscountPercentage

@@ -65,7 +65,7 @@ orderEntryRoutes
 
 orderEntryRoutes
   .route("/generate-report")
-  .get(protectRoute, generateSalesOrderReport);
+  .get(protect, generateSalesOrderReport);
 
 orderEntryRoutes
   .route("/sales-order-print-pdf/:orderEntryId")
