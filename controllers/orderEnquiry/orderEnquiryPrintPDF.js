@@ -4,6 +4,7 @@ const OrderEnquiry = require("../../models/orderEnquiry.model");
 const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
 const DBUpi = require("../../models/dbUpi.model");
+const Configs = require("../../models/config.model"); // adjust path if needed
 const generateOrderEnquiryHTML = require("./util/generateOrderEnquiryHTML");
 
 const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
@@ -77,22 +78,27 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
     });
 
     orderEnquiry.termConditions = termConditions?.rules || [];
+    const config = await Configs.findOne().lean();
 
     let logoBase64 = null;
-    const logoUrl =
-      "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
 
-    try {
-      const response = await axios.get(logoUrl, {
-        responseType: "arraybuffer",
-        timeout: 5000,
-      });
-      const base64 = Buffer.from(response.data).toString("base64");
-      logoBase64 = `data:image/png;base64,${base64}`;
-    } catch (logoError) {
-      console.error("Failed to fetch logo:", logoError.message);
+    const logoUrl = config?.commonSettings?.companyLogo || "";
+
+    if (logoUrl) {
+      try {
+        const response = await axios.get(logoUrl, {
+          responseType: "arraybuffer",
+          timeout: 5000,
+        });
+
+        const contentType = response.headers["content-type"] || "image/png";
+        const base64 = Buffer.from(response.data).toString("base64");
+
+        logoBase64 = `data:${contentType};base64,${base64}`;
+      } catch (logoError) {
+        console.error("Failed to fetch company logo:", logoError.message);
+      }
     }
-
     const printableOrderEnquiry = orderEnquiry.toObject();
     printableOrderEnquiry.bankData = orderEnquiry.bankData;
     printableOrderEnquiry.upiData = orderEnquiry.upiData;
@@ -272,9 +278,8 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
               <p>We encountered an error while generating your order enquiry print preview. Please try again or contact support if the issue persists.</p>
 
               <div class="error-details">
-                <p><strong>Error Type:</strong> ${
-                  error.name || "HTML Generation Error"
-                }</p>
+                <p><strong>Error Type:</strong> ${error.name || "HTML Generation Error"
+      }</p>
                 <p><strong>Message:</strong> ${error.message}</p>
                 <p><strong>Order Enquiry ID:</strong> ${req.params.orderEnquiryId}</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>

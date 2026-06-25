@@ -5,6 +5,7 @@ const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
 const DBUpi = require("../../models/dbUpi.model");
 const generateSalesOrderHTML = require("./util/generateSalesOrderHTML");
+const Configs = require("../../models/config.model");
 
 const salesOrderPrintPDF = asyncHandler(async (req, res) => {
   try {
@@ -77,22 +78,26 @@ const salesOrderPrintPDF = asyncHandler(async (req, res) => {
     });
 
     salesOrder.termConditions = termConditions?.rules || [];
+    const config = await Configs.findOne().lean();
 
     let logoBase64 = null;
-    const logoUrl =
-      "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
 
-    try {
-      const response = await axios.get(logoUrl, {
-        responseType: "arraybuffer",
-        timeout: 5000,
-      });
-      const base64 = Buffer.from(response.data).toString("base64");
-      logoBase64 = `data:image/png;base64,${base64}`;
-    } catch (logoError) {
-      console.error("Failed to fetch logo:", logoError.message);
+    const logoUrl = config?.commonSettings?.companyLogo || "";
+    if (logoUrl) {
+      try {
+        const response = await axios.get(logoUrl, {
+          responseType: "arraybuffer",
+          timeout: 5000,
+        });
+
+        const contentType = response.headers["content-type"] || "image/png";
+        const base64 = Buffer.from(response.data).toString("base64");
+
+        logoBase64 = `data:${contentType};base64,${base64}`;
+      } catch (logoError) {
+        console.error("Failed to fetch company logo:", logoError.message);
+      }
     }
-
     let htmlContent = generateSalesOrderHTML(salesOrder, {
       logoBase64,
       logoUrl,
@@ -267,9 +272,8 @@ const salesOrderPrintPDF = asyncHandler(async (req, res) => {
               <p>We encountered an error while generating your sales order print preview. Please try again or contact support if the issue persists.</p>
 
               <div class="error-details">
-                <p><strong>Error Type:</strong> ${
-                  error.name || "HTML Generation Error"
-                }</p>
+                <p><strong>Error Type:</strong> ${error.name || "HTML Generation Error"
+      }</p>
                 <p><strong>Message:</strong> ${error.message}</p>
                 <p><strong>Sales Order ID:</strong> ${req.params.orderEntryId}</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
