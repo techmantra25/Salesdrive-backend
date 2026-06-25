@@ -44,6 +44,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       retailerId,
       lineItems,
       freightCharges,
+      adviceSlipLink,
       totalLines,
       totalBasePoints,
       grossAmount,
@@ -62,6 +63,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
       creditAmount,
       adjustedReplacementIds,
     } = req.body;
+
+    console.log("Adsvice slip",adviceSlipLink )
 
     const today = new Date();
 
@@ -268,6 +271,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         freightCharges,
         routeId,
         retailerId,
+        adviceSlipLink,
         lineItems,
         totalLines,
         totalBasePoints,
@@ -448,6 +452,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
 // series number atomically just before the DB write and reclaims it if the
 // Bill.create fails, ensuring no gap or orphan in the series.
 
+
+
+
 const processDirectSingleBill = async ({
   billPayload,
   distributorId,
@@ -475,6 +482,7 @@ const processDirectSingleBill = async ({
     igst,
     invoiceAmount,
     roundOffAmount,
+    adviceSlipLink,
     cashDiscount,
     netAmount,
     billedType,
@@ -615,6 +623,7 @@ const processDirectSingleBill = async ({
       salesmanName,
       routeId,
       retailerId,
+      adviceSlipLink,
       lineItems,
       totalLines: totalLines ?? 0,
       totalBasePoints: totalBasePoints ?? 0,
