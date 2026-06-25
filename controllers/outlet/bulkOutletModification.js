@@ -53,49 +53,28 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
 
     try {
       /* =============================
-         OUTLET UID
-      ============================== */
-      const outletUID = row["Outlet UID"];
-      if (!outletUID) {
-        rowErrors.push("Outlet UID missing");
+      OUTLET CODE (IDENTIFIER)
+   ============================== */
+      const outletCode = row["Outlet Code"]?.toString().trim();
+
+      if (!outletCode) {
+        rowErrors.push("Outlet Code missing");
         throw new Error();
       }
 
-      const outlet = await OutletApproved.findOne({ outletUID });
+      const outlet = await OutletApproved.findOne({
+        outletCode: normalize(outletCode),
+      });
+
       if (!outlet) {
-        rowErrors.push("Outlet UID not found");
+        rowErrors.push(`Outlet Code not found: ${outletCode}`);
         throw new Error();
       }
-      // if (!outlet.status) {
-      //   rowErrors.push("Outlet is inactive and cannot be modified");
-      //   throw new Error();
-      // }
 
       // 🔹 Track changes
       const originalData = outlet.toObject();
       let isUpdated = false;
 
-      /* =============================
-         OUTLET CODE
-      ============================== */
-      if (row["Outlet Code"]?.toString().trim()) {
-        const outletCode = normalize(row["Outlet Code"]);
-
-        const exists = await OutletApproved.findOne({
-          outletCode,
-          status: true,
-          _id: { $ne: outlet._id },
-        });
-
-        if (exists) {
-          rowErrors.push(
-            `Active outlet already exists with Outlet Code: ${outletCode}`
-          );
-        } else if (outlet.outletCode !== outletCode) {
-          outlet.outletCode = outletCode;
-          isUpdated = true;
-        }
-      }
 
       /* =============================
          MOBILE VALIDATION
