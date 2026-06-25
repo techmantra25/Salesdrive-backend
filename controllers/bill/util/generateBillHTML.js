@@ -481,10 +481,16 @@ async function generateBillHTML(bill, options = {}) {
       </div>
     </div>
     <div class="qr-block">
-      ${upiQRCode
-      ? `<img src="${upiQRCode}" alt="QR Code" />`
-      : `<div class="qr-placeholder">QR</div>`}
-    </div>
+  ${
+    options?.logoBase64
+      ? `<img
+          src="${options.logoBase64}"
+          alt="Company Logo"
+          style="width:90px;height:90px;object-fit:contain;border:none;"
+        />`
+      : `<div class="qr-placeholder">Logo</div>`
+  }
+</div>
   </div>
 
   <!-- SELLER + META -->

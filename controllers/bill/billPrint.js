@@ -5,6 +5,7 @@ const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
 const DBUpi = require("../../models/dbUpi.model");
 const axios = require("axios");
+const Configs = require("../../models/config.model"); 
 
 const billPrintPDF = asyncHandler(async (req, res) => {
   try {
@@ -103,24 +104,35 @@ const billPrintPDF = asyncHandler(async (req, res) => {
 
     bill.lineItems = activeLineItems;
     bill.totalLines = activeLineItems.length;
+    const config = await Configs.findOne().lean();
 
     // Fetch logo and convert to base64
-    let logoBase64 = null;
-    const logoUrl = "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
-    
-    try {
-      const response = await axios.get(logoUrl, {
-        responseType: "arraybuffer",
-        timeout: 5000,
-      });
-      const base64 = Buffer.from(response.data).toString("base64");
-      logoBase64 = `data:image/png;base64,${base64}`;
-    } catch (logoError) {
-      console.error("Failed to fetch logo:", logoError.message);
-    }
+  // Fetch company logo from config and convert to base64
+let logoBase64 = null;
+
+const logoUrl = config?.commonSettings?.companyLogo || "";
+
+if (logoUrl) {
+  try {
+    const response = await axios.get(logoUrl, {
+      responseType: "arraybuffer",
+      timeout: 5000,
+    });
+
+    const contentType = response.headers["content-type"] || "image/png";
+    const base64 = Buffer.from(response.data).toString("base64");
+
+    logoBase64 = `data:${contentType};base64,${base64}`;
+  } catch (logoError) {
+    console.error("Failed to fetch company logo:", logoError.message);
+  }
+}
 
     // Generate HTML with filtered line items
-    let htmlContent = await generateBillHTML(bill, { logoBase64 });
+   let htmlContent = await generateBillHTML(bill, {
+  logoBase64,
+  logoUrl,
+});
 
     // Inject auto-print script just before </body>
     // Using CSP-compliant approach with inline event handlers as data attributes
