@@ -72,15 +72,15 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
-//   totalDiscountAmount: {
-//   type: Number,
-//   default: 0,
-// },
+  //   totalDiscountAmount: {
+  //   type: Number,
+  //   default: 0,
+  // },
 
-totalDiscountPercentage: {
-  type: Number,
-  default: 0,
-},
+  totalDiscountPercentage: {
+    type: Number,
+    default: 0,
+  },
   usedBasePoint: { type: Number, default: null },
   goodsType: {
     type: String,
@@ -200,18 +200,18 @@ const OrderEntrySchema = new mongoose.Schema(
       default: 0,
     },
     freightCharges: {
-  type: Number,
-  default: 0,
-},
-deliveryCharges: {
-  type: Number,
-  default: 0,
-},
+      type: Number,
+      default: 0,
+    },
+    deliveryCharges: {
+      type: Number,
+      default: 0,
+    },
 
-handlingCharges: {
-  type: Number,
-  default: 0,
-},
+    handlingCharges: {
+      type: Number,
+      default: 0,
+    },
     netAmount: {
       type: Number,
       default: 0,
@@ -252,6 +252,10 @@ handlingCharges: {
     orderEnquiryId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "OrderEnquiry",
+    },
+    manualOrderDate: {
+      type: Date,
+      default: Date.now,
     },
   },
   {

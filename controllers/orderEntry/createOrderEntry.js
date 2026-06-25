@@ -23,6 +23,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       freightCharges,
       deliveryCharges,
       handlingCharges,
+      manualOrderDate,
       paymentMode,
       lineItems,
       totalLines,
@@ -42,7 +43,8 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       creditAmount,
       isBillCreate,
     } = req.body;
-    console.log("Received createOrderEntry request with data:", req.body);
+
+ console.log("Received createOrderEntry request with data:", req.body);
 
     const distributorId = req.user.id;
 
@@ -99,6 +101,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       paymentMode,
       lineItems,
       totalLines,
+      manualOrderDate: manualOrderDate || new Date(),
       freightCharges,
       deliveryCharges,
       handlingCharges,
@@ -289,9 +292,11 @@ const createOrderEntry = asyncHandler(async (req, res) => {
             // JSON serialization turning Date -> string and losing type info
             try {
               const createdAtDate =
-                orderEntryDetails.createdAt instanceof Date
-                  ? orderEntryDetails.createdAt
-                  : new Date(orderEntryDetails.createdAt);
+                orderEntryDetails.manualOrderDate
+                  ? new Date(orderEntryDetails.manualOrderDate)
+                  : orderEntryDetails.createdAt instanceof Date
+                    ? orderEntryDetails.createdAt
+                    : new Date(orderEntryDetails.createdAt);
               orderEntryDetails.createdAt = createdAtDate;
               orderEntryDetails._createdAtEpoch = createdAtDate.getTime();
 
