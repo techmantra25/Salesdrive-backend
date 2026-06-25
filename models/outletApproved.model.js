@@ -247,7 +247,7 @@ const outletApprovedSchema = new mongoose.Schema(
     massistRefIds: [
       {
         type: String,
-      }
+      },
     ],
     isUpdatedOutletCode: {
       type: Boolean,
@@ -266,12 +266,10 @@ const outletApprovedSchema = new mongoose.Schema(
       default: 0,
       min: 0, // balance can't be negative
     },
-
-
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 outletApprovedSchema.index({ beatId: 1, status: 1 });
@@ -281,12 +279,6 @@ outletApprovedSchema.index({
   outletCode: "text",
   outletUID: "text",
 });
-
-
-
-
-
-
 
 const OutletApproved = mongoose.model("OutletApproved", outletApprovedSchema);
 

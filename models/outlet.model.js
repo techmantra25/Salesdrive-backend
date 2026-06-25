@@ -72,20 +72,20 @@ const outletSchema = new mongoose.Schema(
       type: String,
     },
     gstImage: {
-  type: String,
-},
+      type: String,
+    },
 
-panImage: {
-  type: String,
-},
+    panImage: {
+      type: String,
+    },
 
-aadharImage: {
-  type: String,
-},
+    aadharImage: {
+      type: String,
+    },
 
-bankImage: {
-  type: String,
-},
+    bankImage: {
+      type: String,
+    },
     district: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "District",
@@ -240,7 +240,7 @@ bankImage: {
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 const Outlet = mongoose.model("Outlet", outletSchema);

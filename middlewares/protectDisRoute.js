@@ -133,95 +133,88 @@ const protectDisRoute = asyncHandler(async (req, res, next) => {
 
     req.user = distributor;
 
-    // ============ PORTAL LOCK CHECK ============
-    // Check if user is admin (logged in with genPassword or has createdBy set)
-    // createdBy being a non-null object means admin created this distributor account
-    const isAdmin =
-      distributor.role === "admin" ||
-      (distributor.createdBy &&
-        typeof distributor.createdBy === "object" &&
-        distributor.createdBy._id);
+    // ============ PORTAL LOCK CHECK (DISABLED) ============
+    // const isAdmin =
+    //   distributor.role === "admin" ||
+    //   (distributor.createdBy &&
+    //     typeof distributor.createdBy === "object" &&
+    //     distributor.createdBy._id);
 
-    console.log(
-      `[Portal Lock Check] Distributor: ${distributor.name}, isAdmin: ${isAdmin}, isPortalLocked: ${distributor.isPortalLocked}, createdBy: ${distributor.createdBy ? "yes" : "no"}`,
-    );
+    // console.log(
+    //   `[Portal Lock Check] Distributor: ${distributor.name}, isAdmin: ${isAdmin}, isPortalLocked: ${distributor.isPortalLocked}, createdBy: ${distributor.createdBy ? "yes" : "no"}`,
+    // );
 
-    // Routes that are allowed even when portal is locked (for regular distributors)
-    // These are specifically for bill delivery operations
-    const allowedRoutesWhenLocked = [
-      "/api/v1/distributor/portal-status",
-      "/api/v1/distributor/pending-bills",
-      "/api/v1/distributor/overdue-bills-count",
-      "/api/v2/distributor/portal-status",
-      "/api/v2/distributor/pending-bills",
-      "/api/v2/distributor/overdue-bills-count",
-      "/api/v1/bill/deliver",
-      "/api/v2/bill/deliver",
-      "/api/v1/bill/detail",
-      "/api/v1/bill/bill_update",
-      "/api/v1/bill/paginated-bill-list",
-      "/api/v1/bill/paginated_bill_report",
-      "/api/v1/bill/paginated-order-to-bill-report",
-      "/api/v1/bill/get-all",
-      "/api/v1/bill/bill-status-date-update",
-      "/api/v1/bill/create-single-bill",
-      "/api/v1/bill/create-bulk-bill",
-      "/api/v1/bill/bill-print",
-      "/api/v1/bill/cancel_bill_update",
-      "/api/v1/reason/list-by-module",
-      "/api/v1/reason/module",
-      "/api/v1/bill-delivery",
-      "/api/v1/inventory",
-      "/api/v1/product",
-      "/api/v1/dashboard",
-      "/api/v1/cart",
-      "/api/v1/transaction",
-      "/api/v1/ledger",
-    ];
+    // const allowedRoutesWhenLocked = [
+    //   "/api/v1/distributor/portal-status",
+    //   "/api/v1/distributor/pending-bills",
+    //   "/api/v1/distributor/overdue-bills-count",
+    //   "/api/v2/distributor/portal-status",
+    //   "/api/v2/distributor/pending-bills",
+    //   "/api/v2/distributor/overdue-bills-count",
+    //   "/api/v1/bill/deliver",
+    //   "/api/v2/bill/deliver",
+    //   "/api/v1/bill/detail",
+    //   "/api/v1/bill/bill_update",
+    //   "/api/v1/bill/paginated-bill-list",
+    //   "/api/v1/bill/paginated_bill_report",
+    //   "/api/v1/bill/paginated-order-to-bill-report",
+    //   "/api/v1/bill/get-all",
+    //   "/api/v1/bill/bill-status-date-update",
+    //   "/api/v1/bill/create-single-bill",
+    //   "/api/v1/bill/create-bulk-bill",
+    //   "/api/v1/bill/bill-print",
+    //   "/api/v1/bill/cancel_bill_update",
+    //   "/api/v1/reason/list-by-module",
+    //   "/api/v1/reason/module",
+    //   "/api/v1/bill-delivery",
+    //   "/api/v1/inventory",
+    //   "/api/v1/product",
+    //   "/api/v1/dashboard",
+    //   "/api/v1/cart",
+    //   "/api/v1/transaction",
+    //   "/api/v1/ledger",
+    // ];
 
-    const requestPath = req.originalUrl || req.url;
-    const isAllowedRoute = allowedRoutesWhenLocked.some((route) =>
-      requestPath.includes(route),
-    );
+    // const requestPath = req.originalUrl || req.url;
+    // const isAllowedRoute = allowedRoutesWhenLocked.some((route) =>
+    //   requestPath.includes(route),
+    // );
 
-    // IMPORTANT: Admin users (those with createdBy set) get COMPLETE access
-    // They can bypass portal lock and access ALL DMS features
-    // Regular distributors are restricted to allowedRoutesWhenLocked when portal is locked
-    console.log(
-      `[Portal Lock Check] Path: ${requestPath}, isAllowedRoute: ${isAllowedRoute}`,
-    );
+    // console.log(
+    //   `[Portal Lock Check] Path: ${requestPath}, isAllowedRoute: ${isAllowedRoute}`,
+    // );
 
-    if (distributor.isPortalLocked && !isAllowedRoute && !isAdmin) {
-      console.log(
-        `[Portal Lock Check] BLOCKED: ${distributor.name} - portal locked, route not allowed, not admin`,
-      );
-      return res.status(403).json({
-        error: true,
-        isPortalLocked: true,
-        message: "Portal access restricted due to pending bill deliveries",
-        reason:
-          distributor.portalLockReason || "You have overdue bill deliveries",
-        portalLockedAt: distributor.portalLockedAt,
-        portalLockedBy: distributor.portalLockedBy,
-        pendingBillDeliveries: distributor.pendingBillDeliveries,
-        action: "Please deliver all pending bills to unlock portal access",
-      });
-    }
+    // if (distributor.isPortalLocked && !isAllowedRoute && !isAdmin) {
+    //   console.log(
+    //     `[Portal Lock Check] BLOCKED: ${distributor.name} - portal locked, route not allowed, not admin`,
+    //   );
+    //   return res.status(403).json({
+    //     error: true,
+    //     isPortalLocked: true,
+    //     message: "Portal access restricted due to pending bill deliveries",
+    //     reason:
+    //       distributor.portalLockReason || "You have overdue bill deliveries",
+    //     portalLockedAt: distributor.portalLockedAt,
+    //     portalLockedBy: distributor.portalLockedBy,
+    //     pendingBillDeliveries: distributor.pendingBillDeliveries,
+    //     action: "Please deliver all pending bills to unlock portal access",
+    //   });
+    // }
 
-    if (isAdmin) {
-      console.log(
-        `[Portal Lock Check] ADMIN BYPASS: ${distributor.name} - admin user, full access granted`,
-      );
-    } else if (distributor.isPortalLocked && isAllowedRoute) {
-      console.log(
-        `[Portal Lock Check] ALLOWED ROUTE: ${distributor.name} - portal locked but route is allowed for delivery`,
-      );
-    } else if (!distributor.isPortalLocked) {
-      console.log(
-        `[Portal Lock Check] UNLOCKED: ${distributor.name} - portal is unlocked, full access`,
-      );
-    }
-    // ============ END PORTAL LOCK CHECK ============
+    // if (isAdmin) {
+    //   console.log(
+    //     `[Portal Lock Check] ADMIN BYPASS: ${distributor.name} - admin user, full access granted`,
+    //   );
+    // } else if (distributor.isPortalLocked && isAllowedRoute) {
+    //   console.log(
+    //     `[Portal Lock Check] ALLOWED ROUTE: ${distributor.name} - portal locked but route is allowed for delivery`,
+    //   );
+    // } else if (!distributor.isPortalLocked) {
+    //   console.log(
+    //     `[Portal Lock Check] UNLOCKED: ${distributor.name} - portal is unlocked, full access`,
+    //   );
+    // }
+    // ============ END PORTAL LOCK CHECK (DISABLED) ============
 
     next();
   } catch (error) {

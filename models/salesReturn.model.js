@@ -8,8 +8,8 @@ const LineItemSchema = new mongoose.Schema({
   uom: {
     type: String,
     enum: {
-      values: ["pcs", "box"],
-      message: "values allowed pcs/box",
+      values: ["pcs", "bndl", "box", "coil"],
+      message: "Values allowed pcs/box/bndl/coil",
     },
   },
   l1Basic: {
