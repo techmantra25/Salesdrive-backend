@@ -30,6 +30,9 @@ const editOrderEntry = asyncHandler(async (req, res) => {
         netAmount,
         totalBasePoints,
         totalLines,
+
+        freightCharges,
+        handlingCharges,
     } = req.body;
 
     console.log("All Body in Backend", req.body);
@@ -272,21 +275,18 @@ const editOrderEntry = asyncHandler(async (req, res) => {
     );
 
     // Charges
-    const freightCharges =
-        Number(existingOrder.freightCharges || 0);
+    const calculatedFreightCharges =
+        Number(freightCharges || 0);
 
-    const deliveryCharges =
-        Number(existingOrder.deliveryCharges || 0);
 
-    const handlingCharges =
-        Number(existingOrder.handlingCharges || 0);
+    const calculatedHandlingCharges =
+        Number(handlingCharges || 0);
 
     // GST Taxable Value
     const gstTaxableAmount =
         calculatedTaxableAmount +
-        freightCharges +
-        deliveryCharges +
-        handlingCharges;
+        calculatedFreightCharges +
+        calculatedHandlingCharges;
 
     // Detect GST Type
     const isIGST = formattedLineItems.some(
@@ -343,9 +343,8 @@ const editOrderEntry = asyncHandler(async (req, res) => {
     // Invoice Amount
     const calculatedInvoiceAmount =
         calculatedTaxableAmount +
-        freightCharges +
-        deliveryCharges +
-        handlingCharges +
+        calculatedFreightCharges +
+        calculatedHandlingCharges +
         calculatedCGST +
         calculatedSGST +
         calculatedIGST;
@@ -384,9 +383,15 @@ const editOrderEntry = asyncHandler(async (req, res) => {
 
     existingOrder.distributorDiscount =
         Number(calculatedDiscount.toFixed(2));
+    existingOrder.freightCharges =
+        calculatedFreightCharges;
+
+
+    existingOrder.handlingCharges =
+        calculatedHandlingCharges;
 
     existingOrder.taxableAmount =
-        Number(calculatedTaxableAmount.toFixed(2));
+        Number(gstTaxableAmount.toFixed(2));
 
     existingOrder.cgst =
         Number(calculatedCGST.toFixed(2));
