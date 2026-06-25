@@ -59,10 +59,16 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
       throw new Error("Order Entry not found");
     }
 
+    const orderData = orderEntry.toObject();
+
+    if (orderData.manualOrderDate) {
+      orderData.createdAt = orderData.manualOrderDate;
+    }
+
     return res.status(200).json({
       status: 200,
       message: "Order Entry details retrieved successfully",
-      data: orderEntry,
+      data: orderData,
     });
   } catch (error) {
     res.status(400);
