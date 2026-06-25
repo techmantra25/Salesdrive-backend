@@ -301,7 +301,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
           </div>
 
           <div class="document-title">
-            <h3 style="margin: 0; font-size: 16px;">QUATATION</h3>
+            <h3 style="margin: 0; font-size: 16px;">QUOTATION</h3>
           </div>
 
           <table class="details-table">
