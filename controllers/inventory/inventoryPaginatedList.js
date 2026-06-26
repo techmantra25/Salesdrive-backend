@@ -221,24 +221,8 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     }
 
     // get In-Transit invoices for this distributor (to calculate the in transit for each product)
-    const inTransitInvoices = await Invoice.find({
-      distributorId: distributorId,
-      status: "In-Transit",
-    }).populate("lineItems.product");
-
-    let resultInventories = [...inventories];
-
-    resultInventories = resultInventories.map((invItem) => {
-      const intransitQty = getInTransitQty(
-        inTransitInvoices,
-        invItem?.productId
-      );
-
-      return {
-        ...invItem,
-        intransitQty: intransitQty,
-      };
-    });
+ // Use the intransitQty stored in the Inventory collection
+const resultInventories = inventories;
 
     // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;
@@ -328,12 +312,12 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     }
 
     // Respond with paginated data
-    return res.status(200).json({
-      status: 200,
-      message: "Inventories fetched successfully",
-      data: resultInventories,
-      pagination,
-    });
+   return res.status(200).json({
+  status: 200,
+  message: "Inventories fetched successfully",
+  data: inventories,
+  pagination,
+});
   } catch (error) {
     res.status(400).json({
       error: true,

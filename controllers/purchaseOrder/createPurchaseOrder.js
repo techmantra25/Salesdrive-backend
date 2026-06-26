@@ -203,6 +203,23 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     const savedPurchaseOrder = await newPurchaseOrder.save();
     const purchaseOrderId = savedPurchaseOrder._id;
 
+    // Update Inventory In-Transit Qty
+for (const item of lineItems) {
+  await Inventory.findOneAndUpdate(
+    {
+      distributorId,
+      productId: item.product,
+    },
+    {
+      $inc: {
+        intransitQty: Number(item.orderQty || 0),
+      },
+    },
+    {
+      new: true,
+    }
+  );
+}
     // try {
     //   await axios.get(
     //     `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`

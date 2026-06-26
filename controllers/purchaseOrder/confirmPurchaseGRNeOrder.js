@@ -3,6 +3,7 @@ const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Invoice = require("../../models/invoice.model");
 const Price = require("../../models/price.model");
 const Product = require("../../models/product.model");
+const Inventory = require("../../models/inventory.model");
 const axios = require("axios");
 const SERVER_URL = process.env.SERVER_URL || "http://localhost:5000";
 
@@ -46,26 +47,44 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         });
       }
 
-      purchaseOrder.lineItems.forEach((item) => {
+     for (const item of purchaseOrder.lineItems) {
+  const currentProductId = String(item.product);
 
-        const currentProductId = String(item.product);
+  if (productIds.includes(currentProductId)) {
+    const matchedQty = forecloseUom.find(
+      (q) => String(q.productId) === currentProductId
+    );
 
-        if (productIds.includes(currentProductId)) {
+ const shortCloseQty = Number(matchedQty?.forecloseUom || 0);
 
-          const matchedQty = forecloseUom.find(
-            (q) => String(q.productId) === currentProductId
-          );
+item.foreclose = true;
+item.forecloseReason = forecloseReason;
+item.forecloseUom = shortCloseQty;
 
-          item.foreclose = true;
+// Fetch product to get conversion factor
+const product = await Product.findById(item.product);
 
-          item.forecloseReason = forecloseReason;
+const pcsPerUom = Number(product?.no_of_pieces_in_a_box || 1);
 
-          item.forecloseUom = Number(matchedQty?.forecloseUom || 0);
-        }
+// Convert UOM to Pieces
+const shortClosePcs = shortCloseQty * pcsPerUom;
 
-      });
+// Reduce In-Transit Qty in Pieces
+await Inventory.findOneAndUpdate(
+  {
+    distributorId: purchaseOrder.distributorId,
+    productId: item.product,
+  },
+  {
+    $inc: {
+      intransitQty: -shortClosePcs,
+    },
+  }
+);
+  }
+}
 
-      await purchaseOrder.save();
+await purchaseOrder.save();
 
       return res.status(200).json({
         message: "Products Shortclosed Successfully",
@@ -398,6 +417,24 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         lastRetryAttempt: new Date(),
       },
     });
+
+    // Reduce In-Transit Qty after GRN
+for (const item of invoiceLineItems) {
+  await Inventory.findOneAndUpdate(
+    {
+      distributorId: purchaseOrder.distributorId,
+      productId: item.product,
+    },
+    {
+      $inc: {
+        intransitQty: -Number(item.receivedQty || item.qty || 0),
+      },
+    },
+    {
+      new: true,
+    }
+  );
+}
     // =========================
     // 🔥 UPDATE PURCHASE ORDER INVOICE STATUS (ONLY THIS CHANGE)
     // =========================
