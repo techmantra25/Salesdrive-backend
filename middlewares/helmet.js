@@ -5,15 +5,20 @@ const helmet = require("helmet");
  * Configured for DMS backend API - Frontend compatible
  */
 const helmetConfig = helmet({
-  // Content Security Policy - configure based on your needs
+  // Content Security Policy
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      imgSrc: [
+        "'self'",
+        "data:",
+        "blob:",
+        "https://firebasestorage.googleapis.com", // Firebase Storage — company logo + channel partner logos
+      ],
       connectSrc: ["'self'", "https://*.firebaseio.com", "wss:", "ws:"],
-      fontSrc: ["'self'"],
+      fontSrc: ["'self'", "data:"],
       objectSrc: ["'none'"],
       mediaSrc: ["'self'"],
       frameSrc: ["'none'"],
@@ -21,35 +26,29 @@ const helmetConfig = helmet({
       scriptSrcAttr: ["'unsafe-inline'"],
     },
   },
-  // Cross-Origin Embedder Policy
-  crossOriginEmbedderPolicy: true,
+  // Cross-Origin Embedder Policy — disabled so the HTML print page can load
+  // cross-origin Firebase Storage images without being blocked
+  crossOriginEmbedderPolicy: false,
   // Cross-Origin Opener Policy
   crossOriginOpenerPolicy: true,
-  // Cross-Origin Resource Policy
-  crossOriginResourcePolicy: { policy: "same-site" },
+  // Cross-Origin Resource Policy — must be cross-origin so the browser allows
+  // Firebase Storage images to render inside the served HTML page
+  crossOriginResourcePolicy: { policy: "cross-origin" },
   // Hide X-Powered-By header
   hidePoweredBy: true,
-  // HSTS - disabled for development, enable in production with maxAge
+  // HSTS
   hsts: {
     maxAge: 31536000, // 1 year
     includeSubDomains: true,
     preload: true,
   },
-  // No Sniff
   noSniff: true,
-  // Origin Agent Cluster
   originAgentCluster: true,
-  // Prevent clickjacking
   frameguard: { action: "deny" },
-  // Referrer Policy
   referrerPolicy: { policy: "strict-origin-when-cross-origin" },
-  // X-XSS-Protection (legacy, but still useful for older browsers)
   xssFilter: true,
-  // DNS Prefetch Control
   dnsPrefetchControl: { allow: false },
-  // Permitted Cross-Origin Policies
   permittedCrossDomainPolicies: { permittedPolicies: "none" },
-  // Remove X-Download-Options header (not needed for APIs)
   ieNoOpen: true,
 });
 
