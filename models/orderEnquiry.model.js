@@ -126,6 +126,35 @@ const OrderEnquirySchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    shipToAddress: {
+      type: String,
+      required: true,
+    },
+
+    validity: {
+      type: String,
+      required: true,
+    },
+
+    deliveryTerms: {
+      type: String,
+      required: true,
+    },
+
+    deliverySchedule: {
+      type: String,
+      required: true,
+    },
+
+    paymentTerms: {
+      type: String,
+      required: true,
+    },
+
+    remarks: {
+      type: String,
+      required: true,
+    },
     totalBasePoints: {
       type: Number,
       default: 0,
