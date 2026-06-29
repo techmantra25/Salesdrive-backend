@@ -142,6 +142,13 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
         .close-btn:hover {
           background: #b71c1c;
         }
+        
+        /* Print button styling override for page numbering */
+        @media print {
+          .visible-page-indicator {
+            display: block !important;
+          }
+        }
       </style>
       <button id="printBtn" class="print-btn">Print</button>
       <button id="closeBtn" class="close-btn">Close</button>
@@ -162,11 +169,31 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
             });
           }
 
-          window.print();
+          // Auto print after a short delay to ensure page numbers are rendered
+          setTimeout(function() {
+            window.print();
+          }, 500);
         };
 
         document.addEventListener("contextmenu", function(event) {
           event.preventDefault();
+        });
+        
+        // Update page indicators before print
+        window.addEventListener('beforeprint', function() {
+          const indicators = document.querySelectorAll('.visible-page-indicator');
+          const rows = document.querySelectorAll('.items-table tbody tr');
+          const rowsPerPage = 20;
+          const totalPages = Math.max(1, Math.ceil(rows.length / rowsPerPage));
+          
+          indicators.forEach((indicator, index) => {
+            const pageNum = index + 1;
+            if (pageNum <= totalPages) {
+              indicator.textContent = 'Page ' + pageNum + ' of ' + totalPages;
+            } else {
+              indicator.style.display = 'none';
+            }
+          });
         });
       </script>
     `;
@@ -180,8 +207,17 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
     res.setHeader("Content-Type", "text/html");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' https://firebasestorage.googleapis.com data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;",
+      [
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' https://firebasestorage.googleapis.com data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+      ].join("; "),
     );
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -278,8 +314,7 @@ const orderEnquiryPrintPDF = asyncHandler(async (req, res) => {
               <p>We encountered an error while generating your order enquiry print preview. Please try again or contact support if the issue persists.</p>
 
               <div class="error-details">
-                <p><strong>Error Type:</strong> ${error.name || "HTML Generation Error"
-      }</p>
+                <p><strong>Error Type:</strong> ${error.name || "HTML Generation Error"}</p>
                 <p><strong>Message:</strong> ${error.message}</p>
                 <p><strong>Order Enquiry ID:</strong> ${req.params.orderEnquiryId}</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>

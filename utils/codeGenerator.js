@@ -517,6 +517,49 @@ const giftOrderCodegerator = async (prefix = "SDREWARD") => {
   return code;
 };
 
+const enquiryNumberGenerator = async (prefix) => {
+  const currentYear = new Date().getFullYear().toString().slice(-2);
+  const nextYear = (parseInt(currentYear) + 1).toString().padStart(2, "0");
+  const yearCode = `${currentYear}${nextYear}`;
+
+  const lockName = `enquiry-counter-${prefix}-${yearCode}`;
+
+  let lockAcquired = false;
+  let retries = 10;
+
+  while (!lockAcquired && retries > 0) {
+    lockAcquired = await acquireLock(lockName);
+
+    if (!lockAcquired) {
+      const delay = (11 - retries) * 100 + Math.random() * 200;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      retries--;
+    }
+  }
+
+  if (!lockAcquired) {
+    throw new Error(
+      `Could not acquire lock for enquiry number generation: ${lockName}`
+    );
+  }
+
+  try {
+    const counter = await Counter.findOneAndUpdate(
+      { codeType: prefix, yearRange: yearCode },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    const code = `${prefix}${yearCode}${counter.seq
+      .toString()
+      .padStart(4, "0")}`;
+
+    return code;
+  } finally {
+    await releaseLock(lockName);
+  }
+};
+
 module.exports = {
   generateCode,
   generateCodeForSalesReturn,
@@ -535,5 +578,6 @@ module.exports = {
   generateUniversalOutletUID,
   giftProductCodeGenerator,
   giftOrderCodegerator,
-  generateNextBillNumber
+  generateNextBillNumber,
+  enquiryNumberGenerator
 };

@@ -61,6 +61,22 @@ const formatAmountInWords = (amount) => {
   return `${text} Only`;
 };
 
+// Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
+const CHANNEL_PARTNER_LOGOS = [
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720406592.png?alt=media",
+    alt: "GAIL",
+  },
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720435420.png?alt=media",
+    alt: "SKIPPER PIPES",
+  },
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720467231.png?alt=media",
+    alt: "DALIM CEMENT",
+  },
+];
+
 const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
   const distributor = orderEnquiry?.distributorId || {};
   const retailer = orderEnquiry?.retailerId || {};
@@ -97,6 +113,24 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
     orderEnquiry?.convertedOrderEntryId?.orderId ||
     "";
 
+  const totalDiscountAmount = validLineItems.reduce(
+    (sum, item) => sum + (Number(item?.totalDiscountAmount) || 0),
+    0,
+  );
+
+  // Calculate total pages (20 rows per page)
+  const ROWS_PER_PAGE = 20;
+  const totalPages = Math.max(
+    1,
+    Math.ceil(validLineItems.length / ROWS_PER_PAGE),
+  );
+
+  // Build channel-partner img tags with escaped URLs
+  const channelPartnerImgs = CHANNEL_PARTNER_LOGOS.map(
+    ({ url, alt }) =>
+      `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" style="height:100px; width:120px; object-fit:contain;" onerror="this.style.display='none'">`,
+  ).join("\n            ");
+
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -106,9 +140,11 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
         <title>Order Enquiry - ${escapeHtml(orderEnquiry?.enquiryNo || "")}</title>
         <style>
           @page {
-            size: A4;
+            size: A4 landscape;
             margin: 5mm;
+            /* REMOVED: @bottom-center page numbering to avoid duplicates */
           }
+          
           * {
             box-sizing: border-box;
           }
@@ -116,45 +152,25 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            font-size: 9px;
+            font-size: 8.5px;
             line-height: 1.2;
             color: #000;
             background: #fff;
           }
           .document-container {
             border: 1px solid #000;
-            max-width: 900px;
+            width: 100%;
+            max-width: 1100px;
             margin: 0 auto;
             background: #fff;
-          }
-          .header-section {
             position: relative;
-            text-align: center;
-            padding: 8px 0 4px 0;
-            border-bottom: 1px solid #000;
-          }
-          .logo-container {
-            position: absolute;
-            top: -5px;
-            right: 10px;
-            width: 80px;
-          }
-          .logo-container img {
-            width: 100%;
-            max-height: 60px;
-            object-fit: contain;
-          }
-          .document-title {
-            text-align: center;
-            padding: 4px 0;
-            border-bottom: 1px solid #000;
-            background: #eef5ff;
           }
           .highlight-box {
             background: #fff9e6;
             border-left: 4px solid #ff9800;
-            padding: 8px;
-            margin: 5px;
+            padding: 6px 8px;
+            margin: 4px 5px;
+            font-size: 8px;
           }
           table {
             width: 100%;
@@ -190,11 +206,13 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
             text-align: center;
             font-weight: bold;
             background: #f5f5f5;
+            font-size: 8px;
           }
           .items-table td {
             border-right: 1px solid #000;
             border-bottom: 1px solid #eee;
             padding: 3px 2px;
+            font-size: 8px;
           }
           .items-table th:last-child,
           .items-table td:last-child {
@@ -203,49 +221,76 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
           .border-top-bold {
             border-top: 2px solid #000;
           }
-          .text-left {
-            text-align: left;
-          }
-          .text-center {
-            text-align: center;
-          }
-          .text-right {
-            text-align: right;
-          }
-          .bold {
-            font-weight: bold;
-          }
+          .text-left  { text-align: left; }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .bold { font-weight: bold; }
           .terms-section {
             padding: 6px;
             border-bottom: 1px solid #000;
           }
-          .terms-section ol {
-            margin: 6px 0 0 18px;
+          .terms-section ol,
+          .terms-section ul {
+            margin: 4px 0 0 18px;
             padding: 0;
-          }
-          .signature-table td {
-            width: 50%;
-            text-align: center;
-            padding: 12px 8px;
           }
           .signature-line {
             border-top: 1px solid #000;
             width: 200px;
             margin: 40px auto 0 auto;
             padding-top: 5px;
+            text-align: center;
           }
+
+          /* Page number styling - positioned at bottom */
+          .page-footer {
+            text-align: center;
+            font-size: 8px;
+            padding: 5px 0;
+            border-top: 1px solid #ccc;
+            margin-top: 5px;
+            color: #555;
+            width: 100%;
+          }
+
+          /* Prevent awkward page breaks */
+          .items-table tbody tr {
+            page-break-inside: avoid;
+          }
+          
+          .items-table tbody tr:last-child {
+            page-break-after: avoid;
+          }
+
+          /* Keep header content together */
+          .document-container > div:first-child {
+            page-break-after: avoid;
+          }
+          
+          /* Page break after table header */
+          .items-table thead {
+            page-break-after: avoid;
+          }
+
           @media print {
             body {
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
+            }
+            
+            /* Hide print buttons */
+            .print-btn, .close-btn {
+              display: none !important;
             }
           }
         </style>
       </head>
       <body>
         <div class="document-container">
-          <div class="header-section">
-            <div class="logo-container">
+
+          <!-- HEADER: logo left, company info right (Kedia-style) -->
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid #000;">
+            <div style="flex:0 0 90px; display:flex; align-items:center; justify-content:flex-start;">
               <img
                 src="${escapeHtml(
                   options?.logoBase64 ||
@@ -253,57 +298,36 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                     "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
                 )}"
                 alt="Company Logo"
+                style="max-width:80px; max-height:70px; object-fit:contain;"
                 onerror="this.style.display='none'"
               />
             </div>
-            <h2 style="margin: 0; font-size: 16px;">
-              ${escapeHtml(distributor?.name || "Company Name")}
-            </h2>
-            <p style="margin: 3px 0;">
-              ${escapeHtml(
-                `${distributor?.address1 || ""}${
-                  distributor?.address2 ? `, ${distributor.address2}` : ""
-                }`,
-              )}
-            </p>
-            <table style="margin-top: 3px;">
-              <tbody>
-                <tr>
-                  <td style="width: 20%; text-align: left; padding-left: 20px;">
-                    <strong>GSTIN No</strong>
-                  </td>
-                  <td style="width: 30%; text-align: left;">
-                    : <strong>${escapeHtml(distributor?.gst_no || "")}</strong>
-                  </td>
-                  <td style="width: 20%; text-align: left;">
-                    <strong>Email Id</strong>
-                  </td>
-                  <td style="width: 30%; text-align: left;">
-                    : ${escapeHtml(distributor?.email || "")}
-                  </td>
-                </tr>
-                <tr>
-                  <td style="text-align: left; padding-left: 20px;">
-                    <strong>State</strong>
-                  </td>
-                  <td style="text-align: left;">
-                    : ${escapeHtml(distributor?.stateId?.name || "")}
-                  </td>
-                  <td style="text-align: left;">
-                    <strong>Phone No.</strong>
-                  </td>
-                  <td style="text-align: left; font-weight: bold;">
-                    : <strong>${escapeHtml(distributor?.phone || "")}</strong>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div style="flex:1; text-align:right; padding-left:10px;">
+              <div style="font-size:15px; font-weight:bold; letter-spacing:0.5px;">
+                ${escapeHtml(distributor?.name || "Company Name")}
+              </div>
+              ${
+                distributor?.address1
+                  ? `<div style="font-size:8.5px; margin-top:3px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
+                  : ""
+              }
+              <div style="font-size:8.5px; margin-top:2px;">
+                ${distributor?.email ? `Email : ${escapeHtml(distributor.email)}` : ""}${distributor?.email && distributor?.phone ? " &nbsp;&nbsp; " : ""}${distributor?.phone ? escapeHtml(distributor.phone) : ""}
+              </div>
+              ${
+                distributor?.gst_no || distributor?.stateId?.name
+                  ? `<div style="font-size:8.5px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
+                  : ""
+              }
+            </div>
           </div>
 
-          <div class="document-title">
-            <h3 style="margin: 0; font-size: 16px;">QUOTATION</h3>
+          <!-- QUOTATION TITLE -->
+          <div style="text-align:center; padding:5px 0; border-bottom:1px solid #000; background:#fff;">
+            <span style="font-size:11px; font-weight:bold; letter-spacing:2px; text-decoration:underline;">QUOTATION</span>
           </div>
 
+          <!-- CUSTOMER + QUOTATION DETAILS -->
           <table class="details-table">
             <tbody>
               <tr>
@@ -311,37 +335,35 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                   <table>
                     <tbody>
                       <tr>
-                        <td colspan="2" class="bold">Retailer Details</td>
+                        <td colspan="2" class="bold" style="font-size:9px;">Customer Details</td>
                       </tr>
                       <tr>
-                        <td style="width: 30%;">Name</td>
-                        <td>: <strong>${escapeHtml(
-                          retailer?.outletName || "",
-                        )}</strong>${retailer?.outletUID ? ` (${escapeHtml(retailer.outletUID)})` : ""}</td>
+                        <td style="width: 32%;">Name</td>
+                        <td>: <strong>${escapeHtml(retailer?.outletName || "")}</strong></td>
                       </tr>
                       <tr>
-                        <td>Outlet Code</td>
+                        <td>Customer Code</td>
                         <td>: ${escapeHtml(retailer?.outletCode || "")}</td>
                       </tr>
                       <tr>
-                        <td>Address</td>
-                        <td>: ${escapeHtml(
-                          `${retailer?.address1 || ""}${
-                            retailer?.city ? `, ${retailer.city}` : ""
-                          }`,
-                        )}</td>
+                        <td>Add/City/Pincode</td>
+                        <td>: ${escapeHtml(retailer?.address1 || "")}${retailer?.city ? ` / ${escapeHtml(retailer.city)}` : ""}${retailer?.pin ? ` / ${escapeHtml(retailer.pin)}` : ""}</td>
                       </tr>
-                      <tr>
-                        <td>Village/City</td>
-                        <td>: ${escapeHtml(retailer?.city || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>Pin Code</td>
-                        <td>: ${escapeHtml(retailer?.pin || "")}</td>
-                      </tr>
+                      ${
+                        orderEnquiry?.shipToAddress
+                          ? `<tr>
+                        <td>Ship To Address</td>
+                        <td>: ${escapeHtml(orderEnquiry.shipToAddress)}</td>
+                      </tr>`
+                          : ""
+                      }
                       <tr>
                         <td>Phone No.</td>
                         <td>: <strong>${escapeHtml(retailer?.mobile1 || "")}</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Email</td>
+                        <td>: ${escapeHtml(retailer?.email || "")}</td>
                       </tr>
                       <tr>
                         <td>GSTIN No.</td>
@@ -350,59 +372,69 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                     </tbody>
                   </table>
                 </td>
+
                 <td class="right-section">
                   <table>
                     <tbody>
+                     
                       <tr>
-                        <td colspan="2" class="bold">Order Enquiry Details</td>
-                      </tr>
-                      <tr>
-                        <td style="width: 34%;">Enquiry No.</td>
-                        <td>: <strong>${escapeHtml(
-                          orderEnquiry?.enquiryNo || "",
-                        )}</strong></td>
+                        <td style="width: 38%;">Quotation No.</td>
+                        <td>: <strong>${escapeHtml(orderEnquiry?.enquiryNo || "")}</strong></td>
                       </tr>
                       ${
                         convertedOrderNo
-                          ? `
-                      <tr>
+                          ? `<tr>
                         <td>Converted Order No.</td>
                         <td>: ${escapeHtml(convertedOrderNo)}</td>
-                      </tr>
-                      `
+                      </tr>`
                           : ""
                       }
                       <tr>
-                        <td>Enquiry Date</td>
+                        <td>Quotation Date</td>
                         <td>: ${escapeHtml(formatDate(orderEnquiry?.createdAt))}</td>
                       </tr>
-                      <tr>
-                        <td>Order Source</td>
-                        <td>: ${escapeHtml(orderEnquiry?.orderSource || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>Order Type</td>
-                        <td>: ${escapeHtml(orderEnquiry?.orderType || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>Payment Mode</td>
-                        <td>: ${escapeHtml(orderEnquiry?.paymentMode || "")}</td>
-                      </tr>
+                      ${
+                        orderEnquiry?.validity
+                          ? `<tr>
+                        <td>Validity</td>
+                        <td>: ${escapeHtml(orderEnquiry.validity)}</td>
+                      </tr>`
+                          : ""
+                      }
+                    
+                   
+                      ${
+                        orderEnquiry?.deliverySchedule
+                          ? `<tr>
+                        <td>Delivery Schedule</td>
+                        <td>: ${escapeHtml(orderEnquiry.deliverySchedule)}</td>
+                      </tr>`
+                          : ""
+                      }
+                      ${
+                        orderEnquiry?.deliveryTerms
+                          ? `<tr>
+                        <td>Delivery Terms</td>
+                        <td>: ${escapeHtml(orderEnquiry.deliveryTerms)}</td>
+                      </tr>`
+                          : ""
+                      }
+                     
+                      ${
+                        orderEnquiry?.paymentTerms
+                          ? `<tr>
+                        <td>Payment Terms</td>
+                        <td>: ${escapeHtml(orderEnquiry.paymentTerms)}</td>
+                      </tr>`
+                          : ""
+                      }
                       <tr>
                         <td>Sales Man</td>
-                        <td>: ${escapeHtml(
-                          salesman?.name || "",
-                        )}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
+                        <td>: ${escapeHtml(salesman?.name || "")}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
                       </tr>
                       <tr>
-                        <td>Beat</td>
-                        <td>: ${escapeHtml(
-                          route?.name || "",
-                        )}${route?.code ? ` (${escapeHtml(route.code)})` : ""}</td>
-                      </tr>
-                      <tr>
-                        <td>Status</td>
-                        <td>: ${escapeHtml(orderEnquiry?.status || "Pending")}</td>
+                        <td>Remarks</td>
+                        <td>: ${escapeHtml(orderEnquiry?.remarks || "")}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -411,64 +443,46 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
             </tbody>
           </table>
 
-          ${
-            orderEnquiry?.remark
-              ? `
-          <div class="highlight-box">
-            <strong>Remarks:</strong> ${escapeHtml(orderEnquiry.remark)}
+          <!-- INTRODUCTION TEXT -->
+          <div style="padding: 6px 10px; font-size: 8.5px; line-height: 1.4; font-weight: bold;">
+            Dear Sirs,<br>
+            With reference to your above enquiry we are quoting our lowest rates alongwith estimation as under which we hope will meet your approval and we shall be favoured with valued order.
           </div>
-          `
-              : ""
-          }
 
+          <!-- LINE ITEMS TABLE -->
           <table class="items-table">
             <thead>
               <tr>
-                <th style="width: 4%;">No</th>
-                <th style="width: 24%;">Item Description</th>
-                <th style="width: 8%;">HSN/SAC</th>
-                <th style="width: 8%;">Qty PCS</th>
-                <th style="width: 8%;">Qty BOX</th>
-                <th style="width: 8%;">Basic Rate</th>
-                <th style="width: 9%;">Gross Amt</th>
-                <th style="width: 9%;">Disc Amt</th>
-                <th style="width: 8%;">Tax Amt</th>
-                <th style="width: 8%;">Net Amt</th>
+                <th style="width: 3%;">SL No</th>
+                <th style="width: 22%; text-align:left;">Item Description</th>
+                <th style="width: 7%;">HSN Code</th>
+                <th style="width: 5%;">Qty</th>
+                <th style="width: 8%;">MRP</th>
+                <th style="width: 7%;">Disc %</th>
+                <th style="width: 8%;">Basic Price</th>
+                <th style="width: 9%;">Basic Amt (incl GST)</th>
               </tr>
             </thead>
             <tbody>
               ${validLineItems
                 .map((item, index) => {
                   const product = item?.product || {};
+                  const mrp = Number(
+                    item?.price?.mrp || item?.price?.rlp_price || 0,
+                  );
+                  const discPct = Number(item?.totalDiscountPercentage || 0);
 
                   return `
               <tr>
                 <td class="text-center">${index + 1}</td>
                 <td class="text-left">${escapeHtml(product?.name || "")}</td>
-                <td class="text-center">${escapeHtml(
-                  product?.product_hsn_code || "",
-                )}</td>
+                <td class="text-center">${escapeHtml(product?.product_hsn_code || "")}</td>
                 <td class="text-center">${Number(item?.oderQty) || 0}</td>
-                <td class="text-center">${escapeHtml(
-                  getBoxQty(product, item?.oderQty),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.price?.rlp_price || 0),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.grossAmt),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.distributorDisc),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(getTaxAmount(item)),
-                )}</td>
-                <td class="text-right">${escapeHtml(
-                  formatCurrency(item?.netAmt),
-                )}</td>
-              </tr>
-                  `;
+                <td class="text-right">${escapeHtml(formatCurrency(mrp))}</td>
+                <td class="text-center">${discPct > 0 ? discPct.toFixed(2) + "%" : "0.00%"}</td>
+                <td class="text-right">${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
+                 <td class="text-right">${escapeHtml(formatCurrency(item?.netAmt))}</td>
+              </tr>`;
                 })
                 .join("")}
               ${emptyRows
@@ -476,22 +490,15 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                   () => `
               <tr>
                 <td class="text-center">-</td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-                <td></td>
-              </tr>
-                  `,
+                <td></td><td></td><td></td><td></td>
+                <td></td><td></td><td></td>
+              </tr>`,
                 )
                 .join("")}
             </tbody>
           </table>
 
+          <!-- SUMMARY -->
           <table class="summary-table">
             <tbody>
               <tr>
@@ -499,7 +506,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                   <table>
                     <tbody>
                       <tr>
-                        <td colspan="3" class="bold">E & O.E</td>
+                        <td colspan="3" class="bold">E &amp; O.E</td>
                       </tr>
                       <tr>
                         <td colspan="2">Number of Items</td>
@@ -509,137 +516,103 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                         <td colspan="2">Total Qty In PCS</td>
                         <td>: ${totalQtyPcs}</td>
                       </tr>
-                      <tr>
-                        <td colspan="2">Total Qty In BOX</td>
-                        <td>: ${formatCurrency(totalQtyBox)}</td>
-                      </tr>
-                      <tr>
-                        <td colspan="2">Enquiry Status</td>
-                        <td>: ${escapeHtml(orderEnquiry?.status || "Pending")}</td>
-                      </tr>
                       ${
                         Number(orderEnquiry?.totalBasePoints) > 0
-                          ? `
-                      <tr>
+                          ? `<tr>
                         <td colspan="2">Base Points</td>
                         <td>: ${Number(orderEnquiry.totalBasePoints) || 0}</td>
-                      </tr>
-                      `
+                      </tr>`
                           : ""
                       }
                       <tr>
-                        <td colspan="3" style="padding-top: 10px;">
+                        <td colspan="3" style="padding-top:8px;">
                           <strong>Amount In Words:</strong>
                         </td>
                       </tr>
                       <tr>
                         <td colspan="3" class="bold">
-                          ${escapeHtml(
-                            formatAmountInWords(orderEnquiry?.netAmount),
-                          )}
+                          ${escapeHtml(formatAmountInWords(orderEnquiry?.netAmount))}
                         </td>
                       </tr>
                     </tbody>
                   </table>
                 </td>
+
                 <td class="right-section">
                   <table>
                     <tbody>
                       <tr>
-                        <td style="width: 60%;">Gross Amount</td>
-                        <td style="width: 10%;" class="text-center">:</td>
-                        <td style="width: 30%;" class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.grossAmount),
-                        )}</td>
+                        <td style="width:60%;">Gross Amount</td>
+                        <td style="width:10%;" class="text-center">:</td>
+                        <td style="width:30%;" class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.grossAmount))}</td>
                       </tr>
                       <tr>
                         <td>Special Discount</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.distributorDiscount),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.distributorDiscount || totalDiscountAmount || 0))}</td>
+                      </tr>
+                      <tr>
+                        <td>Freight &amp; Handling Fee</td>
+                        <td class="text-center">:</td>
+                        <td class="text-right">${escapeHtml(formatCurrency((orderEnquiry?.freightCharges || 0) + (orderEnquiry?.handlingCharges || 0)))}</td>
                       </tr>
                       <tr>
                         <td>Taxable Amount</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.taxableAmount),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.taxableAmount))}</td>
                       </tr>
                       <tr>
                         <td>CGST</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.cgst),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.cgst))}</td>
                       </tr>
                       <tr>
                         <td>SGST</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.sgst),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.sgst))}</td>
                       </tr>
                       ${
                         Number(orderEnquiry?.igst) > 0
-                          ? `
-                      <tr>
+                          ? `<tr>
                         <td>IGST</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.igst),
-                        )}</td>
-                      </tr>
-                      `
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.igst))}</td>
+                      </tr>`
                           : ""
                       }
                       <tr>
                         <td>Invoice Amount</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.invoiceAmount),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.invoiceAmount))}</td>
                       </tr>
                       <tr>
                         <td>Round Off Amount</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.roundOffAmount),
-                        )}</td>
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.roundOffAmount))}</td>
                       </tr>
                       ${
                         Number(orderEnquiry?.cashDiscount) > 0 ||
                         orderEnquiry?.cashDiscountApplied
-                          ? `
-                      <tr>
+                          ? `<tr>
                         <td>Cash Discount</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.cashDiscount),
-                        )}</td>
-                      </tr>
-                      `
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.cashDiscount))}</td>
+                      </tr>`
                           : ""
                       }
                       ${
                         Number(orderEnquiry?.creditAmount) > 0
-                          ? `
-                      <tr>
+                          ? `<tr>
                         <td>Credit Note Adjustment</td>
                         <td class="text-center">:</td>
-                        <td class="text-right">${escapeHtml(
-                          formatCurrency(orderEnquiry?.creditAmount),
-                        )}</td>
-                      </tr>
-                      `
+                        <td class="text-right">${escapeHtml(formatCurrency(orderEnquiry?.creditAmount))}</td>
+                      </tr>`
                           : ""
                       }
-                      <tr class="bold border-top-bold" style="font-weight: bold;">
-                        <td style="padding-top: 5px;">Net Amount</td>
-                        <td class="text-center" style="padding-top: 5px;">:</td>
-                        <td class="text-right" style="padding-top: 5px;">${escapeHtml(
-                          formatCurrency(orderEnquiry?.netAmount),
-                        )}</td>
+                      <tr class="bold border-top-bold" style="font-weight:bold;">
+                        <td style="padding-top:5px;">Net Amount</td>
+                        <td class="text-center" style="padding-top:5px;">:</td>
+                        <td class="text-right" style="padding-top:5px;">${escapeHtml(formatCurrency(orderEnquiry?.netAmount))}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -648,111 +621,103 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
             </tbody>
           </table>
 
+          <!-- BANK + UPI DETAILS -->
           ${
             bankData?.bankName || upiData?.upiId
               ? `
           <table class="bank-table">
             <tbody>
               <tr>
-                <td style="width: 70%; padding: 4px; vertical-align: top;">
+                <td style="width:70%; padding:4px; vertical-align:top;">
                   <table>
                     <tbody>
-                      <tr>
-                        <td colspan="3" class="bold">Bank Details</td>
-                      </tr>
+                      <tr><td colspan="2" class="bold">Bank Details</td></tr>
                       ${
                         bankData?.bankName
                           ? `
-                      <tr>
-                        <td style="width: 30%;">Bank Name</td>
-                        <td>: ${escapeHtml(bankData.bankName)}</td>
-                      </tr>
-                      <tr>
-                        <td>Branch</td>
-                        <td>: ${escapeHtml(bankData.branchCode || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>IFSC Code</td>
-                        <td>: ${escapeHtml(bankData.ifscCode || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>Account Type</td>
-                        <td>: ${escapeHtml(bankData.accountType || "")}</td>
-                      </tr>
-                      <tr>
-                        <td>Account Number</td>
-                        <td>: ${escapeHtml(bankData.accountNumber || "")}</td>
-                      </tr>
-                      `
-                          : `
-                      <tr>
-                        <td colspan="2">Bank details are not available.</td>
-                      </tr>
-                      `
+                      <tr><td style="width:30%;">Bank Name</td><td>: ${escapeHtml(bankData.bankName)}</td></tr>
+                      <tr><td>Branch</td><td>: ${escapeHtml(bankData.branchCode || "")}</td></tr>
+                      <tr><td>IFSC Code</td><td>: ${escapeHtml(bankData.ifscCode || "")}</td></tr>
+                      <tr><td>Account Type</td><td>: ${escapeHtml(bankData.accountType || "")}</td></tr>
+                      <tr><td>Account Number</td><td>: ${escapeHtml(bankData.accountNumber || "")}</td></tr>`
+                          : `<tr><td colspan="2">Bank details are not available.</td></tr>`
                       }
                     </tbody>
                   </table>
                 </td>
-                <td style="width: 30%; padding: 4px; vertical-align: top;">
+                <td style="width:30%; padding:4px; vertical-align:top;">
                   <table>
                     <tbody>
-                      <tr>
-                        <td class="bold">UPI Details</td>
-                      </tr>
-                      <tr>
-                        <td>${escapeHtml(
-                          upiData?.upiId
-                            ? `UPI ID: ${upiData.upiId}`
-                            : "UPI details are not available.",
-                        )}</td>
-                      </tr>
+                      <tr><td class="bold">UPI Details</td></tr>
+                      <tr><td>${escapeHtml(upiData?.upiId ? `UPI ID: ${upiData.upiId}` : "UPI details are not available.")}</td></tr>
                     </tbody>
                   </table>
                 </td>
               </tr>
             </tbody>
-          </table>
-          `
-              : ""
+          </table>`
+              : `
+          <div style="padding:4px 6px; border-bottom:1px solid #000; font-size:8px;">
+            <strong>Bank Details:</strong><br>
+            <strong>UPI ID -</strong> infra96577.ibz@icici<br>
+            <strong>Beneficiary :</strong> Infrawal Projects Private Limited<br>
+            <strong>Bank :</strong> ICICI Bank<br>
+            <strong>Branch Name :</strong> Liluah Branch<br>
+            <strong>IFSC Code :</strong> ICIC0006948<br>
+            <strong>A/C No :</strong> 694805501076
+          </div>`
           }
 
+          <!-- TERMS & CONDITIONS -->
           ${
             termConditions.length > 0
               ? `
           <div class="terms-section">
-            <p class="bold">Terms & Conditions:</p>
+            <p class="bold">Terms &amp; Conditions:</p>
             <ol>
-              ${termConditions
-                .map((term) => `<li>${escapeHtml(term)}</li>`)
-                .join("")}
+              ${termConditions.map((term) => `<li>${escapeHtml(term)}</li>`).join("")}
             </ol>
-          </div>
-          `
-              : `
-          <div class="terms-section">
-            <p><strong>Note:</strong> This is a system generated order enquiry print.</p>
-          </div>
-          `
+          </div>`
+              : ""
           }
 
-          <table class="signature-table">
+          <!-- NOTE & SIGNATURE -->
+          <table style="width:100%; font-size:8px; border-bottom:1px solid #000;">
             <tbody>
               <tr>
-                <td>
-                  <p class="bold">Accepted By Customer</p>
-                  <div class="signature-line"></div>
+                <td style="width:60%; vertical-align:top; padding:6px;">
+                  <strong>Note:</strong>
+                  <ul style="margin:4px 0; padding-left:16px;">
+                    <li>Kindly incorporate plus/minus 5% variation in quantity at the time of placing the order with us.</li>
+                    <li>Test Certificate may be provided if required.</li>
+                    <li>Inspection of materials if required may be done at our godown with prior information.</li>
+                    <li>Unloading arrangement to be done by buyer.</li>
+                  </ul>
                 </td>
-                <td>
-                  <p class="bold">For ${escapeHtml(
-                    distributor?.name || "Company Name",
-                  )}</p>
+                <td style="width:40%; vertical-align:bottom; text-align:center; padding:6px;">
+                  <p class="bold" style="margin:4px 0 0;">For ${escapeHtml(distributor?.name || "Company Name")}</p>
                   <div class="signature-line">
-                    <p class="bold">Authorised Signatory</p>
+                    <p style="margin:2px 0;">Authorised Signatory</p>
                   </div>
                 </td>
               </tr>
             </tbody>
           </table>
+
+          <!-- CHANNEL PARTNERS FOOTER -->
+          <div style="padding:5px 10px; border-top:1px solid #000;">
+            <span style="font-size:8px; font-weight:bold; color:#555;">Channel Partners for:</span><br/>
+            <div style="display:flex; align-items:center; justify-content:space-evenly; margin-top:4px;">
+              ${channelPartnerImgs}
+            </div>
+          </div>
+
+          <!-- PAGE NUMBER AT BOTTOM -->
+          <div style="padding:5px 10px; text-align:center; font-size:8px; color:#555; border-top:1px solid #000;">
+            Page 1 of ${totalPages}
+          </div>
+          </div>
+
         </div>
       </body>
     </html>

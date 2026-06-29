@@ -4,7 +4,7 @@ const Distributor = require("../../models/distributor.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
-const { orderNumberGenerator } = require("../../utils/codeGenerator");
+const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 const createOrderEnquiry = asyncHandler(async (req, res) => {
   try {
@@ -82,7 +82,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       }
     }
 
-    const enquiryNo = await orderNumberGenerator("OEQ");
+    const enquiryNo = await enquiryNumberGenerator("IPPL");
 
     const savedOrderEnquiry = await OrderEnquiry.create({
       distributorId,
