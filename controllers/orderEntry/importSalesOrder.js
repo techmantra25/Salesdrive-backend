@@ -250,16 +250,16 @@ const mergeRowsByProduct = (rows) => {
       const weightedDiscount =
         totalQty > 0
           ? (safeNumber(map[productCode].specialDiscount) * existingQty +
-              safeNumber(row.specialDiscount) * newQty) /
-            totalQty
+            safeNumber(row.specialDiscount) * newQty) /
+          totalQty
           : 0;
       const weightedEffectivePrice =
         totalQty > 0 &&
-        map[productCode].effectivePrice !== null &&
-        row.effectivePrice !== null
+          map[productCode].effectivePrice !== null &&
+          row.effectivePrice !== null
           ? (safeNumber(map[productCode].effectivePrice) * existingQty +
-              safeNumber(row.effectivePrice) * newQty) /
-            totalQty
+            safeNumber(row.effectivePrice) * newQty) /
+          totalQty
           : null;
 
       map[productCode].orderQty += row.orderQty;
@@ -349,38 +349,38 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
 
   const orderNo = await orderNumberGeneratorNew("ORD");
 
-  if (validationErrors.length > 0) {
-    throw {
-      message: "Sales order cancelled due to validation errors",
-      validationErrors: rows.map((row) => {
-        const matchedErrors = validationErrors
-          .filter(
-            (error) =>
-              String(error.productCode).trim() ===
-              String(row.productCode).trim(),
-          )
-          .map((error) => error.reason);
+  // if (validationErrors.length > 0) {
+  //   throw {
+  //     message: "Sales order cancelled due to validation errors",
+  //     validationErrors: rows.map((row) => {
+  //       const matchedErrors = validationErrors
+  //         .filter(
+  //           (error) =>
+  //             String(error.productCode).trim() ===
+  //             String(row.productCode).trim(),
+  //         )
+  //         .map((error) => error.reason);
 
-        const failedProductCodes = validationErrors
-          .filter(
-            (error) =>
-              String(error.productCode).trim() !==
-              String(row.productCode).trim(),
-          )
-          .map((error) => String(error.productCode).trim());
+  //       const failedProductCodes = validationErrors
+  //         .filter(
+  //           (error) =>
+  //             String(error.productCode).trim() !==
+  //             String(row.productCode).trim(),
+  //         )
+  //         .map((error) => String(error.productCode).trim());
 
-        const uniqueFailedCodes = [...new Set(failedProductCodes)];
+  //       const uniqueFailedCodes = [...new Set(failedProductCodes)];
 
-        return {
-          ...row,
-          reason:
-            matchedErrors.length > 0
-              ? matchedErrors.join(" | ")
-              : `Cancelled because Product Code(s) ${uniqueFailedCodes.join(", ")} in Order ${orderNo} failed`,
-        };
-      }),
-    };
-  }
+  //       return {
+  //         ...row,
+  //         reason:
+  //           matchedErrors.length > 0
+  //             ? matchedErrors.join(" | ")
+  //             : `Cancelled because Product Code(s) ${uniqueFailedCodes.join(", ")} in Order ${orderNo} failed`,
+  //       };
+  //     }),
+  //   };
+  // }
 
   if (!lineItems.length) {
     throw {
@@ -464,7 +464,10 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     createdOrder.updatedAt = orderDate;
   }
 
-  return createdOrder;
+  return {
+    order: createdOrder,
+    validationErrors,
+  };
 };
 
 const importSalesOrder = asyncHandler(async (req, res) => {
@@ -607,7 +610,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           };
         }
 
-        const order = await createImportedOrder({
+        const { order, validationErrors } = await createImportedOrder({
           distributor,
           rows: group.rows,
           orderMeta: {
@@ -627,6 +630,14 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           lineItems: order.lineItems.length,
           message: "Sales order created",
         });
+        if (validationErrors.length) {
+          validationErrors.forEach((item) => {
+            errorCsv.push({
+              ...item.originalRow,
+              Reason: item.reason,
+            });
+          });
+        }
       } catch (error) {
         errors.push({
           salesmanCode: group.salesmanCode,
