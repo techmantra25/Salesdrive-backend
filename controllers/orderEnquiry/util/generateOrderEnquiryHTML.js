@@ -348,14 +348,10 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                         <td style="font-size:7.5px;">Add/City/Pincode</td>
                         <td style="font-size:7.5px;">: ${escapeHtml(retailer?.address1 || "")}${retailer?.city ? ` / ${escapeHtml(retailer.city)}` : ""}${retailer?.pin ? ` / ${escapeHtml(retailer.pin)}` : ""}</td>
                       </tr>
-                      ${
-                        orderEnquiry?.shipToAddress
-                          ? `<tr>
+                      <tr>
                         <td style="font-size:7.5px;">Ship To Address</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry.shipToAddress)}</td>
-                      </tr>`
-                          : ""
-                      }
+                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry?.shipToAddress || "")}</td>
+                      </tr>
                       <tr>
                         <td style="font-size:7.5px;">Phone No.</td>
                         <td style="font-size:7.5px;">: <strong>${escapeHtml(retailer?.mobile1 || "")}</strong></td>
@@ -380,53 +376,30 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                         <td style="width: 38%; font-size:7.5px;">Quotation No.</td>
                         <td style="font-size:7.5px;">: <strong>${escapeHtml(orderEnquiry?.enquiryNo || "")}</strong></td>
                       </tr>
-                      ${
-                        convertedOrderNo
-                          ? `<tr>
-                        <td style="font-size:7.5px;">Converted Order No.</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(convertedOrderNo)}</td>
-                      </tr>`
-                          : ""
-                      }
+
                       <tr>
                         <td style="font-size:7.5px;">Quotation Date</td>
                         <td style="font-size:7.5px;">: ${escapeHtml(formatDate(orderEnquiry?.createdAt))}</td>
                       </tr>
-                      ${
-                        orderEnquiry?.validity
-                          ? `<tr>
+                      <tr>
                         <td style="font-size:7.5px;">Validity</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry.validity)}</td>
-                      </tr>`
-                          : ""
-                      }
+                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry?.validity || "")}</td>
+                      </tr>
                     
                    
-                      ${
-                        orderEnquiry?.deliverySchedule
-                          ? `<tr>
+                      <tr>
                         <td style="font-size:7.5px;">Delivery Schedule</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry.deliverySchedule)}</td>
-                      </tr>`
-                          : ""
-                      }
-                      ${
-                        orderEnquiry?.deliveryTerms
-                          ? `<tr>
+                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry?.deliverySchedule || "")}</td>
+                      </tr>
+                      <tr>
                         <td style="font-size:7.5px;">Delivery Terms</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry.deliveryTerms)}</td>
-                      </tr>`
-                          : ""
-                      }
+                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry?.deliveryTerms || "")}</td>
+                      </tr>
                      
-                      ${
-                        orderEnquiry?.paymentTerms
-                          ? `<tr>
+                      <tr>
                         <td style="font-size:7.5px;">Payment Terms</td>
-                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry.paymentTerms)}</td>
-                      </tr>`
-                          : ""
-                      }
+                        <td style="font-size:7.5px;">: ${escapeHtml(orderEnquiry?.paymentTerms || "")}</td>
+                      </tr>
                       <tr>
                         <td style="font-size:7.5px;">Sales Man</td>
                         <td style="font-size:7.5px;">: ${escapeHtml(salesman?.name || "")}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
@@ -467,7 +440,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                 .map((item, index) => {
                   const product = item?.product || {};
                   const mrp = Number(
-                    item?.price?.mrp || item?.price?.rlp_price || 0,
+                    item?.price?.mrp_price || item?.price?.rlp_price || 0,
                   );
                   const discPct = Number(item?.totalDiscountPercentage || 0);
 
@@ -477,10 +450,10 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                 <td class="text-left" style="font-size:7px;">${escapeHtml(product?.name || "")}</td>
                 <td class="text-center" style="font-size:7px;">${escapeHtml(product?.product_hsn_code || "")}</td>
                 <td class="text-center" style="font-size:7px;">${Number(item?.oderQty) || 0}</td>
-                <td class="text-right" style="font-size:7px;">${escapeHtml(formatCurrency(mrp))}</td>
+                <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(mrp))}</td>
                 <td class="text-center" style="font-size:7px;">${discPct > 0 ? discPct.toFixed(2) + "%" : "0.00%"}</td>
-                <td class="text-right" style="font-size:7px;">${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
-                 <td class="text-right" style="font-size:7px;">${escapeHtml(formatCurrency(item?.netAmt))}</td>
+                <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
+                 <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(item?.netAmt))}</td>
               </tr>`;
                 })
                 .join("")}
