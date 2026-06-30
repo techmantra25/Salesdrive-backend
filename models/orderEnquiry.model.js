@@ -243,7 +243,7 @@ const OrderEnquirySchema = new mongoose.Schema(
     ],
     status: {
       type: String,
-      enum: ["Pending", "Converted", "Cancelled"],
+      enum: ["Pending", "Converted", "Closed"],
       default: "Pending",
     },
     remark: {
