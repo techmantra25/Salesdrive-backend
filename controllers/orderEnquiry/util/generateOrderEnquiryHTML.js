@@ -311,10 +311,10 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
            <div style="flex:0 0 105px; height:105px; display:flex; align-items:center; justify-content:center;">
   <img
     src="${escapeHtml(
-      options?.logoBase64 ||
-      options?.logoUrl ||
-      "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
-    )}"
+    options?.logoBase64 ||
+    options?.logoUrl ||
+    "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+  )}"
     alt="Company Logo"
     style="width:100%; height:100%; object-fit:contain; display:block;"
     onerror="this.style.display='none'"
