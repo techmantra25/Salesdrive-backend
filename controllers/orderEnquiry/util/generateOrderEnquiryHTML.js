@@ -135,6 +135,21 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
       `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" style="height:70px; width:90px; object-fit:contain;" onerror="this.style.display='none'">`,
   ).join("\n            ");
 
+
+  const specialDiscount = validLineItems.reduce((total, item) => {
+  const gross = Number(item?.grossAmt) || 0;
+  const disc = Number(item?.distributorDisc) || 0;
+
+  let discountAmount = 0;
+
+  if (item?.distributorDiscUnit === "percent") {
+    discountAmount = (gross * disc) / 100;
+  } else {
+    discountAmount = disc;
+  }
+
+  return total + discountAmount;
+}, 0);
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -606,7 +621,7 @@ ${distributor?.email ? `Email : ${escapeHtml(distributor.email)}` : ""}${distrib
                       <tr>
                         <td style="font-size:9px;">Special Discount</td>
                         <td class="text-center" style="font-size:9px;">:</td>
-                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.distributorDiscount || totalDiscountAmount || 0))}</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(specialDiscount))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:9px;">Freight &amp; Handling Fee</td>
