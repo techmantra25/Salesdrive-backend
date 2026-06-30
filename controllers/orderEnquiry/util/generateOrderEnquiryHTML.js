@@ -64,8 +64,12 @@ const formatAmountInWords = (amount) => {
 // Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
 const CHANNEL_PARTNER_LOGOS = [
   {
+    url:"https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782800853623.png?alt=media",
+    alt: "Ultra Max",
+  },
+  {
     url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720406592.png?alt=media",
-    alt: "GAIL",
+    alt: "TMT BAR",
   },
   {
     url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720435420.png?alt=media",
@@ -73,7 +77,7 @@ const CHANNEL_PARTNER_LOGOS = [
   },
   {
     url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720467231.png?alt=media",
-    alt: "DALIM CEMENT",
+    alt: "DALMIA CEMENT",
   },
 ];
 
@@ -427,12 +431,12 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
               <tr>
                 <th style="width: 3%;">SL</th>
                 <th style="width: 24%; text-align:left;">Item Description</th>
-                <th style="width: 7%;">HSN</th>
-                <th style="width: 5%;">Qty</th>
-                <th style="width: 8%;">MRP</th>
+                <th style="width: 7%; text-align:right;">HSN</th>
+                <th style="width: 5%; text-align:right;">Qty</th>
+                <th style="width: 8%; text-align:right;">MRP</th>
                 <th style="width: 7%;">Disc%</th>
-                <th style="width: 8%;">Basic Price</th>
-                <th style="width: 10%;">Basic Amt</th>
+                <th style="width: 8%; text-align:right;">Basic Price</th>
+                <th style="width: 10%; text-align:right;">Basic Amt</th>
               </tr>
             </thead>
             <tbody>
@@ -448,12 +452,12 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
               <tr>
                 <td class="text-center" style="font-size:7px;">${index + 1}</td>
                 <td class="text-left" style="font-size:7px;">${escapeHtml(product?.name || "")}</td>
-                <td class="text-center" style="font-size:7px;">${escapeHtml(product?.product_hsn_code || "")}</td>
-                <td class="text-center" style="font-size:7px;">${Number(item?.oderQty) || 0}</td>
-                <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(mrp))}</td>
+                <td class="text-right" style="font-size:7px;">${escapeHtml(product?.product_hsn_code || "")}</td>
+                <td class="text-right" style="font-size:7px;">${Number(item?.oderQty) || 0}</td>
+                <td class="text-right" style="font-size:7px;">&#8377;${escapeHtml(formatCurrency(mrp))}</td>
                 <td class="text-center" style="font-size:7px;">${discPct > 0 ? discPct.toFixed(2) + "%" : "0.00%"}</td>
-                <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
-                 <td class="text-center" style="font-size:7px;">${escapeHtml(formatCurrency(item?.netAmt))}</td>
+                <td class="text-right" style="font-size:7px;">&#8377;${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
+                 <td class="text-right" style="font-size:7px;">&#8377;${escapeHtml(formatCurrency(item?.grossAmt || 0))}</td>
               </tr>`;
                 })
                 .join("")}
@@ -516,51 +520,51 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                       <tr>
                         <td style="width:60%; font-size:7.5px;">Gross Amount</td>
                         <td style="width:10%;" class="text-center" style="font-size:7.5px;">:</td>
-                        <td style="width:30%;" class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.grossAmount))}</td>
+                        <td style="width:30%;" class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.grossAmount))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">Special Discount</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.distributorDiscount || totalDiscountAmount || 0))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.distributorDiscount || totalDiscountAmount || 0))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">Freight &amp; Handling Fee</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency((orderEnquiry?.freightCharges || 0) + (orderEnquiry?.handlingCharges || 0)))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency((orderEnquiry?.freightCharges || 0) + (orderEnquiry?.handlingCharges || 0)))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">Taxable Amount</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.taxableAmount))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.taxableAmount))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">CGST</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.cgst))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.cgst))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">SGST</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.sgst))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.sgst))}</td>
                       </tr>
                       ${
                         Number(orderEnquiry?.igst) > 0
                           ? `<tr>
                         <td style="font-size:7.5px;">IGST</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.igst))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.igst))}</td>
                       </tr>`
                           : ""
                       }
                       <tr>
                         <td style="font-size:7.5px;">Invoice Amount</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.invoiceAmount))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.invoiceAmount))}</td>
                       </tr>
                       <tr>
                         <td style="font-size:7.5px;">Round Off Amount</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.roundOffAmount))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.roundOffAmount))}</td>
                       </tr>
                       ${
                         Number(orderEnquiry?.cashDiscount) > 0 ||
@@ -568,7 +572,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                           ? `<tr>
                         <td style="font-size:7.5px;">Cash Discount</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.cashDiscount))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.cashDiscount))}</td>
                       </tr>`
                           : ""
                       }
@@ -577,14 +581,14 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
                           ? `<tr>
                         <td style="font-size:7.5px;">Credit Note Adjustment</td>
                         <td class="text-center" style="font-size:7.5px;">:</td>
-                        <td class="text-right" style="font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.creditAmount))}</td>
+                        <td class="text-right" style="font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.creditAmount))}</td>
                       </tr>`
                           : ""
                       }
                       <tr class="bold border-top-bold" style="font-weight:bold;">
                         <td style="padding-top:4px; font-size:7.5px;">Net Amount</td>
                         <td class="text-center" style="padding-top:4px; font-size:7.5px;">:</td>
-                        <td class="text-right" style="padding-top:4px; font-size:7.5px;">${escapeHtml(formatCurrency(orderEnquiry?.netAmount))}</td>
+                        <td class="text-right" style="padding-top:4px; font-size:7.5px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.netAmount))}</td>
                       </tr>
                     </tbody>
                   </table>
