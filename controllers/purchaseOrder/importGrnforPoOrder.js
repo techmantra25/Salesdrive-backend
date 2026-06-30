@@ -47,14 +47,14 @@ const mergeLineItems = (items) => {
 /**
  * 🔢 Generate GRN Number
  */
-const generateGRNNumber = async (session) => {
+const generateGRNNumber = async () => {
   const year = new Date().getFullYear().toString().slice(-2);
 
   const lastInvoice = await Invoice.findOne({
     grnNumber: { $regex: `^GRN-${year}` },
   })
     .sort({ createdAt: -1 })
-    .session(session);
+    
 
   let nextSequence = 1;
 
@@ -70,15 +70,14 @@ const generateGRNNumber = async (session) => {
 /**
  * 🔥 Generate Invoice Number
  */
-const generateInvoiceNumber = async (session) => {
+const generateInvoiceNumber = async () => {
   const year = new Date().getFullYear().toString().slice(-2);
 
   const lastInvoice = await Invoice.findOne({
     invoiceNo: { $regex: `^INV-${year}` },
   })
     .sort({ createdAt: -1 })
-    .session(session);
-
+    
   let nextSequence = 1;
 
   if (lastInvoice?.invoiceNo) {
@@ -95,7 +94,6 @@ const generateInvoiceNumber = async (session) => {
  */
 const processInvoiceAdjustments = async ({
   invoice,
-  session,
 }) => {
 
   const distributorId = invoice.distributorId;
@@ -115,7 +113,7 @@ const processInvoiceAdjustments = async ({
       invoiceId: invoice._id,
       invoiceLineItemId: item._id,
       transactionType: "invoice",
-    }).session(session);
+    });
 
     if (existingTxn) {
       continue;
@@ -126,7 +124,7 @@ const processInvoiceAdjustments = async ({
      */
     const product = await Product.findById(
       item.product
-    ).session(session);
+    );
 
     if (!product) {
       throw new Error("Product not found");
@@ -140,8 +138,7 @@ const processInvoiceAdjustments = async ({
       distributorId,
       status: true,
     })
-      .sort({ createdAt: -1 })
-      .session(session);
+      .sort({ createdAt: -1 });
 
     if (!priceEntry) {
       priceEntry = await Price.findOne({
@@ -149,8 +146,7 @@ const processInvoiceAdjustments = async ({
         price_type: "national",
         status: true,
       })
-        .sort({ createdAt: -1 })
-        .session(session);
+        .sort({ createdAt: -1 });
     }
 
     if (!priceEntry) {
@@ -192,7 +188,7 @@ const processInvoiceAdjustments = async ({
       productId: item.product,
       distributorId,
       godownType: "main",
-    }).session(session);
+    });
 
     if (!inventory) {
 
@@ -228,7 +224,7 @@ const processInvoiceAdjustments = async ({
     inventory.totalStockamtRlp +=
       rlpbyPcs * Number(item.receivedQty || 0);
 
-    await inventory.save({ session });
+    await inventory.save();
 
     /**
      * ✅ Transaction
@@ -252,7 +248,6 @@ const processInvoiceAdjustments = async ({
           billLineItemId: null,
         },
       ],
-      { session }
     );
 
     /**
@@ -281,7 +276,7 @@ const processInvoiceAdjustments = async ({
 
   const distributor = await Distributor.findById(
     distributorId
-  ).session(session);
+  );
 
   if (
     distributor &&
@@ -293,7 +288,7 @@ const processInvoiceAdjustments = async ({
         invoiceId: invoice._id,
         transactionFor: "GRN",
         status: "Success",
-      }).session(session);
+      });
 
     if (!existingGRN) {
 
@@ -303,7 +298,7 @@ const processInvoiceAdjustments = async ({
 
         const product = await Product.findById(
           li.product
-        ).session(session);
+        );
 
         const basePoint = Number(
           li.usedBasePoint ??
@@ -324,8 +319,7 @@ const processInvoiceAdjustments = async ({
           await DistributorTransaction.findOne({
             distributorId,
           })
-            .sort({ createdAt: -1 })
-            .session(session);
+            .sort({ createdAt: -1 });
 
         const balance = latestTxn
           ? Number(latestTxn.balance || 0) +
@@ -345,7 +339,6 @@ const processInvoiceAdjustments = async ({
               remark: `Reward points for GRN ${invoice.grnNumber} with invoice no ${invoice.invoiceNo}`,
             },
           ],
-          { session }
         );
       }
     }
@@ -382,9 +375,7 @@ const generateGRNForPO = async ({
   grnDate,
   vehicleNumber,
 }) => {
-  const session = await mongoose.startSession();
 
-  session.startTransaction();
 
   try {
     lineItems = mergeLineItems(lineItems);
@@ -392,7 +383,7 @@ const generateGRNForPO = async ({
     // 📦 Existing invoices
     const invoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
-    }).session(session);
+    });
 
     const receivedMap = {};
 
@@ -406,7 +397,7 @@ const generateGRNForPO = async ({
       }
     }
 
-    const grnNumber = await generateGRNNumber(session);
+    const grnNumber = await generateGRNNumber();
 
     let totalGross = 0;
     let totalTaxable = 0;
@@ -427,7 +418,7 @@ const generateGRNForPO = async ({
 
       const product = await Product.findOne({
         product_code: cleanCode,
-      }).session(session);
+      });
 
       /**
        * ❌ Product not found
@@ -474,8 +465,7 @@ const generateGRNForPO = async ({
         distributorId: purchaseOrder.distributorId,
         status: true,
       })
-        .sort({ createdAt: -1 })
-        .session(session);
+        .sort({ createdAt: -1 });
 
       if (!priceDoc) {
         priceDoc = await Price.findOne({
@@ -483,8 +473,7 @@ const generateGRNForPO = async ({
           price_type: "national",
           status: true,
         })
-          .sort({ createdAt: -1 })
-          .session(session);
+          .sort({ createdAt: -1 });
       }
 
       if (!priceDoc) {
@@ -624,7 +613,7 @@ const generateGRNForPO = async ({
     if (invoiceNo) {
       const existingInvoice = await Invoice.findOne({
         invoiceNo: String(invoiceNo).trim(),
-      }).session(session);
+      });
 
       if (existingInvoice) {
         throw {
@@ -683,7 +672,7 @@ const generateGRNForPO = async ({
 
           invoiceNo:
             invoiceNo ||
-            (await generateInvoiceNumber(session)),
+            (await generateInvoiceNumber()),
 
           date: invoiceDate
             ? moment(invoiceDate, "DD-MM-YYYY")
@@ -739,7 +728,6 @@ const generateGRNForPO = async ({
           },
         },
       ],
-      { session }
     );
 
     /**
@@ -749,7 +737,6 @@ const generateGRNForPO = async ({
  */
     await processInvoiceAdjustments({
       invoice,
-      session,
     });
 
     /**
@@ -760,7 +747,6 @@ const generateGRNForPO = async ({
       {
         $addToSet: { invoiceIds: invoice._id },
       },
-      { session }
     );
 
     /**
@@ -768,7 +754,7 @@ const generateGRNForPO = async ({
      */
     const allInvoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
-    }).session(session);
+    });
 
     const totalReceivedMap = {};
 
@@ -821,12 +807,9 @@ const generateGRNForPO = async ({
       {
         $set: { invoicestatus: status },
       },
-      { session }
     );
 
-    await session.commitTransaction();
 
-    session.endSession();
 
     return {
       message: `GRN created: ${productSummary.join(", ")}${failedProducts.length
@@ -836,9 +819,6 @@ const generateGRNForPO = async ({
       data: invoice,
     };
   } catch (error) {
-    await session.abortTransaction();
-
-    session.endSession();
 
     throw {
       message: error.message || "GRN creation failed",
@@ -855,8 +835,7 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
     const rows = req.body.data;
 
     console.log("Received rows:", rows);
-
-    if (!rows || !Array.isArray(rows) || rows.length === 0) {
+      if (!rows || !Array.isArray(rows) || rows.length === 0) {
       return res.status(400).json({ message: "No data provided" });
     }
 
