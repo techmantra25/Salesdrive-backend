@@ -64,7 +64,7 @@ const formatAmountInWords = (amount) => {
 // Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
 const CHANNEL_PARTNER_LOGOS = [
   {
-    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782800853623.png?alt=media",
+      url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782883585753.png?alt=media",
     alt: "Ultra Max",
   },
   {
@@ -132,7 +132,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
   // Build channel-partner img tags with escaped URLs
   const channelPartnerImgs = CHANNEL_PARTNER_LOGOS.map(
     ({ url, alt }) =>
-      `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" style="height:70px; width:90px; object-fit:contain;" onerror="this.style.display='none'">`,
+      `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" style="height:82px; width:110px; object-fit:contain; transform:scale(1.08);" onerror="this.style.display='none'">`,
   ).join("\n            ");
 
 
@@ -217,6 +217,15 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
             width: 50%;
             padding: 4px 6px;
           }
+            @page {
+  size: A4 portrait;
+  margin: 8mm 10mm;
+
+  @bottom-center {
+    content: "Page " counter(page) " of " counter(pages);
+    font-size: 9px;
+  }
+}
           .items-table th {
             border-right: 1px solid #000;
             border-bottom: 1px solid #000;
