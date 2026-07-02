@@ -81,6 +81,8 @@ const asyncHandler = require("express-async-handler");
 const protect = asyncHandler(async (req, res, next) => {
   const token = req.cookies.token || req.cookies.DBToken;
 
+  
+
   if (!token) {
     return res.status(401).json({
       error: true,

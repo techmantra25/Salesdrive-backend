@@ -49,10 +49,12 @@ const { confirmPurchaseGRNeOrder } = require("../../controllers/purchaseOrder/co
 
 const { addSoNumberToOrder } = require("../../controllers/purchaseOrder/addSoNumberPurchaseOrdre.js");
 const { importGrnforPoOrder } = require("../../controllers/purchaseOrder/importGrnforPoOrder.js");
+const {bulkCreatePurchaseOrders} = require("../../controllers/purchaseOrder/bulkCreatePurchaseOrders.js");
 
 
 const purchaseOrderRoutes = express.Router();
 
+purchaseOrderRoutes.route("/bulk-create-purchase-orders").post(protectDisRoute, bulkCreatePurchaseOrders);
 purchaseOrderRoutes.route("/create-purchase-order").post(protect, createPurchaseOrder);
 
 purchaseOrderRoutes
