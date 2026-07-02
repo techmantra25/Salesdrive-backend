@@ -15,7 +15,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
-
+manualDate,
       shipToAddress,
       validity,
       deliveryTerms,
@@ -93,6 +93,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
+      manualDate: manualDate ? new Date(manualDate) : new Date(),
       shipToAddress,
       validity,
       deliveryTerms,

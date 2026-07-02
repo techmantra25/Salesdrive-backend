@@ -121,6 +121,10 @@ const OrderEnquirySchema = new mongoose.Schema(
       enum: ["Cash", "Credit"],
       required: true,
     },
+    manualDate: {
+      type: Date,
+      default: Date.now,
+    },
     lineItems: [LineItemSchema],
     totalLines: {
       type: Number,
@@ -128,32 +132,32 @@ const OrderEnquirySchema = new mongoose.Schema(
     },
     shipToAddress: {
       type: String,
-     
+
     },
 
     validity: {
       type: String,
-   
+
     },
 
     deliveryTerms: {
       type: String,
-    
+
     },
 
     deliverySchedule: {
       type: String,
-     
+
     },
 
     paymentTerms: {
       type: String,
-    
+
     },
 
     remarks: {
       type: String,
-     
+
     },
     totalBasePoints: {
       type: Number,
