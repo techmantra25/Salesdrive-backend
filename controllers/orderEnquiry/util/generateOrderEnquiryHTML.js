@@ -775,6 +775,7 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
       </head>
       <body>
         ${pagesHtml}
+        
       </body>
     </html>
   `;
