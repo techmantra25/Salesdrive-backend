@@ -75,11 +75,21 @@ const parseOrderDate = (value) => {
       "M/D/YYYY",
       moment.ISO_8601,
     ],
-    true,
+    true
   );
 
   if (!parsed.isValid()) return null;
-  return parsed.startOf("day").toDate();
+
+  // Keep the current time
+  const now = moment();
+
+  parsed
+    .hour(now.hour())
+    .minute(now.minute())
+    .second(now.second())
+    .millisecond(now.millisecond());
+
+  return parsed.toDate();
 };
 
 const isPriceValid = (price) => {
