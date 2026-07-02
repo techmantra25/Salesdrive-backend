@@ -36,11 +36,13 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error("Order Enquiry not found");
     }
+    const responseData = orderEnquiry.toObject();
 
+    responseData.createdAt = responseData.manualDate;
     return res.status(200).json({
       status: 200,
       message: "Order Enquiry details retrieved successfully",
-      data: orderEnquiry,
+      data: responseData,
     });
   } catch (error) {
     res.status(400);

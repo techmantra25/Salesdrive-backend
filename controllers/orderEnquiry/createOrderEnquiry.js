@@ -84,6 +84,23 @@ manualDate,
 
     const enquiryNo = await enquiryNumberGenerator("IPPL");
 
+
+let finalManualDate = new Date();
+
+if (manualDate) {
+  const selectedDate = new Date(manualDate);
+  const now = new Date();
+
+  selectedDate.setHours(
+    now.getHours(),
+    now.getMinutes(),
+    now.getSeconds(),
+    now.getMilliseconds()
+  );
+
+  finalManualDate = selectedDate;
+}
+
     const savedOrderEnquiry = await OrderEnquiry.create({
       distributorId,
       enquiryNo,
@@ -93,7 +110,7 @@ manualDate,
       orderType,
       orderSource,
       paymentMode,
-      manualDate: manualDate ? new Date(manualDate) : new Date(),
+     manualDate: finalManualDate,
       shipToAddress,
       validity,
       deliveryTerms,
