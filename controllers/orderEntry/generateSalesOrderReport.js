@@ -35,6 +35,9 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       paymentMode,
       fromDate,
       toDate,
+      salesmanName,
+      routeId,
+      retailerId,
     } = req.query;
 
     const filter = {};
@@ -42,7 +45,23 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
     if (distributorIds) {
       filter.distributorId = { $in: distributorIds.split(",") };
     }
+    if (salesmanName) {
+      filter.salesmanName = {
+        $in: salesmanName.split(","),
+      };
+    }
 
+    if (routeId) {
+      filter.routeId = {
+        $in: routeId.split(","),
+      };
+    }
+
+    if (retailerId) {
+      filter.retailerId = {
+        $in: retailerId.split(","),
+      };
+    }
     if (search) {
       filter.orderNo = new RegExp(search, "i");
     }
