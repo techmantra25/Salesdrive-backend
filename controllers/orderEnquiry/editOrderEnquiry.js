@@ -128,7 +128,22 @@ const editOrderEnquiry = asyncHandler(async (req, res) => {
         },
       );
     }
+    // Normalize manual date
+    if (newOrderEnquiryData.manualDate) {
+      const selectedDate = new Date(newOrderEnquiryData.manualDate);
+      const now = new Date();
 
+      selectedDate.setUTCHours(
+        now.getUTCHours(),
+        now.getUTCMinutes(),
+        now.getUTCSeconds(),
+        now.getUTCMilliseconds()
+      );
+
+      newOrderEnquiryData.manualDate = selectedDate;
+
+      console.log("Saving:", selectedDate);
+    }
     const updatedOrderEnquiry = await OrderEnquiry.findOneAndUpdate(
       { _id: id },
       { $set: newOrderEnquiryData },
