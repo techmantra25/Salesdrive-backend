@@ -14,6 +14,8 @@ const FormData = require("form-data");
 const bcrypt = require("bcryptjs");
 const generateToken = require("../utils/generateToken.js");
 const sendEmail = require("../utils/sendEmail.js");
+const State = require("../models/state.model");
+const Region = require("../models/region.model");
 const Distributor = require("../models/distributor.model.js");
 
 // Employee login
@@ -363,6 +365,20 @@ const updateEmployee = asyncHandler(async (req, res) => {
       stateId,
     } = req.body;
 
+    let finalStateId = employee.stateId;
+let finalZoneId = employee.zoneId;
+
+if (stateId) {
+  const selectedState = await State.findById(stateId);
+
+  if (!selectedState) {
+    res.status(400);
+    throw new Error("Invalid state selected");
+  }
+
+  finalStateId = selectedState._id;
+  finalZoneId = selectedState.zoneId;
+}
     // if (empId === "") {
     //   res.status(400);
     //   throw new Error("Employee ID cannot be empty");
@@ -421,19 +437,34 @@ const updateEmployee = asyncHandler(async (req, res) => {
     //   ];
     // }
 
+let finalRegionId = employee.regionId || [];
 
-    let finalRegionId = employee.regionId || [];
-    if (regionId !== undefined) {
-      if (Array.isArray(regionId) && regionId.length > 0) {
-        finalRegionId = regionId.map((id) => new mongoose.Types.ObjectId(id));
-        //replace region with new region array
-      }
-      else {
-        //clear regions if no regions are added 
-        finalRegionId = [];
-      }
+if (regionId !== undefined) {
+
+  if (Array.isArray(regionId) && regionId.length > 0) {
+
+    const validRegions = await Region.find({
+      _id: {
+        $in: regionId.map(
+          (id) => new mongoose.Types.ObjectId(id)
+        ),
+      },
+      stateId: finalStateId,
+    });
+
+    if (validRegions.length !== regionId.length) {
+      res.status(400);
+      throw new Error(
+        "One or more selected regions do not belong to the selected state."
+      );
     }
 
+    finalRegionId = validRegions.map(r => r._id);
+
+  } else {
+    finalRegionId = [];
+  }
+}
     let finalBeatId = employee.beatId || [];
     if (regionId !== undefined) {
       const existingRegionIds = (employee.regionId || []).map((id) => id.toString());
@@ -470,6 +501,28 @@ const updateEmployee = asyncHandler(async (req, res) => {
     let newDistributorMappingHistory = [...(employee.distributorMappingHistory || [])];
 
     if (distributorId !== undefined) {
+
+      if (Array.isArray(distributorId) && distributorId.length > 0) {
+
+  const validDistributors = await Distributor.find({
+    _id: {
+      $in: distributorId.map(
+        (id) => new mongoose.Types.ObjectId(id)
+      ),
+    },
+    stateId: finalStateId,
+    regionId: {
+      $in: finalRegionId,
+    },
+  });
+
+  if (validDistributors.length !== distributorId.length) {
+    res.status(400);
+    throw new Error(
+      "One or more distributors do not belong to the selected State/Region."
+    );
+  }
+}
       const existingDistributorIds = finalDistributorId.map((id) => id.toString());
       const newDistributorIds = Array.isArray(distributorId)
         ? distributorId.map((id) => id.toString())
@@ -536,7 +589,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
         name: name || employee.name,
         empId: empId || employee.empId,
         desgId: desgId || employee.desgId,
-        zoneId: zoneId || employee.zoneId,
+      zoneId: finalZoneId,
         regionId: finalRegionId,
         brandId: brandId || employee.brandId,
         area: area || employee.area,
@@ -553,7 +606,7 @@ const updateEmployee = asyncHandler(async (req, res) => {
         headquarter: headquarter || employee.headquarter,
         email: email || employee.email,
         tenure: tenure ?? employee.tenure,
-        stateId: stateId || employee.stateId,
+        stateId: finalStateId,
         beatId: finalBeatId, // ADD THIS LINE
       },
       { new: true }
