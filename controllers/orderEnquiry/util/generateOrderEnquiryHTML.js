@@ -81,7 +81,74 @@ const CHANNEL_PARTNER_LOGOS = [
   },
 ];
 
-const ROWS_PER_PAGE = 20;
+// ---------------------------------------------------------------------------
+// PAGINATION CAPACITY
+// ---------------------------------------------------------------------------
+// The old code used one fixed ROWS_PER_PAGE (20) for every page, and then
+// force-padded every page's table with blank "-" rows up to that count.
+// That caused two separate sources of wasted space:
+//   1. Pages 1..N-1 (no summary/terms/signature/footer block) actually have
+//      room for far more than 20 rows before the table hits the bottom of
+//      the printable area, so a lot of the page below row 20 sat empty.
+//   2. The last page carries a lot of extra fixed-height content (E&O.E /
+//      amount-in-words / bank+UPI box, terms & conditions, note &
+//      signature, channel-partner logos, page footer) — so it can fit far
+//      fewer item rows — yet it was still padded out to the full 20 with
+//      blank rows, adding a wall of empty "-" rows for no reason.
+//
+// Fix: use two capacities instead of one, and don't force-pad rows at all.
+//   - REGULAR_PAGE_ROWS: max item rows on a page that does NOT carry the
+//     summary/terms/signature/footer block (i.e. any page except the last).
+//   - LAST_PAGE_ROWS: max item rows on the page that DOES carry that block.
+// Both numbers are estimates based on ~9px row height inside an A4 page
+// with 8mm/10mm margins. If real printed output still overflows a page or
+// leaves a visible gap, nudge these two constants — nothing else needs to
+// change.
+const REGULAR_PAGE_ROWS = 40;
+const LAST_PAGE_ROWS_BASE = 20;
+const LAST_PAGE_ROWS_MIN = 20;
+// Terms & conditions add variable-height content to the last page too, so
+// shave a couple of rows off its budget for every few terms listed — but
+// never let it drop below LAST_PAGE_ROWS_MIN. So the row budget for any
+// page is: minimum 20 rows, maximum however many fit on that page
+// (REGULAR_PAGE_ROWS for non-last pages, shrinking only for the last page
+// if terms & conditions eat into the space, and never below 20).
+const getLastPageRowBudget = (termConditionsCount) =>
+  Math.max(
+    LAST_PAGE_ROWS_MIN,
+    LAST_PAGE_ROWS_BASE - Math.ceil(termConditionsCount / 2),
+  );
+
+// Splits line items into pages using the two capacities above. Unlike the
+// old fixed-size chunking, this only creates a new page once the current
+// one is actually full, and the final page is only as big as the content
+// that remains — no forced blank rows.
+const paginateLineItems = (items, termConditionsCount) => {
+  const lastPageRows = getLastPageRowBudget(termConditionsCount);
+
+  if (items.length === 0) {
+    return [[]];
+  }
+
+  const pages = [];
+  let remaining = items.slice();
+
+  while (remaining.length > 0) {
+    if (remaining.length <= lastPageRows) {
+      // Everything left fits on one page alongside the summary block —
+      // make it the last page and stop.
+      pages.push(remaining);
+      remaining = [];
+    } else {
+      // More left than the last page could ever hold, so this is a
+      // regular (non-last) page — fill it up to its larger capacity.
+      pages.push(remaining.slice(0, REGULAR_PAGE_ROWS));
+      remaining = remaining.slice(REGULAR_PAGE_ROWS);
+    }
+  }
+
+  return pages;
+};
 
 // ---------------------------------------------------------------------------
 // Small render helpers — each one returns a chunk of markup. Splitting things
@@ -227,7 +294,28 @@ const renderCustomerAndQuotationDetails = (distributor, retailer, orderEnquiry) 
             With reference to your above enquiry we are quoting our lowest rates alongwith estimation as under which we hope will meet your approval and we shall be favoured with valued order.
           </div>`;
 
-const renderItemsTable = (itemsForPage, startIndex, emptyRowCount) => `
+// Minimum number of rows the items table should always show on any page,
+// regardless of how many real line items landed on that page. If a page
+// has fewer real items than this, the shortfall is padded out with blank
+// "-" rows so the table never looks sparse/collapsed to just a couple rows.
+const MIN_TABLE_ROWS = 20;
+
+const renderBlankItemsRow = () => `
+              <tr>
+                <td class="text-center" style="font-size:9px;">-</td>
+                <td class="text-left" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-center" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+              </tr>`;
+
+const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) => {
+  const blankRowsNeeded = Math.max(0, minRows - itemsForPage.length);
+
+  return `
           <!-- LINE ITEMS TABLE -->
           <table class="items-table">
             <thead>
@@ -264,18 +352,10 @@ const renderItemsTable = (itemsForPage, startIndex, emptyRowCount) => `
               </tr>`;
                 })
                 .join("")}
-              ${Array.from({ length: Math.max(0, emptyRowCount) })
-                .map(
-                  () => `
-              <tr>
-                <td class="text-center" style="font-size:9px;">-</td>
-                <td></td><td></td><td></td><td></td>
-                <td></td><td></td><td></td>
-              </tr>`,
-                )
-                .join("")}
+              ${Array.from({ length: blankRowsNeeded }, renderBlankItemsRow).join("")}
             </tbody>
           </table>`;
+};
 
 const renderSummarySection = (
   orderEnquiry,
@@ -583,34 +663,28 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
   }, 0);
 
   // ---------------------------------------------------------------------
-  // Split line items into pages of ROWS_PER_PAGE. Every page (including
-  // page 1) gets the exact same header / customer-details / table-head
-  // markup — only the item rows differ. If there are zero items we still
-  // render a single page with all empty rows, same as before.
+  // Split line items into pages dynamically (see paginateLineItems above).
+  // Regular pages fill up to REGULAR_PAGE_ROWS; the final page — which also
+  // carries the summary/terms/signature/footer block — only takes as many
+  // rows as fit alongside that content. No blank "-" filler rows are added
+  // anymore, so tables end where the real data ends instead of stretching
+  // out to a fixed row count.
   // ---------------------------------------------------------------------
-  const pages = [];
-  if (validLineItems.length === 0) {
-    pages.push([]);
-  } else {
-    for (let i = 0; i < validLineItems.length; i += ROWS_PER_PAGE) {
-      pages.push(validLineItems.slice(i, i + ROWS_PER_PAGE));
-    }
-  }
+  const pages = paginateLineItems(validLineItems, termConditions.length);
   const totalPages = pages.length;
 
   const pagesHtml = pages
     .map((itemsForPage, pageIndex) => {
       const isLastPage = pageIndex === totalPages - 1;
-      const startIndex = pageIndex * ROWS_PER_PAGE;
-      // Pad every page's table up to ROWS_PER_PAGE rows so each printed
-      // page looks visually identical/full, same as the original layout.
-      const emptyRowCount = ROWS_PER_PAGE - itemsForPage.length;
+      const startIndex = pages
+        .slice(0, pageIndex)
+        .reduce((sum, p) => sum + p.length, 0);
 
       return `
         <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
           ${renderCompanyHeader(distributor, options)}
           ${renderCustomerAndQuotationDetails(distributor, retailer, orderEnquiry)}
-          ${renderItemsTable(itemsForPage, startIndex, emptyRowCount)}
+          ${renderItemsTable(itemsForPage, startIndex)}
           ${isLastPage ? renderSummarySection(orderEnquiry, bankData, upiData, specialDiscount) : ""}
           ${isLastPage ? renderTermsSection(termConditions) : ""}
           ${isLastPage ? renderNoteAndSignature(distributor) : ""}
