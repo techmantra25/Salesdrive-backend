@@ -36,6 +36,8 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error("Order Enquiry not found");
     }
+
+
     const responseData = orderEnquiry.toObject();
 
     responseData.createdAt = responseData.manualDate;
