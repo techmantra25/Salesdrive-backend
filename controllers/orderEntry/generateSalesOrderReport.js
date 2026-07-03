@@ -126,7 +126,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       {
         path: "lineItems.product",
         select:
-          "product_code name sku_group_id sku_group__name no_of_pieces_in_a_box brand subBrand cat_id",
+          "product_code name sku_group_id sku_group__name no_of_pieces_in_a_box brand subBrand cat_id product_type",
         populate: [
           { path: "brand", select: "name" },
           { path: "subBrand", select: "name" },
@@ -162,7 +162,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       "Retailer UID",
       "Retailer",
       "Brand",
-      "Sub Brand",
+      "Segment",
+      "Product Type",
       "Category",
       "Group",
       "FG Code",
@@ -228,7 +229,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Retailer UID": order.retailerId?.outletUID || "",
           Retailer: order.retailerId?.outletName || "",
           Brand: item?.product?.brand?.name || "",
-          "Sub Brand": item?.product?.subBrand?.name || "",
+          "Segment": item?.product?.subBrand?.name || "",
+          "Product Type": item?.product?.product_type || "",
           Category: item?.product?.cat_id?.name || "",
           Group: escapeCSVValue(item?.product?.sku_group__name || ""),
           "FG Code": item?.product?.sku_group_id || "",
