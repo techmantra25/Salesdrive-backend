@@ -367,18 +367,28 @@ const updateEmployee = asyncHandler(async (req, res) => {
 
     let finalStateId = employee.stateId;
 let finalZoneId = employee.zoneId;
-
+let finalRegionId = employee.regionId || [];
 if (stateId) {
-  const selectedState = await State.findById(stateId);
+ const selectedState = await State.findById(stateId);
 
-  if (!selectedState) {
-    res.status(400);
-    throw new Error("Invalid state selected");
-  }
-
-  finalStateId = selectedState._id;
-  finalZoneId = selectedState.zoneId;
+if (!selectedState) {
+  res.status(400);
+  throw new Error("Invalid state selected");
 }
+
+const mappedRegions = await Region.find({
+  stateId: selectedState._id,
+}).select("_id");
+
+finalRegionId = mappedRegions.map((r) => r._id);
+
+finalStateId = selectedState._id;
+finalZoneId = selectedState.zoneId;
+}
+
+
+
+
     // if (empId === "") {
     //   res.status(400);
     //   throw new Error("Employee ID cannot be empty");
@@ -437,40 +447,14 @@ if (stateId) {
     //   ];
     // }
 
-let finalRegionId = employee.regionId || [];
 
-if (regionId !== undefined) {
 
-  if (Array.isArray(regionId) && regionId.length > 0) {
 
-    const validRegions = await Region.find({
-      _id: {
-        $in: regionId.map(
-          (id) => new mongoose.Types.ObjectId(id)
-        ),
-      },
-      stateId: finalStateId,
-    });
 
-    if (validRegions.length !== regionId.length) {
-      res.status(400);
-      throw new Error(
-        "One or more selected regions do not belong to the selected state."
-      );
-    }
-
-    finalRegionId = validRegions.map(r => r._id);
-
-  } else {
-    finalRegionId = [];
-  }
-}
     let finalBeatId = employee.beatId || [];
-    if (regionId !== undefined) {
+   if (stateId) {
       const existingRegionIds = (employee.regionId || []).map((id) => id.toString());
-      const newRegionIds = Array.isArray(regionId)
-        ? regionId.map((id) => id.toString())
-        : [];
+     const newRegionIds = finalRegionId.map((id) => id.toString());
 
       // Find removed regions
       const removedRegionIds = existingRegionIds.filter(
@@ -584,7 +568,9 @@ if (regionId !== undefined) {
 
     // Update employee details in the database
     const updatedEmployee = await Employee.findByIdAndUpdate(
+      
       id,
+      
       {
         name: name || employee.name,
         empId: empId || employee.empId,
@@ -611,6 +597,10 @@ if (regionId !== undefined) {
       },
       { new: true }
     );
+    console.log("Saved Employee");
+console.log(updatedEmployee.stateId);
+console.log(updatedEmployee.zoneId);
+console.log(updatedEmployee.regionId);
 
     return res.status(200).json({
       status: 200,
