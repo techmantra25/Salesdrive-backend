@@ -30,7 +30,7 @@ const editOrderEntry = asyncHandler(async (req, res) => {
         netAmount,
         totalBasePoints,
         totalLines,
-
+remark,
         freightCharges,
         handlingCharges,
     } = req.body;
@@ -413,6 +413,8 @@ const editOrderEntry = asyncHandler(async (req, res) => {
 
     existingOrder.netAmount =
         Number(calculatedNetAmount.toFixed(2));
+        
+        existingOrder.remark = remark || "";
     // ==================================================
     // SAVE
     // ==================================================
