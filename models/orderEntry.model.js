@@ -9,7 +9,7 @@ const LineItemSchema = new mongoose.Schema({
   uom: {
     type: String,
     enum: {
-      values: ["pcs", "bndl", "box", "coil","packet"],
+      values: ["pcs", "bndl", "box", "coil", "packet"],
       message: "Values allowed pcs/box/bndl/coil/packet",
     },
   },

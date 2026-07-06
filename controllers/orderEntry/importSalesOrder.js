@@ -448,6 +448,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     orderSource: "Distributor",
     paymentMode: orderMeta.paymentMode,
     lineItems,
+    remark: orderMeta.remark || "",
     totalLines: lineItems.length,
     totalBasePoints,
     grossAmount: total("grossAmt"),
@@ -519,6 +520,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const netAmount = safeOptionalPositiveNumber(
         getFirstValue(row, ["Net Amt ( Incl. GST)"]),
       );
+      const remark = String(getFirstValue(row, ["Remark"])).trim();
       const specialDiscount = undefined;
 
       if (!salesmanCode || !retailerCode || !retailerName || !productCode) {
@@ -557,6 +559,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         specialDiscount,
         retailerName,
         netAmount,
+        remark,
         originalRow: row,
       });
     }
@@ -630,6 +633,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
             orderDate: group.orderDate,
             orderType: group.orderType,
             paymentMode: group.paymentMode,
+            remark: group.rows[0]?.remark || "",
           },
         });
 
