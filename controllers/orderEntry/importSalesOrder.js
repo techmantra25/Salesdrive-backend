@@ -211,6 +211,16 @@ const buildLineItem = ({
     grossAmt * (distributorDiscountPercent / 100),
   );
   const taxableAmt = toTwoDecimal(grossAmt - distributorDiscount);
+  const mrpPrice = safeNumber(price.mrp_price);
+
+  const totalDiscountPercentage =
+    mrpPrice > 0
+      ? toTwoDecimal(((mrpPrice - effectivePrice) / mrpPrice) * 100)
+      : 0;
+
+  const totalDiscountAmount = toTwoDecimal(
+    (mrpPrice - effectivePrice) * qty
+  );
   const taxRate = getApplicableTaxRate({ product, taxableAmt, qty });
   const totalCGST = isIgst
     ? 0
@@ -236,6 +246,8 @@ const buildLineItem = ({
     distributorDisc: distributorDiscountPercent,
     distributorDiscUnit: "percent",
     taxableAmt,
+    totalDiscountPercentage,
+    totalDiscountAmount,
     totalCGST,
     totalSGST,
     totalIGST,
