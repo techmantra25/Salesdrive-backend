@@ -471,55 +471,11 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     let outletUID = data.outletUID?.trim();
 
     if (!outletUID) {
-
-      // Get latest outlet UID from Outlet collection
-      const latestOutlet = await Outlet.findOne({
-        outletUID: {
-          $regex: /^RMS-\d+$/
-        }
-      })
-        .sort({ outletUID: -1 })
-        .select("outletUID");
-
-      // Get latest outlet UID from Approved collection
-      const latestApprovedOutlet =
-        await OutletApproved.findOne({
-          outletUID: {
-            $regex: /^RMS-\d+$/
-          }
-        })
-          .sort({ outletUID: -1 })
-          .select("outletUID");
-
-      let highestNumber = 0;
-
-      const extractNumber = (uid) => {
-
-        if (!uid) return 0;
-
-        const parts = uid.split("-");
-
-        return parseInt(parts[1]) || 0;
-      };
-
-      const outletNumber = extractNumber(
-        latestOutlet?.outletUID
-      );
-
-      const approvedNumber = extractNumber(
-        latestApprovedOutlet?.outletUID
-      );
-
-      highestNumber = Math.max(
-        outletNumber,
-        approvedNumber
-      );
-
-      const nextNumber = highestNumber + 1;
-
-      outletUID =
-        `RMS-${String(nextNumber).padStart(4, "0")}`;
+      outletUID = await generateCode("OUT");
     }
+
+
+
 
     const existingOutletUID =
       await Outlet.findOne({
