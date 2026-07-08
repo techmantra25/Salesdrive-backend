@@ -6,6 +6,11 @@ const bcrypt = require("bcryptjs");
 const { CLIENT_URL } = require("../config/server.config.js");
 const sendEmail = require("../utils/sendEmail.js");
 const DbBank = require("../models/dbBank.model");
+// NOTE: filenames assumed to match this codebase's convention
+// (lowerCamelCase.model.js). Update the paths below if your actual
+// State/District model files live somewhere else.
+const State = require("../models/state.model.js");
+const District = require("../models/district.model.js");
 
 const getMe = asyncHandler(async (req, res) => {
   try {
@@ -287,33 +292,132 @@ const logoutDistributor = asyncHandler(async (req, res) => {
   }
 });
 
+// ============================================================
+// SORTING SUPPORT (added)
+// ============================================================
+
+// Whitelist of fields that live directly on the Distributor document.
+// These can be sorted with a plain .sort() call.
+const SORTABLE_FIELDS = {
+  dbCode: "dbCode",
+  name: "name",
+  role: "role",
+  ownerName: "ownerName",
+  email: "email",
+  phone: "phone",
+  address: "address1",
+  city: "city",
+  pincode: "pincode",
+  dayOff: "dayOff",
+  sbu: "sbu",
+  gst_no: "gst_no",
+  pan_no: "pan_no",
+  area: "area",
+  primaryInvoiceType: "primaryInvoiceType",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+  status: "status",
+};
+
+// Populated (referenced) fields — state name, district name — cannot be
+// sorted via .sort() because population happens after the query resolves.
+// These need an aggregation $lookup instead, same pattern as the `beat`
+// sort in paginatedOutletApproved.
+const AGGREGATE_SORT_CONFIG = {
+  state: { refModel: State, localField: "stateId" },
+  district: { refModel: District, localField: "district" },
+};
+
+// Shared populate list used by every path that returns full distributor
+// docs, so the aggregation-sort path and the normal path stay in sync.
+const DISTRIBUTOR_POPULATE = [
+  { path: "createdBy", select: "" },
+  { path: "regionId", select: "" },
+  { path: "stateId", select: "" },
+  { path: "district", select: "" },
+  { path: "brandId", select: "" },
+];
+
+const getSortDirection = (sortOrder) =>
+  String(sortOrder).toLowerCase() === "desc" ? -1 : 1;
+
+const fetchPopulatedSortedIds = async (
+  matchQuery,
+  direction,
+  { refModel, localField },
+) => {
+  const rows = await Distributor.aggregate([
+    { $match: matchQuery },
+    {
+      $lookup: {
+        from: refModel.collection.name,
+        localField,
+        foreignField: "_id",
+        as: "sortRefDocs",
+      },
+    },
+    {
+      $addFields: {
+        sortRefName: {
+          $ifNull: [{ $arrayElemAt: ["$sortRefDocs.name", 0] }, ""],
+        },
+      },
+    },
+    { $sort: { sortRefName: direction, _id: -1 } },
+    { $project: { _id: 1 } },
+  ]);
+
+  return rows.map((r) => r._id);
+};
+
 const disList = asyncHandler(async (req, res) => {
   try {
-    // Fetch the distributor list, populate the required fields, sort by _id in descending order, and exclude the password and genPassword fields
-    const distributorList = await Distributor.find({})
-      .populate([
-        {
-          path: "createdBy",
-          select: "",
-        },
-        {
-          path: "regionId",
-          select: "",
-        },
-        {
-          path: "stateId",
-          select: "",
-        },
-        {
-          path: "district",
-          select: "",
-        },
-        {
-          path: "brandId",
-          select: "",
-        },
-      ])
-      .sort({ _id: -1 })
+    // No filters are applied here today — the frontend currently loads
+    // the full list and filters client-side. matchQuery is kept as an
+    // explicit (empty) object so it's a single place to extend if
+    // server-side filtering is added later.
+    const matchQuery = {};
+
+    const { sortBy, sortOrder } = req.query;
+    const direction = getSortDirection(sortOrder);
+
+    // ---- Populated-field sort (state / district) — aggregation path ----
+    if (sortBy && AGGREGATE_SORT_CONFIG[sortBy]) {
+      const sortedIds = await fetchPopulatedSortedIds(
+        matchQuery,
+        direction,
+        AGGREGATE_SORT_CONFIG[sortBy],
+      );
+
+      const unorderedDocs = await Distributor.find({
+        _id: { $in: sortedIds },
+      })
+        .populate(DISTRIBUTOR_POPULATE)
+        .select("-password -genPassword");
+
+      // $in does not preserve order, so re-apply the sorted order here.
+      const orderIndex = new Map(
+        sortedIds.map((id, idx) => [String(id), idx]),
+      );
+      const distributorList = unorderedDocs.sort(
+        (a, b) =>
+          orderIndex.get(String(a._id)) - orderIndex.get(String(b._id)),
+      );
+
+      return res.status(201).json({
+        status: 201,
+        message: "All Distributors list fetched successfully",
+        data: distributorList,
+      });
+    }
+
+    // ---- Direct-field sort (whitelisted) — normal .sort() path ----
+    const field = sortBy && SORTABLE_FIELDS[sortBy];
+    const sortOption = field ? { [field]: direction, _id: -1 } : { _id: -1 };
+
+    const distributorList = await Distributor.find(matchQuery)
+      .populate(DISTRIBUTOR_POPULATE)
+      .sort(sortOption)
       .select("-password -genPassword"); // Exclude password and genPassword fields
 
     // Return the distributor list in the response
