@@ -15,7 +15,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
-manualDate,
+      manualDate,
       shipToAddress,
       validity,
       deliveryTerms,
@@ -85,21 +85,20 @@ manualDate,
     const enquiryNo = await enquiryNumberGenerator("IPPL");
 
 
-let finalManualDate = new Date();
+    let finalManualDate = new Date();
 
-if (manualDate) {
-  const selectedDate = new Date(manualDate);
-  const now = new Date();
+    if (manualDate) {
+      finalManualDate = new Date(manualDate);
 
-  selectedDate.setHours(
-    now.getHours(),
-    now.getMinutes(),
-    now.getSeconds(),
-    now.getMilliseconds()
-  );
+      const now = new Date();
 
-  finalManualDate = selectedDate;
-}
+      finalManualDate.setHours(
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds(),
+        now.getMilliseconds()
+      );
+    }
 
     const savedOrderEnquiry = await OrderEnquiry.create({
       distributorId,
@@ -110,7 +109,7 @@ if (manualDate) {
       orderType,
       orderSource,
       paymentMode,
-     manualDate: finalManualDate,
+      manualDate: finalManualDate,
       shipToAddress,
       validity,
       deliveryTerms,
