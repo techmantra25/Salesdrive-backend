@@ -15,33 +15,38 @@ const formatDate = (date) => {
 const generateOrderHTML = (data) => {
   const items = data?.items || [];
 
-const productRows = items
-  .map(
-    (item, index) => `
+  const productRows = items
+    .map(
+      (item, index) => `
 <tr>
   <td>${index + 1}</td>
   <td>${item.code || ""}</td>
   <td class="left">${item.description || ""}</td>
 
-  <td>${item.delQty ?? 0}</td>
-  <td>${item.orderQty ?? 0}</td>
 
-  <td>${item.stdBox ?? 0}</td>
-  <td>${item.stdPkt ?? 0}</td>
 
-  <td>${item.stock ?? 0}</td>
 
-  <td>₹ ${formatCurrency(item.mrp ?? 0)}</td>
 
-  <td>${item.discount ?? 0}%</td>
+<td class="center">${item.delQty ?? 0}</td>
+<td class="center">${item.orderQty ?? 0}</td>
 
-  <td>₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
+<td class="center">${item.stdBox ?? 0}</td>
+<td class="center">${item.stdPkt ?? 0}</td>
 
-  <td>${item.boxQty ?? 0}</td>
+<td class="center">${item.stock ?? 0}</td>
+
+<td class="right">₹ ${formatCurrency(item.mrp ?? 0)}</td>
+
+<td class="right">${item.discount ?? 0}%</td>
+
+<td class="right">₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
+
+<td class="center">${item.boxQty ?? 0}</td>
+
 </tr>
 `
-  )
-  .join("");
+    )
+    .join("");
 
   const emptyRows = Array.from({
     length: Math.max(0, 20 - items.length),
@@ -123,10 +128,17 @@ td, th {
   text-align: right;
   white-space: nowrap;
 }
+.left {
+  text-align: left;
+}
 
-.left { text-align: left; }
-.center { text-align: center; }
+.center {
+  text-align: center;
+}
 
+.right {
+  text-align: right;
+}
 .dispatch-label {
   background: #fff200;
   font-weight: bold;
