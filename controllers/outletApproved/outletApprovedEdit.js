@@ -271,41 +271,41 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 // SOURCE ID DEDUPLICATION + OUTLET CODE PROTECTION
 // =========================================================
 
-if (Array.isArray(req.body.massistRefIds)) {
+// if (Array.isArray(req.body.massistRefIds)) {
 
-  const cleanedSourceIds = [
-    ...new Set(
-      req.body.massistRefIds
-        .map((id) => id?.toString().trim())
-        .filter(Boolean)
-    ),
-  ];
+//   const cleanedSourceIds = [
+//     ...new Set(
+//       req.body.massistRefIds
+//         .map((id) => id?.toString().trim())
+//         .filter(Boolean)
+//     ),
+//   ];
 
-  // ❌ Prevent removal of outletCode from massistRefIds
-  if (
-    outlet.outletCode &&
-    !cleanedSourceIds.includes(outlet.outletCode.toString())
-  ) {
-    res.status(400);
-    throw new Error(
-      `Outlet Code (${outlet.outletCode}) cannot be removed from Source IDs`
-    );
-  }
+//   // ❌ Prevent removal of outletCode from massistRefIds
+//   if (
+//     outlet.outletCode &&
+//     !cleanedSourceIds.includes(outlet.outletCode.toString())
+//   ) {
+//     res.status(400);
+//     throw new Error(
+//       `Outlet Code (${outlet.outletCode}) cannot be removed from Source IDs`
+//     );
+//   }
 
-  updateFields.massistRefIds = cleanedSourceIds;
-}
+//   updateFields.massistRefIds = cleanedSourceIds;
+// }
 
     //find only NEW source IDs
-    let newSourceIdsToCheck = [];
+    // let newSourceIdsToCheck = [];
 
-    if (Array.isArray(updateFields.massistRefIds)) {
-      const existingSourceIds =
-        outlet.massistRefIds?.map((id) => id.toString()) || [];
+    // if (Array.isArray(updateFields.massistRefIds)) {
+    //   const existingSourceIds =
+    //     outlet.massistRefIds?.map((id) => id.toString()) || [];
 
-      newSourceIdsToCheck = updateFields.massistRefIds.filter(
-        (id) => !existingSourceIds.includes(id)
-      );
-    }
+    //   newSourceIdsToCheck = updateFields.massistRefIds.filter(
+    //     (id) => !existingSourceIds.includes(id)
+    //   );
+    // }
 
     // =========================================================
     //  GLOBAL SOURCE ID UNIQUENESS CHECK
@@ -327,20 +327,20 @@ if (Array.isArray(req.body.massistRefIds)) {
     //   }
     // }
 
-    if (newSourceIdsToCheck.length > 0) {
-      const duplicateOutlet = await OutletApproved.findOne({
-        _id: { $ne: outletAppId },
-        status: true,
-        massistRefIds: { $in: newSourceIdsToCheck },
-      }).select("outletCode outletName");
+    // if (newSourceIdsToCheck.length > 0) {
+    //   const duplicateOutlet = await OutletApproved.findOne({
+    //     _id: { $ne: outletAppId },
+    //     status: true,
+    //     massistRefIds: { $in: newSourceIdsToCheck },
+    //   }).select("outletCode outletName");
 
-      if (duplicateOutlet) {
-        res.status(400);
-        throw new Error(
-          `Source ID already exists in another outlet (Outlet Code: ${duplicateOutlet.outletCode})`
-        );
-      }
-    }
+    //   if (duplicateOutlet) {
+    //     res.status(400);
+    //     throw new Error(
+    //       `Source ID already exists in another outlet (Outlet Code: ${duplicateOutlet.outletCode})`
+    //     );
+    //   }
+    // }
 
 
     // ---------------- UPDATE (UNCHANGED) ----------------
