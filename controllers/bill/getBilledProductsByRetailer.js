@@ -101,6 +101,7 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
                 _id: null,
                 totalReturnedQty: { $sum: "$lineItems.returnQty" },
                 returnIds: { $addToSet: "$_id" },
+                returnCount: { $sum: 1 },
               },
             },
           ],
@@ -114,6 +115,9 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
           },
           returnIds: {
             $ifNull: [{ $arrayElemAt: ["$returnInfo.returnIds", 0] }, []],
+          },
+          returnCount: {
+            $ifNull: [{ $arrayElemAt: ["$returnInfo.returnCount", 0] }, 0],
           },
         },
       },
@@ -138,6 +142,7 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
                 billIds: 1,
                 returnIds: 1,
                 billCount: 1,
+                returnCount: 1,
               },
             },
           ],
