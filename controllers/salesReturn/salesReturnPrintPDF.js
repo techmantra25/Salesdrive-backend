@@ -4,6 +4,7 @@ const generateSalesReturnHTML = require("./util/generateSalesReturnHTML");
 const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
 const axios = require("axios");
+const Configs = require("../../models/config.model");
 
 const salesReturnPrintPDF = asyncHandler(async (req, res) => {
   try {
@@ -50,19 +51,23 @@ const salesReturnPrintPDF = asyncHandler(async (req, res) => {
 
     salesReturn.termConditions = termConditions?.rules || [];
 
-    // Fetch logo and convert to base64
+    // Fetch logo from config (same as billPrint)
     let logoBase64 = null;
-    const logoUrl = "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media";
-    
-    try {
-      const response = await axios.get(logoUrl, {
-        responseType: "arraybuffer",
-        timeout: 5000,
-      });
-      const base64 = Buffer.from(response.data).toString("base64");
-      logoBase64 = `data:image/png;base64,${base64}`;
-    } catch (logoError) {
-      console.error("Failed to fetch logo:", logoError.message);
+    const config = await Configs.findOne().lean();
+    const logoUrl = config?.commonSettings?.companyLogo || "";
+
+    if (logoUrl) {
+      try {
+        const response = await axios.get(logoUrl, {
+          responseType: "arraybuffer",
+          timeout: 5000,
+        });
+        const contentType = response.headers["content-type"] || "image/png";
+        const base64 = Buffer.from(response.data).toString("base64");
+        logoBase64 = `data:${contentType};base64,${base64}`;
+      } catch (logoError) {
+        console.error("Failed to fetch logo:", logoError.message);
+      }
     }
 
     // Generate HTML

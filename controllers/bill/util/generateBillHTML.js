@@ -31,11 +31,15 @@ async function generateBillHTML(bill, options = {}) {
   const eInvoice = bill.eInvoice || {};
   const irn = eInvoice.irn || bill.irn || "";
   const ackNo = eInvoice.ackNo || bill.ackNo || "";
-  const ackDate = eInvoice.ackDate ? formatDate(eInvoice.ackDate) : (bill.ackDate ? formatDate(bill.ackDate) : "");
+  const ackDate = eInvoice.ackDate
+    ? formatDate(eInvoice.ackDate)
+    : bill.ackDate
+      ? formatDate(bill.ackDate)
+      : "";
   const eWayBillNo = eInvoice.eWayBillNo || bill.eWayBillNo || "";
 
   const validLineItems = (bill.lineItems || []).filter(
-    (item) => item?.billQty > 0
+    (item) => item?.billQty > 0,
   );
 
   const generateUpiQR = async (upiId) => {
@@ -89,12 +93,11 @@ async function generateBillHTML(bill, options = {}) {
   const cgstVisible = bill?.cgst && parseFloat(bill.cgst) > 0;
   const sgstVisible = bill?.sgst && parseFloat(bill.sgst) > 0;
 
-
   // Build HSN/SAC tax breakup rows
   const cgstRate = bill?.cgstRate || 9;
   const sgstRate = bill?.sgstRate || 9;
   const hsnMap = {};
-  validLineItems.forEach(item => {
+  validLineItems.forEach((item) => {
     const hsn = item.product?.product_hsn_code || "";
     const taxableAmt = item.netAmt || 0;
     if (!hsnMap[hsn]) hsnMap[hsn] = { taxable: 0 };
@@ -102,11 +105,13 @@ async function generateBillHTML(bill, options = {}) {
   });
 
   let hsnRowsHTML = "";
-  let grandTaxable = 0, grandCgst = 0, grandSgst = 0;
+  let grandTaxable = 0,
+    grandCgst = 0,
+    grandSgst = 0;
   Object.entries(hsnMap).forEach(([hsn, data]) => {
     const taxable = bill?.netAmount || 0;
-    const cgstAmt = taxable * cgstRate / 100;
-    const sgstAmt = taxable * sgstRate / 100;
+    const cgstAmt = (taxable * cgstRate) / 100;
+    const sgstAmt = (taxable * sgstRate) / 100;
     grandTaxable += taxable;
     grandCgst += cgstAmt;
     grandSgst += sgstAmt;
@@ -130,8 +135,6 @@ async function generateBillHTML(bill, options = {}) {
     <td class="hcell right"><strong>${formatCurrency(grandCgst + grandSgst)}</strong></td>
   </tr>`;
 
-
-
   const totalTaxAmount = grandCgst + grandSgst + (bill.igst || 0);
 
   const taxAmountInWords = () => {
@@ -146,7 +149,6 @@ async function generateBillHTML(bill, options = {}) {
 
     return result + " Only";
   };
-
 
   let emptyRowsHTML = "";
 
@@ -694,30 +696,42 @@ async function generateBillHTML(bill, options = {}) {
   <td></td>
   <td class="amount-col">
     ${formatCurrency(
-        Number(bill?.freightCharges || 0) +
+      Number(bill?.freightCharges || 0) +
         Number(bill?.deliveryCharges || 0) +
-        Number(bill?.handlingCharges || 0)
-      )}
+        Number(bill?.handlingCharges || 0),
+    )}
   </td>
 </tr>     
-      ${cgstVisible ? `
+      ${
+        cgstVisible
+          ? `
         <tr>
           <td colspan="6" class="label-col">CGST @ ${cgstRate}%</td>
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.cgst)}</td>
-        </tr>` : ""}
-        ${sgstVisible ? `
+        </tr>`
+          : ""
+      }
+        ${
+          sgstVisible
+            ? `
         <tr>
           <td colspan="6" class="label-col">SGST @ ${sgstRate}%</td>
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.sgst)}</td>
-        </tr>` : ""}
-        ${igstVisible ? `
+        </tr>`
+            : ""
+        }
+        ${
+          igstVisible
+            ? `
         <tr>
           <td colspan="6" class="label-col">IGST @ ${bill?.igstRate || "18"}%</td>
           <td></td>
           <td class="amount-col">${formatCurrency(bill?.igst)}</td>
-        </tr>` : ""}
+        </tr>`
+            : ""
+        }
  
         
       </tbody>
