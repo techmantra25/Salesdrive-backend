@@ -102,7 +102,7 @@ const SalesReturn = new mongoose.Schema(
     salesmanName: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
-      required: true,
+      //required: true,
     },
     routeId: {
       type: mongoose.Schema.Types.ObjectId,
