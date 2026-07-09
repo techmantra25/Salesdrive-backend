@@ -84,14 +84,14 @@ const searchOutletsForDropdown = asyncHandler(async (req, res) => {
         // Exact match for search bar
         query.$or = [
           { outletName: searchRegex },
-          { outletUID: searchTerm },
+          { outletCode: searchTerm },
           { mobile1: searchTerm },
         ];
       } else {
         // Fuzzy match for dropdown
         query.$or = [
           { outletName: searchRegex },
-          { outletUID: searchRegex },
+          { outletCode: searchRegex },
           { mobile1: searchRegex },
         ];
       }
@@ -109,14 +109,14 @@ const searchOutletsForDropdown = asyncHandler(async (req, res) => {
       {
         $addFields: {
           score: {
-            $cond: [{ $eq: ["$outletUID", searchTerm] }, 0, 1],
+            $cond: [{ $eq: ["$outletCode", searchTerm] }, 0, 1],
           },
         },
       },
       { $sort: { score: 1, outletName: 1 } },
       { $skip: skip },
       { $limit: limit },
-      { $project: { outletName: 1, outletUID: 1, mobile1: 1, status: 1 } },
+      { $project: { outletName: 1, outletCode: 1, mobile1: 1, status: 1 } },
     ]);
 
     const totalCount = await OutletApproved.countDocuments(query);

@@ -121,7 +121,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       { path: "routeId", select: "code name" },
       {
         path: "retailerId",
-        select: "outletCode outletUID outletName",
+        select: "outletCode outletName",
       },
       {
         path: "lineItems.product",
@@ -159,7 +159,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       "Beat Code",
       "Beat",
       "Retailer Code",
-      "Retailer UID",
+      // "Retailer UID",
       "Retailer",
       "Brand",
       "Segment",
@@ -226,7 +226,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Beat Code": order.routeId?.code || "",
           Beat: order.routeId?.name || "",
           "Retailer Code": order.retailerId?.outletCode || "",
-          "Retailer UID": order.retailerId?.outletUID || "",
+          // "Retailer UID": order.retailerId?.outletUID || "",
           Retailer: order.retailerId?.outletName || "",
           Brand: item?.product?.brand?.name || "",
           "Segment": item?.product?.subBrand?.name || "",

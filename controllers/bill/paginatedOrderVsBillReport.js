@@ -23,7 +23,7 @@ const reportHeaders = [
   "Employee Code",
   "Employee Name",
   "Employee Deg",
-  "Retailer UID",
+  // "Retailer UID",
   "Retailer Code",
   "Retailer Name",
   "Beat Code",
@@ -120,7 +120,7 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
         },
         {
           path: "retailerId",
-          select: "outletUID outletCode outletName",
+          select: "outletCode outletName",
         },
         {
           path: "lineItems.product",
@@ -155,7 +155,7 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
               path: "lineItems.price",
               select: "mrp_price rlp_price dlp_price",
             },
-            { path: "retailerId", select: "outletUID outletCode outletName" },
+            { path: "retailerId", select: "outletCode outletName" },
             { path: "routeId", select: "code name" },
             {
               path: "salesmanName",
@@ -260,9 +260,9 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
             case "Employee Deg":
               row[header] = escapeCSVValue(bill.salesmanName?.desgId?.name);
               break;
-            case "Retailer UID":
-              row[header] = escapeCSVValue(bill.retailerId?.outletUID);
-              break;
+            // case "Retailer UID":
+            //   row[header] = escapeCSVValue(bill.retailerId?.outletUID);
+            //   break;
             case "Retailer Code":
               row[header] = escapeCSVValue(bill.retailerId?.outletCode);
               break;
