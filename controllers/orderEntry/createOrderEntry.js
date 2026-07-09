@@ -14,38 +14,44 @@ const { getOrderBackdate } = require("../../utils/backdateOrderHelper");
 // Create Order Entry
 const createOrderEntry = asyncHandler(async (req, res) => {
   try {
-   const {
-  salesmanName,
-  routeId,
-  retailerId,
-  orderType,
-  orderRemark,
-  orderSource,
-  freightCharges,
-  deliveryCharges,
-  handlingCharges,
-  manualOrderDate,
-  paymentMode,
-  lineItems,
-  totalLines,
-  totalBasePoints,
-  grossAmount,
-  schemeDiscount,
-  distributorDiscount,
-  taxableAmount,
-  cgst,
-  sgst,
-  igst,
-  invoiceAmount,
-  roundOffAmount,
-  cashDiscount,
-  netAmount,
-  adjustedCreditNoteIds,
-  creditAmount,
-  isBillCreate,
-} = req.body;
+    const {
+      salesmanName,
+      routeId,
+      retailerId,
+      orderType,
+      orderRemark,
+      orderSource,
+      freightCharges,
+      deliveryCharges,
+      handlingCharges,
+      manualOrderDate,
+      paymentMode,
+      lineItems,
+      totalLines,
+      totalBasePoints,
+      grossAmount,
+      schemeDiscount,
+      distributorDiscount,
+      taxableAmount,
+      shipToAddress,
+      validity,
+      deliveryTerms,
+      deliverySchedule,
+      paymentTerms,
+      remarks,
+      cgst,
+      sgst,
+      igst,
+      invoiceAmount,
+      roundOffAmount,
+      cashDiscount,
+      netAmount,
+      adjustedCreditNoteIds,
+      creditAmount,
+      isBillCreate,
+    } = req.body;
 
- console.log("Received createOrderEntry request with data:", req.body);
+    console.log("Received createOrderEntry request with data:", req.body);
 
     const distributorId = req.user.id;
 
@@ -89,7 +95,20 @@ const createOrderEntry = asyncHandler(async (req, res) => {
 
     // Generate order number
     const orderNumber = await orderNumberGenerator("DBO");
+    let finalManualOrderDate = new Date();
 
+    if (manualOrderDate) {
+      finalManualOrderDate = new Date(manualOrderDate);
+
+      const now = new Date();
+
+      finalManualOrderDate.setHours(
+        now.getHours(),
+        now.getMinutes(),
+        now.getSeconds(),
+        now.getMilliseconds()
+      );
+    }
     // Create the order entry object (not saved yet)
     const newOrderEntry = new OrderEntry({
       distributorId,
@@ -103,9 +122,15 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       lineItems,
       remark: orderRemark,
       totalLines,
-      manualOrderDate: manualOrderDate || new Date(),
+      manualOrderDate: finalManualOrderDate,
       freightCharges,
       deliveryCharges,
+      shipToAddress,
+      validity,
+      deliveryTerms,
+      deliverySchedule,
+      paymentTerms,
+      remarks,
       handlingCharges,
       totalBasePoints,
       grossAmount,
