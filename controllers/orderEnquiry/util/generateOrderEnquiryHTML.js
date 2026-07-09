@@ -168,10 +168,10 @@ const renderCompanyHeader = (distributor, options) => `
            <div style="flex:0 0 105px; height:105px; display:flex; align-items:center; justify-content:center;">
   <img
     src="${escapeHtml(
-      options?.logoBase64 ||
-        options?.logoUrl ||
-        "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
-    )}"
+  options?.logoBase64 ||
+  options?.logoUrl ||
+  "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+)}"
     alt="Company Logo"
     style="width:100%; height:100%; object-fit:contain; display:block;"
     onerror="this.style.display='none'"
@@ -181,18 +181,16 @@ const renderCompanyHeader = (distributor, options) => `
   <div style="font-size:20px; font-weight:bold; letter-spacing:0.5px;">
     ${escapeHtml(distributor?.name || "Company Name")}
   </div>
-              ${
-                distributor?.address1
-                  ? `<div style="font-size:9px; margin-top:2px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
-                  : ""
-              }
+              ${distributor?.address1
+    ? `<div style="font-size:9px; margin-top:2px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
+    : ""
+  }
               <div style="font-size:9px; margin-top:1px;">
 ${distributor?.email ? `Email : ${escapeHtml(distributor.email)}` : ""}${distributor?.email && distributor?.phone ? ", " : ""}${distributor?.phone ? `Phone : ${escapeHtml(distributor.phone)}` : ""}              </div>
-              ${
-                distributor?.gst_no || distributor?.stateId?.name
-                  ? `<div style="font-size:9px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
-                  : ""
-              }
+              ${distributor?.gst_no || distributor?.stateId?.name
+    ? `<div style="font-size:9px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
+    : ""
+  }
             </div>
           </div>
 
@@ -332,14 +330,24 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
             </thead>
             <tbody>
               ${itemsForPage
-                .map((item, index) => {
-                  const product = item?.product || {};
-                  const mrp = Number(
-                    item?.price?.mrp_price || item?.price?.rlp_price || 0,
-                  );
-                  const discPct = Number(item?.totalDiscountPercentage || 0);
+      .map((item, index) => {
+        const product = item?.product || {};
 
-                  return `
+        const discPct = Number(item?.totalDiscountPercentage || 0);
+        const qty = Number(item?.oderQty || 0);
+
+        const mrp = Number(
+          item?.price?.mrp_price || item?.price?.rlp_price || 0
+        );
+
+        const discountPercent = Number(item?.totalDiscountPercentage || 0);
+
+        const effectiveAmount = Number(item?.taxableAmt || 0);
+
+        const effectivePrice =
+          qty > 0 ? effectiveAmount / qty : 0;
+
+        return `
               <tr>
                 <td class="text-center" style="font-size:9px;">${startIndex + index + 1}</td>
                 <td class="text-left" style="font-size:9px;">${escapeHtml(product?.name || "")}</td>
@@ -347,21 +355,25 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
                 <td class="text-right" style="font-size:9px;">${Number(item?.oderQty) || 0}</td>
                 <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(mrp))}</td>
                 <td class="text-center" style="font-size:9px;">${discPct > 0 ? discPct.toFixed(2) + "%" : "0.00%"}</td>
-                <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(item?.price?.rlp_price || 0))}</td>
-                 <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(item?.grossAmt || 0))}</td>
+                <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectivePrice))}</td>
+                 <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectiveAmount))}</td>
               </tr>`;
-                })
-                .join("")}
+      })
+      .join("")}
               ${Array.from({ length: blankRowsNeeded }, renderBlankItemsRow).join("")}
             </tbody>
           </table>`;
 };
 
 const renderSummarySection = (
+
+
   orderEnquiry,
   bankData,
   upiData,
-  specialDiscount,
+
+  grossAmount,
+
 ) => `
           <!-- SUMMARY -->
           <table class="summary-table">
@@ -374,14 +386,13 @@ const renderSummarySection = (
                         <td colspan="3" class="bold" style="font-size:9px;">E &amp; O.E</td>
                       </tr>
 
-                      ${
-                        Number(orderEnquiry?.totalBasePoints) > 0
-                          ? `<tr>
+                      ${Number(orderEnquiry?.totalBasePoints) > 0
+    ? `<tr>
                         <td colspan="2" style="font-size:9px;">Base Points</td>
                         <td style="font-size:9px;">: ${Number(orderEnquiry.totalBasePoints) || 0}</td>
                       </tr>`
-                          : ""
-                      }
+    : ""
+  }
                       <tr>
                         <td colspan="3" style="padding-top:6px; font-size:9px;">
                           <strong>Amount In Words:</strong>
@@ -395,9 +406,8 @@ const renderSummarySection = (
 
 <tr>
   <td colspan="3" style="padding:6px 0 0 0;">
-    ${
-      bankData?.bankName || upiData?.upiId
-        ? `
+    ${bankData?.bankName || upiData?.upiId
+    ? `
         <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
           <tbody>
             <tr>
@@ -408,9 +418,8 @@ const renderSummarySection = (
                       <td colspan="2" class="bold" style="font-size:11px;">Bank Details</td>
                     </tr>
 
-                    ${
-                      bankData?.bankName
-                        ? `
+                    ${bankData?.bankName
+      ? `
                     <tr>
                       <td style="width:35%; font-size:9px;">Bank Name</td>
                       <td style="font-size:9px;">: ${escapeHtml(bankData.bankName)}</td>
@@ -432,13 +441,13 @@ const renderSummarySection = (
                       <td style="font-size:9px;">: ${escapeHtml(bankData.accountNumber || "")}</td>
                     </tr>
                     `
-                        : `
+      : `
                     <tr>
                       <td colspan="2" style="font-size:9px;">
                         Bank details are not available.
                       </td>
                     </tr>`
-                    }
+    }
 
                   </tbody>
                 </table>
@@ -452,11 +461,10 @@ const renderSummarySection = (
                     </tr>
                     <tr>
                       <td style="font-size:9px;">
-                        ${
-                          upiData?.upiId
-                            ? escapeHtml(`UPI ID: ${upiData.upiId}`)
-                            : "UPI details are not available."
-                        }
+                        ${upiData?.upiId
+      ? escapeHtml(`UPI ID: ${upiData.upiId}`)
+      : "UPI details are not available."
+    }
                       </td>
                     </tr>
                   </tbody>
@@ -467,7 +475,7 @@ const renderSummarySection = (
           </tbody>
         </table>
         `
-        : `
+    : `
         <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
           <tbody>
             <tr>
@@ -484,7 +492,7 @@ const renderSummarySection = (
           </tbody>
         </table>
         `
-    }
+  }
   </td>
 </tr>
                     </tbody>
@@ -497,13 +505,9 @@ const renderSummarySection = (
                       <tr>
                         <td style="width:60%; font-size:9px;">Gross Amount</td>
                         <td style="width:10%;" class="text-center" style="font-size:9px;">:</td>
-                        <td style="width:30%;" class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.grossAmount))}</td>
+                        <td style="width:30%;" class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(grossAmount))}</td>
                       </tr>
-                      <tr>
-                        <td style="font-size:9px;">Special Discount</td>
-                        <td class="text-center" style="font-size:9px;">:</td>
-                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(specialDiscount))}</td>
-                      </tr>
+                   
                       <tr>
                         <td style="font-size:9px;">Freight &amp; Handling Fee</td>
                         <td class="text-center" style="font-size:9px;">:</td>
@@ -524,15 +528,14 @@ const renderSummarySection = (
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.sgst))}</td>
                       </tr>
-                      ${
-                        Number(orderEnquiry?.igst) > 0
-                          ? `<tr>
+                      ${Number(orderEnquiry?.igst) > 0
+    ? `<tr>
                         <td style="font-size:9px;">IGST</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.igst))}</td>
                       </tr>`
-                          : ""
-                      }
+    : ""
+  }
                       <tr>
                         <td style="font-size:9px;">Invoice Amount</td>
                         <td class="text-center" style="font-size:9px;">:</td>
@@ -543,25 +546,23 @@ const renderSummarySection = (
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.roundOffAmount))}</td>
                       </tr>
-                      ${
-                        Number(orderEnquiry?.cashDiscount) > 0 ||
-                        orderEnquiry?.cashDiscountApplied
-                          ? `<tr>
+                      ${Number(orderEnquiry?.cashDiscount) > 0 ||
+    orderEnquiry?.cashDiscountApplied
+    ? `<tr>
                         <td style="font-size:9px;">Cash Discount</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.cashDiscount))}</td>
                       </tr>`
-                          : ""
-                      }
-                      ${
-                        Number(orderEnquiry?.creditAmount) > 0
-                          ? `<tr>
+    : ""
+  }
+                      ${Number(orderEnquiry?.creditAmount) > 0
+    ? `<tr>
                         <td style="font-size:9px;">Credit Note Adjustment</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEnquiry?.creditAmount))}</td>
                       </tr>`
-                          : ""
-                      }
+    : ""
+  }
                       <tr class="bold border-top-bold" style="font-weight:bold;">
                         <td style="padding-top:4px; font-size:9px;">Net Amount</td>
                         <td class="text-center" style="padding-top:4px; font-size:9px;">:</td>
@@ -622,11 +623,10 @@ const renderChannelPartnersFooter = () => `
 const renderPageFooter = (pageNumber, totalPages, isLastPage) => `
           <!-- PAGE NUMBER / CONTINUATION NOTICE AT BOTTOM -->
           <div style="padding:3px 8px; text-align:center; font-size:9px; color:#555; border-top:1px solid #000;">
-            ${
-              isLastPage
-                ? `Page ${pageNumber} of ${totalPages}`
-                : `Continue to Page No. ${pageNumber + 1}`
-            }
+            ${isLastPage
+    ? `Page ${pageNumber} of ${totalPages}`
+    : `Continue to Page No. ${pageNumber + 1}`
+  }
           </div>`;
 
 const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
@@ -639,28 +639,19 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
     : [];
   const validLineItems = Array.isArray(orderEnquiry?.lineItems)
     ? orderEnquiry.lineItems.filter(
-        (item) =>
-          item?.product &&
-          ((Number(item?.oderQty) || 0) > 0 ||
-            (Number(item?.boxOrderQty) || 0) > 0 ||
-            (Number(item?.netAmt) || 0) > 0),
-      )
+      (item) =>
+        item?.product &&
+        ((Number(item?.oderQty) || 0) > 0 ||
+          (Number(item?.boxOrderQty) || 0) > 0 ||
+          (Number(item?.netAmt) || 0) > 0),
+    )
     : [];
-
-  const specialDiscount = validLineItems.reduce((total, item) => {
-    const gross = Number(item?.grossAmt) || 0;
-    const disc = Number(item?.distributorDisc) || 0;
-
-    let discountAmount = 0;
-
-    if (item?.distributorDiscUnit === "percent") {
-      discountAmount = (gross * disc) / 100;
-    } else {
-      discountAmount = disc;
-    }
-
-    return total + discountAmount;
+  const grossAmount = validLineItems.reduce((total, item) => {
+    return total + (Number(item?.taxableAmt) || 0);
   }, 0);
+
+
+
 
   // ---------------------------------------------------------------------
   // Split line items into pages dynamically (see paginateLineItems above).
@@ -685,7 +676,13 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
           ${renderCompanyHeader(distributor, options)}
           ${renderCustomerAndQuotationDetails(distributor, retailer, orderEnquiry)}
           ${renderItemsTable(itemsForPage, startIndex)}
-          ${isLastPage ? renderSummarySection(orderEnquiry, bankData, upiData, specialDiscount) : ""}
+          ${isLastPage ? renderSummarySection(
+        orderEnquiry,
+        bankData,
+        upiData,
+
+        grossAmount
+      ) : ""}
           ${isLastPage ? renderTermsSection(termConditions) : ""}
           ${isLastPage ? renderNoteAndSignature(distributor) : ""}
           ${isLastPage ? renderChannelPartnersFooter() : ""}
