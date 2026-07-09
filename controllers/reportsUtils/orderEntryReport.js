@@ -124,7 +124,7 @@ const orderEntryReport = async (query, body, user) => {
       })
       .populate({
         path: "retailerId", // Populating the retailer details
-        select: "", // Selecting the outlet name
+        select: "outletCode outletName", // Selecting the outlet code and name
       })
       .populate({
         path: "routeId", // Populating the route details
@@ -153,7 +153,8 @@ const orderEntryReport = async (query, body, user) => {
         "Order Type": order?.orderType,
         "Order Source": order?.orderSource,
         "Payment Mode": order?.paymentMode,
-        "Retailer UID": order?.retailerId?.outletUID,
+        // "Retailer UID": order?.retailerId?.outletUID,
+        "Retailer Code": order?.retailerId?.outletCode,
         "Retailer Name": order?.retailerId?.outletName,
         "Route Code": order?.routeId?.code,
         "Route Name": order?.routeId?.name,
@@ -182,7 +183,8 @@ const orderEntryReport = async (query, body, user) => {
       { label: "Order Type", value: "Order Type" },
       { label: "Order Source", value: "Order Source" },
       { label: "Payment Mode", value: "Payment Mode" },
-      { label: "Retailer UID", value: "Retailer UID" },
+      // { label: "Retailer UID", value: "Retailer UID" },
+      { label: "Retailer Code", value: "Retailer Code" },
       { label: "Retailer Name", value: "Retailer Name" },
       { label: "Route Code", value: "Route Code" },
       { label: "Route Name", value: "Route Name" },

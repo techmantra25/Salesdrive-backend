@@ -109,7 +109,7 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
     if (req.query.search) {
       query.$or = [
         { outletCode: { $regex: req.query.search, $options: "i" } },
-        { outletUID: { $regex: req.query.search, $options: "i" } },
+        // { outletUID: { $regex: req.query.search, $options: "i" } },
         { outletName: { $regex: req.query.search, $options: "i" } },
         { ownerName: { $regex: req.query.search, $options: "i" } },
       ];
@@ -158,7 +158,7 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
        CSV HEADERS
     ---------------------------------------- */
     const headers = [
-      "Outlet UID",
+      // "Outlet UID",
       "Outlet Code",
       "Outlet Name",
       "Source Ids",
@@ -229,7 +229,7 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
     ---------------------------------------- */
     for await (const outlet of cursor) {
       csvStream.write({
-        "Outlet UID": outlet.outletUID || "",
+        // "Outlet UID": outlet.outletUID || "",
         "Outlet Code": outlet.outletCode || "",
         "Outlet Name": outlet.outletName || "",
         "Source Ids": resolveSourceIds(outlet.massistRefIds),
