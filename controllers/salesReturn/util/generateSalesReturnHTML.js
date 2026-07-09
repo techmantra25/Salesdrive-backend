@@ -32,6 +32,7 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
   const route = salesReturn.routeId || {};
   const bill = salesReturn.billId;
   const bank = salesReturn.bankData || {};
+  const upiData = salesReturn.upiData || {};
   const termConditions = salesReturn.termConditions || [];
 
   const validLineItems = (salesReturn?.lineItems || []).filter((item) => item?.returnQty > 0);
@@ -301,34 +302,14 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
                   <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
                     <tbody>
                       <tr>
-                        <td style="padding:4px 6px; vertical-align:top;">
-                          <table style="width:100%;">
-                            <tbody>
-                              <tr><td colspan="2" class="bold" style="font-size:10px;">Bank Details</td></tr>
-                              ${bank?.bankName ? `
-                              <tr>
-                                <td style="width:38%; font-size:9px;">Bank Name</td>
-                                <td style="font-size:9px;">: ${escapeHtml(bank.bankName)}</td>
-                              </tr>
-                              <tr>
-                                <td style="font-size:9px;">Branch</td>
-                                <td style="font-size:9px;">: ${escapeHtml(bank.branchCode || "")}</td>
-                              </tr>
-                              <tr>
-                                <td style="font-size:9px;">IFSC Code</td>
-                                <td style="font-size:9px;">: ${escapeHtml(bank.ifscCode || "")}</td>
-                              </tr>
-                              <tr>
-                                <td style="font-size:9px;">Account Type</td>
-                                <td style="font-size:9px;">: ${escapeHtml(bank.accountType || "")}</td>
-                              </tr>
-                              <tr>
-                                <td style="font-size:9px;">Account Number</td>
-                                <td style="font-size:9px;">: ${escapeHtml(bank.accountNumber || "")}</td>
-                              </tr>` : `
-                              <tr><td colspan="2" style="font-size:9px;">Bank details not available.</td></tr>`}
-                            </tbody>
-                          </table>
+                        <td style="padding:6px; font-size:9px;">
+                          <strong>Bank Details</strong><br><br>
+                          <strong>Beneficiary :</strong> Infrawal Projects Private Limited<br>
+                          <strong>Bank :</strong> ICICI Bank<br>
+                          <strong>Branch :</strong> Liluah Branch<br>
+                          <strong>IFSC Code :</strong> ICIC0006948<br>
+                          <strong>A/C No :</strong> 694805501076<br>
+                          <strong>UPI ID :</strong> infra96577.ibz@icici
                         </td>
                       </tr>
                     </tbody>

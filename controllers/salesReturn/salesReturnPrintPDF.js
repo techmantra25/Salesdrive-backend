@@ -3,6 +3,7 @@ const SalesReturnModel = require("../../models/salesReturn.model");
 const generateSalesReturnHTML = require("./util/generateSalesReturnHTML");
 const DbBank = require("../../models/dbBank.model");
 const DBRule = require("../../models/dbRule.model");
+const DBUpi = require("../../models/dbUpi.model");
 const axios = require("axios");
 const Configs = require("../../models/config.model");
 
@@ -38,10 +39,9 @@ const salesReturnPrintPDF = asyncHandler(async (req, res) => {
 
     const distributorId = salesReturn?.distributorId?._id;
 
-    // Fetch bank details
-    salesReturn.bankData = await DbBank.findOne({ distributorId }).populate(
-      "distributorId",
-    );
+    // Fetch bank + upi details
+    const bankData = await DbBank.findOne({ distributorId });
+    const upiData = await DBUpi.findOne({ distributorId, isActive: true });
 
     // Fetch terms and conditions
     const termConditions = await DBRule.findOne({
@@ -49,7 +49,10 @@ const salesReturnPrintPDF = asyncHandler(async (req, res) => {
       module: "Sales Return T&C",
     });
 
-    salesReturn.termConditions = termConditions?.rules || [];
+    const printableSalesReturn = salesReturn.toObject();
+    printableSalesReturn.bankData = bankData ? bankData.toObject() : null;
+    printableSalesReturn.upiData = upiData ? upiData.toObject() : null;
+    printableSalesReturn.termConditions = termConditions?.rules || [];
 
     // Fetch logo from config (same as billPrint)
     let logoBase64 = null;
@@ -71,7 +74,7 @@ const salesReturnPrintPDF = asyncHandler(async (req, res) => {
     }
 
     // Generate HTML
-    let htmlContent = generateSalesReturnHTML(salesReturn, { logoBase64 });
+    let htmlContent = generateSalesReturnHTML(printableSalesReturn, { logoBase64 });
 
     // Inject auto-print script and buttons just before </body>
     // Using CSP-compliant approach with addEventListener
