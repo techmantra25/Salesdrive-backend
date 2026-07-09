@@ -187,11 +187,7 @@ const loginUser = asyncHandler(async (req, res) => {
         password,
         user.genPassword,
       );
-      console.log("Password match:", isMatchPassword);
-      console.log("GenPassword match:", isMatchGenPassword);
-      console.log("DB Code:", user.dbCode);
-      console.log("Password Hash:", user.password);
-      console.log("GenPassword Hash:", user.genPassword);
+
 
       // If either password or genPassword matches
       if (isMatchPassword || isMatchGenPassword) {
