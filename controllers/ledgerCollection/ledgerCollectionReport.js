@@ -44,7 +44,7 @@ const generateLedgerCollectionReport = asyncHandler(async (req, res) => {
     // Define which related documents to populate, including the new credit note details
     const populateFields = [
       { path: "distributorId", select: "dbCode name" },
-      { path: "retailerId", select: "outletUID outletName" },
+      { path: "retailerId", select: "outletCode outletName" },
       { path: "lineItems.billId", select: "billNo netAmount" },
       {
         path: "lineItems.creditNoteAdjusted.creditNoteId",
@@ -59,7 +59,7 @@ const generateLedgerCollectionReport = asyncHandler(async (req, res) => {
       "DB Name",
       "Collection No",
       "Collection Type",
-      "Retailer UID",
+      "Retailer Code",
       "Retailer Name",
       "Bill No",
       "Bill Amount",
@@ -135,7 +135,7 @@ const generateLedgerCollectionReport = asyncHandler(async (req, res) => {
           "DB Name": ledgerCollection.distributorId?.name || "",
           "Collection No": ledgerCollection.collectionNo || "",
           "Collection Type": ledgerCollection.collectionType || "",
-          "Retailer UID": ledgerCollection.retailerId?.outletUID || "",
+          "Retailer Code": ledgerCollection.retailerId?.outletCode || "",
           "Retailer Name": ledgerCollection.retailerId?.outletName || "",
           "Bill No": item.billId?.billNo || "",
           "Bill Amount": item.billId?.netAmount || 0,

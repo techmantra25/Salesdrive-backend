@@ -9,31 +9,43 @@ const Inventory = require("../../models/inventory.model");
 const editOrderEntry = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const {
-        salesmanName,
-        routeId,
-        retailerId,
-        paymentMode,
-        orderType,
-        lineItems,
-        grossAmount,
-        schemeDiscount,
-        distributorDiscount,
-        taxableAmount,
-        cgst,
-        sgst,
-        igst,
-        invoiceAmount,
-        roundOffAmount,
-        cashDiscount,
-        creditAmount,
-        netAmount,
-        totalBasePoints,
-        totalLines,
-remark,
-        freightCharges,
-        handlingCharges,
-    } = req.body;
+   const {
+    salesmanName,
+    routeId,
+    retailerId,
+    paymentMode,
+    orderType,
+    lineItems,
+    grossAmount,
+    schemeDiscount,
+    distributorDiscount,
+    taxableAmount,
+    cgst,
+    sgst,
+    igst,
+    invoiceAmount,
+    roundOffAmount,
+    cashDiscount,
+    creditAmount,
+    netAmount,
+    totalBasePoints,
+    totalLines,
+
+    remark,
+
+    manualOrderDate,
+    shipToAddress,
+    validity,
+    deliveryTerms,
+    deliverySchedule,
+    paymentTerms,
+    remarks,
+
+    freightCharges,
+    handlingCharges,
+} = req.body;
+
+console.log("Edit Order Entry Request Body:", req.body);
 
     console.log("All Body in Backend", req.body);
 
@@ -418,7 +430,27 @@ remark,
     // ==================================================
     // SAVE
     // ==================================================
+// Order Details
+existingOrder.manualOrderDate =
+    manualOrderDate || existingOrder.manualOrderDate;
 
+existingOrder.shipToAddress =
+    shipToAddress || "";
+
+existingOrder.validity =
+    validity || "";
+
+existingOrder.deliveryTerms =
+    deliveryTerms || "";
+
+existingOrder.deliverySchedule =
+    deliverySchedule || "";
+
+existingOrder.paymentTerms =
+    paymentTerms || "";
+
+existingOrder.remarks =
+    remarks || "";
     const updatedOrder =
         await existingOrder.save();
 

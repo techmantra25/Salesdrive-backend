@@ -257,6 +257,30 @@ const OrderEntrySchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+
+    shipToAddress: {
+      type: String,
+    },
+
+    validity: {
+      type: String,
+    },
+
+    deliveryTerms: {
+      type: String,
+    },
+
+    deliverySchedule: {
+      type: String,
+    },
+
+    paymentTerms: {
+      type: String,
+    },
+
+    remarks: {
+      type: String,
+    },
   },
   {
     timestamps: true,
