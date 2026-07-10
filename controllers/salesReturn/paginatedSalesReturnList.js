@@ -25,7 +25,7 @@ const paginatedSalesReturnList = asyncHandler(async (req, res) => {
 
     // Build search query object
     let query = {};
-    console.log("Outlet Code",outletCode)
+    //console.log("Outlet Code",outletCode)
 
     if (salesmanName) query.salesmanName = salesmanName;
     if (routeId) query.routeId = routeId;
