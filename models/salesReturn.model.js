@@ -1,9 +1,18 @@
 const mongoose = require("mongoose");
+
 const LineItemSchema = new mongoose.Schema({
   product: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Product",
     required: true,
+  },
+  billId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Bill",
+    required: true,
+  },
+  billNo: {
+    type: String,
   },
   uom: {
     type: String,
@@ -55,6 +64,7 @@ const LineItemSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+
   totalCGST: {
     type: Number,
     default: 0,
@@ -80,7 +90,32 @@ const LineItemSchema = new mongoose.Schema({
     enum: ["Credit Note", "Replacement", "No Credit Note"],
     required: true,
   },
+  returnSequenceForBillLine: {
+    type: Number,
+    default: 1,
+  },
+  billReturnCounts: [                 // NEW — snapshot: how many returns each bill in THIS batch has now had (including this one)
+    {
+      billId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Bill",
+      },
+      returnSequence: {
+        type: Number,
+        default: 1,
+      },
+    },
+  ],
   usedBasePoint: { type: Number, default: null },
+
+  totalBilledQty: {
+    type: Number,
+    default: 0,
+  },
+  totalReturnedQty: {
+    type: Number,
+    default: 0,
+  },
 });
 
 const SalesReturn = new mongoose.Schema(
@@ -94,11 +129,12 @@ const SalesReturn = new mongoose.Schema(
       type: String,
       required: true,
     },
-    billId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Bill",
-      // required: true,
-    },
+    billId: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Bill",
+      },
+    ],
     salesmanName: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",

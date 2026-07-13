@@ -73,29 +73,31 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
       });
     }
 
-    // Roll up per product (billed side) — grab inventoryId straight from the line item
+    // No grouping — one row per bill's line item.
+    // Returned qty is still looked up per product only (same logic that
+    // was working before), so it'll repeat identically across all bill-rows
+    // for that product unless salesreturns tracks a specific billId.
     pipeline.push(
-      {
-        $group: {
-          _id: "$productInfo._id",
-          product: { $first: "$productInfo" },
-          inventoryId: { $first: "$lineItems.inventoryId" },
-          totalBilledQty: { $sum: "$lineItems.billQty" },
-          totalGrossAmt: { $sum: "$lineItems.grossAmt" },
-          totalNetAmt: { $sum: "$lineItems.netAmt" },
-          billIds: { $addToSet: "$_id" },
-          billCount: { $sum: 1 },
-        },
-      },
-      // Returned qty from SalesReturn
       {
         $lookup: {
           from: "salesreturns",
-          let: { productId: "$_id" },
+          // NOTE: at this point in the pipeline (after $unwind: "$lineItems" on
+          // Bill), "$_id" is still the Bill document's own _id — the unwind
+          // doesn't change it. So billId here correctly means "this specific bill".
+          let: { productId: "$productInfo._id", billId: "$_id" },
           pipeline: [
             { $match: { $expr: { $eq: ["$retailerId", retailerObjId] } } },
             { $unwind: "$lineItems" },
-            { $match: { $expr: { $eq: ["$lineItems.product", "$$productId"] } } },
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$lineItems.product", "$$productId"] },
+                    { $eq: ["$lineItems.billId", "$$billId"] }, // NEW — scope to THIS bill only
+                  ],
+                },
+              },
+            },
             {
               $group: {
                 _id: null,
@@ -122,7 +124,7 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
         },
       },
       { $project: { returnInfo: 0 } },
-      { $sort: { "product.product_code": 1 } },
+      { $sort: { "productInfo.product_code": 1, createdAt: -1 } },
       {
         $facet: {
           metadata: [{ $count: "totalFilteredCount" }],
@@ -132,16 +134,16 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
             {
               $project: {
                 _id: 0,
-                productId: "$_id",
-                product: 1,
-                inventoryId: 1,
-                totalBilledQty: 1,
+                billId: "$_id",
+                billNo: "$billNo",
+                productId: "$productInfo._id",
+                product: "$productInfo",
+                inventoryId: "$lineItems.inventoryId",
+                totalBilledQty: "$lineItems.billQty",  // same value, old key name
+                grossAmt: "$lineItems.grossAmt",
+                netAmt: "$lineItems.netAmt",
                 totalReturnedQty: 1,
-                totalGrossAmt: 1,
-                totalNetAmt: 1,
-                billIds: 1,
                 returnIds: 1,
-                billCount: 1,
                 returnCount: 1,
               },
             },
@@ -154,9 +156,9 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
     let data = result?.data || [];
     const totalFilteredCount = result?.metadata?.[0]?.totalFilteredCount || 0;
 
-    // Batch fetch pricing for just this page's products
+    // Batch fetch pricing — dedupe productIds since the same product can repeat across rows
     if (data.length) {
-      const productIds_batch = data.map((row) => row.productId.toString());
+      const productIds_batch = [...new Set(data.map((row) => row.productId.toString()))];
       const pricingByProduct = await getBatchProductPricing(
         productIds_batch,
         distributorIdFromUser

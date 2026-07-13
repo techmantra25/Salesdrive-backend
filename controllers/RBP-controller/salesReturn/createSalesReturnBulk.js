@@ -35,7 +35,6 @@ const {
 const createSalesReturnBulk = asyncHandler(async (req, res) => {
   try {
     const {
-      billId,
       salesmanName,
       routeId,
       retailerId,
@@ -61,6 +60,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       !routeId && "routeId",
       !retailerId && "retailerId",
       !goodsType && "goodsType",
+      (!lineItems || !lineItems.length) && "lineItems",
     ].filter(Boolean);
 
     if (missingFields.length) {
@@ -70,168 +70,191 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       });
     }
 
-    const [bill, salesMan, beat, retailer] = await Promise.all([
-      billId ? Bill.findById(billId) : Promise.resolve(null),
+    // Bill-wise return: every line item MUST carry its own billId now.
+    const missingBillOnItem = lineItems.find((item) => !item.billId);
+    if (missingBillOnItem) {
+      return res.status(400).json({
+        status: 400,
+        message: `billId is required on every line item (missing for product ${missingBillOnItem.product})`,
+      });
+    }
+
+    const [salesMan, beat, retailer] = await Promise.all([
       salesmanName ? Employee.findById(salesmanName) : Promise.resolve(null),
       Beat.findById(routeId),
       OutletApproved.findById(retailerId),
     ]);
 
-    if (billId && !bill)
-      return res.status(404).json({ status: 404, message: "Bill not found" });
     if (salesmanName && !salesMan)
-      return res
-        .status(404)
-        .json({ status: 404, message: "Salesman not found" });
+      return res.status(404).json({ status: 404, message: "Salesman not found" });
     if (!beat)
       return res.status(404).json({ status: 404, message: "Beat not found" });
     if (!retailer)
-      return res
-        .status(404)
-        .json({ status: 404, message: "Retailer not found" });
+      return res.status(404).json({ status: 404, message: "Retailer not found" });
 
-    // **NEW: Fetch distributor details to check RBP scheme mapping**
     const distributor = await Distributor.findById(req.user._id).lean();
     if (!distributor) {
-      return res
-        .status(404)
-        .json({ status: 404, message: "Distributor not found" });
+      return res.status(404).json({ status: 404, message: "Distributor not found" });
     }
 
-    //const salesReturnNo = await generateCode("SR");
+    // ---- Load every distinct bill referenced by the line items ----
+    const uniqueBillIds = [...new Set(lineItems.map((i) => String(i.billId)))];
+    const bills = await Bill.find({ _id: { $in: uniqueBillIds } });
+    const billMap = new Map(bills.map((b) => [String(b._id), b]));
 
-    const salesReturnNo = await generateCodeForSalesReturn(
-      "SR",
-      distributor._id,
-    );
+    const missingBillId = uniqueBillIds.find((id) => !billMap.has(id));
+    if (missingBillId) {
+      return res.status(404).json({
+        status: 404,
+        message: `Bill not found: ${missingBillId}`,
+      });
+    }
 
-    if (bill) {
+    // 90-day check — per bill, since a batch can mix bills from different dates
+    // 90-day check — per bill, since a batch can mix bills from different dates
+    for (const bill of bills) {
       const billCreationDate = moment.tz(bill.createdAt, "Asia/Kolkata");
       const currentDate = moment.tz("Asia/Kolkata");
       const daysDiff = currentDate.diff(billCreationDate, "days");
       if (daysDiff > 90) {
         return res.status(400).json({
           status: 400,
-          message: "Bill Creation date should be within 90 days from today",
+          message: `Bill ${bill.billNo} creation date should be within 90 days from today`,
         });
       }
     }
 
-    // Calculate backdate fields for sales return
-    // If bill was created in previous month and we're returning it in next month (before cron runs),
-    // AND enableBackdateBilling is YES, we need to backdate the return to the last day of the billing month
-    // Query without isActive filter to allow backdate billing to work independently
+    // ---- Resolve authoritative billQty per line item from the actual Bill doc ----
+    for (const item of lineItems) {
+      const itemBill = billMap.get(String(item.billId));
+      const billLine = itemBill?.lineItems?.find((bl) =>
+        item.billLineItemId
+          ? String(bl._id) === String(item.billLineItemId)
+          : String(bl.product) === String(item.product)
+      );
+
+      if (!billLine) {
+        return res.status(400).json({
+          status: 400,
+          message: `Could not find product ${item.product} on bill ${itemBill?.billNo || item.billId}`,
+        });
+      }
+
+      const authoritativeBillQty = Number(billLine.billQty || 0);
+      item.billQty = authoritativeBillQty; // server value always wins
+
+      if (Number(item.returnQty) > authoritativeBillQty) {
+        return res.status(400).json({
+          status: 400,
+          message: `Return qty (${item.returnQty}) exceeds billed qty (${authoritativeBillQty}) for product ${item.product} on bill ${itemBill?.billNo}`,
+        });
+      }
+    }
+
+    // ---- Counters stored on SalesReturnModel only (nothing written to Bill) ----
+    // Per-bill: how many Sales Returns already exist against this bill, +1 for this one
+    const billReturnCounts = await Promise.all(
+      uniqueBillIds.map(async (billId) => {
+        const priorCount = await SalesReturnModel.countDocuments({ billId });
+        return { billId, returnSequence: priorCount + 1 };
+      }),
+    );
+
+    // Per-line: how many times THIS product on THIS specific bill has been returned before
+    for (const item of lineItems) {
+      const priorLineCount = await SalesReturnModel.countDocuments({
+        "lineItems.billId": item.billId,
+        "lineItems.product": item.product,
+      });
+      item.returnSequenceForBillLine = priorLineCount + 1;
+    }
+
+    const totalReturnQty = lineItems.reduce(
+      (sum, item) => sum + Number(item.returnQty || 0),
+      0,
+    );
+
+    const salesReturnNo = await generateCodeForSalesReturn("SR", distributor._id);
+
+
+
+    // Use the most recently created bill in this batch to drive the
+    // backdate-window calculation (keeps existing backdate behavior sane
+    // when a batch spans bills from more than one day).
+    const latestBill = bills.reduce((a, b) =>
+      new Date(a.createdAt) > new Date(b.createdAt) ? a : b
+    );
+
     const deliverySetting = await BillDeliverySetting.findOne({
       distributorId: distributor._id,
     });
-    const enableBackdateBilling =
-      deliverySetting?.enableBackdateBilling === true;
+    const enableBackdateBilling = deliverySetting?.enableBackdateBilling === true;
 
     const actualReturnDate = new Date();
     const backdateFields = calculateBackdateFields(
-      bill?.createdAt || null,
+      latestBill?.createdAt || null,
       actualReturnDate,
       enableBackdateBilling,
     );
 
     if (backdateFields.enabledBackDate) {
       console.log(
-        `Backdate logic applied for sales return ${bill?.billNo}: Real return date=${moment(backdateFields.originalDeliveryDate).format("YYYY-MM-DD")}, Backdated to=${moment(backdateFields.deliveryDate).format("YYYY-MM-DD")}`,
+        `Backdate logic applied for sales return batch (${uniqueBillIds.length} bills): Real return date=${moment(backdateFields.originalDeliveryDate).format("YYYY-MM-DD")}, Backdated to=${moment(backdateFields.deliveryDate).format("YYYY-MM-DD")}`,
       );
     }
 
     let storePoints = 0;
-
     if (totalBasePoints > 0 && distributor.RBPSchemeMapped === "yes") {
       const lastRetailerTxn = await RetailerOutletTransaction.findOne({
         retailerId: retailerId,
       }).sort({ createdAt: -1 });
-      if (lastRetailerTxn) {
-        storePoints = Number(lastRetailerTxn.balance) || 0;
-      } else {
-        storePoints = Number(retailer.currentPointBalance) || 0;
-      }
+      storePoints = lastRetailerTxn
+        ? Number(lastRetailerTxn.balance) || 0
+        : Number(retailer.currentPointBalance) || 0;
     }
 
     let totalMultiplierPointsToDeduct = 0;
     let totalMultiplierPointsMetrics = null;
 
     if (distributor.RBPSchemeMapped === "yes") {
-      // **OLD CALL - COMMENTED OUT**
-      // totalMultiplierPointsMetrics = await getMultiplierPointsToDeduct(
-      //   bill,
-      //   totalBasePoints,
-      // );
-
-      // **NEW CALL - Pass the backdated sales return date**
       totalMultiplierPointsMetrics = await getMultiplierPointsToDeduct(
-        bill,
+        retailerId,
         totalBasePoints,
-        backdateFields.deliveryDate, // Pass the backdated sales return date
-        backdateFields.enabledBackDate, // If backdate is enabled, skip multiplier deduction
+        backdateFields.deliveryDate,
+        backdateFields.enabledBackDate,
       );
 
       if (
         totalMultiplierPointsMetrics.pointsToDeduct > 0 &&
         totalMultiplierPointsMetrics.percentage > 0
       ) {
-        totalMultiplierPointsToDeduct =
-          totalMultiplierPointsMetrics.pointsToDeduct;
+        totalMultiplierPointsToDeduct = totalMultiplierPointsMetrics.pointsToDeduct;
       }
     }
-
-    // **CHANGED: Only validate store points if RBP scheme is mapped**
 
     if (
       distributor.RBPSchemeMapped === "yes" &&
       totalBasePoints > 0 &&
-      storePoints <
-        Number(totalBasePoints) + Number(totalMultiplierPointsToDeduct)
+      storePoints < Number(totalBasePoints) + Number(totalMultiplierPointsToDeduct)
     ) {
       return res.status(400).json({
         status: 400,
-        message: `Insufficient store points. Available: ${storePoints}, Required: ${
-          Number(totalBasePoints) + Number(totalMultiplierPointsToDeduct)
-        }`,
+        message: `Insufficient store points. Available: ${storePoints}, Required: ${Number(totalBasePoints) + Number(totalMultiplierPointsToDeduct)
+          }`,
       });
     }
 
-    // **OLD SALES RETURN CREATION - COMMENTED OUT**
-    // const salesReturn = await SalesReturnModel.create({
-    //   distributorId: req.user._id,
-    //   salesReturnNo,
-    //   billId,
-    //   salesmanName,
-    //   routeId,
-    //   retailerId,
-    //   goodsType,
-    //   collectionStatus,
-    //   remarks,
-    //   lineItems,
-    //   totalBasePoints,
-    //   grossAmount,
-    //   schemeDiscount,
-    //   distributorDiscount,
-    //   taxableAmount,
-    //   cgst,
-    //   sgst,
-    //   igst,
-    //   invoiceAmount,
-    //   roundOffAmount,
-    //   cashDiscount,
-    //   netAmount,
-    // });
-
-    // **NEW SALES RETURN CREATION - With backdate fields**
     const salesReturnData = {
       distributorId: req.user._id,
       salesReturnNo,
-      billId,
+      billId: uniqueBillIds, // NOTE: schema must allow [ObjectId] now, not a single ObjectId — see note below
       salesmanName,
       routeId,
       retailerId,
       goodsType,
       collectionStatus,
+      totalReturnQty,
+      billReturnCounts,
       remarks,
       lineItems,
       totalBasePoints,
@@ -246,32 +269,31 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       roundOffAmount,
       cashDiscount,
       netAmount,
-      salesReturnDate: backdateFields.deliveryDate, // Use backdated date for multiplier calculations
-      originalSalesReturnDate: backdateFields.originalDeliveryDate, // Store actual return date
-      enabledBackDate: backdateFields.enabledBackDate, // Flag indicating if backdate is applied
+      salesReturnDate: backdateFields.deliveryDate,
+      originalSalesReturnDate: backdateFields.originalDeliveryDate,
+      enabledBackDate: backdateFields.enabledBackDate,
     };
 
-    // Explicitly set timestamps for backdate
     if (backdateFields.deliveryDate) {
       salesReturnData.createdAt = backdateFields.deliveryDate;
       salesReturnData.updatedAt = backdateFields.deliveryDate;
     }
 
     const salesReturn = await SalesReturnModel.create(salesReturnData);
-
-    // Update secondary target achievement for this sales return
     await updateSecondaryTargetOnSalesReturn(salesReturn);
 
-    if (bill) {
-      bill.salesReturnId.push(salesReturn._id);
-      await bill.save();
-    }
+    // Mark every involved bill with this return — not just one
+    await Bill.updateMany(
+      { _id: { $in: uniqueBillIds } },
+      { $push: { salesReturnId: salesReturn._id } },
+    );
 
     let transactions = [];
     let creditNoteItems = [];
     let replacementItems = [];
 
     for (const item of lineItems) {
+      const itemBill = billMap.get(String(item.billId));
       const inventory = await Inventory.findById(item.inventoryId);
       const stockId = await transactionCode("LXSTA");
       if (!inventory) {
@@ -283,68 +305,36 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
       const product = await Product.findById(item.product);
       const priceEntry = await Price.findById(item.price);
-      const piecesPerBox =
-        product?.uom === "box" ? product.no_of_pieces_in_a_box || 1 : 1;
+      const piecesPerBox = product?.uom === "box" ? product.no_of_pieces_in_a_box || 1 : 1;
       const rlpbyPcs = priceEntry?.rlp_price / piecesPerBox || 0;
       const dlpbyPcs = priceEntry?.dlp_price / piecesPerBox || 0;
 
+      // returnQty and price are both THIS row's own values, so a bill with
+      // price 10 / qty 20 always resolves to 200 regardless of other rows.
       if (goodsType === "Salable") {
-        inventory.availableQty =
-          (inventory.availableQty || 0) + Number(item.returnQty);
-        inventory.totalStockamtDlp += Math.round(
-          dlpbyPcs * Number(item.returnQty),
-        );
-        inventory.totalStockamtRlp += Math.round(
-          rlpbyPcs * Number(item.returnQty),
-        );
+        inventory.availableQty = (inventory.availableQty || 0) + Number(item.returnQty);
+        inventory.totalStockamtDlp += Math.round(dlpbyPcs * Number(item.returnQty));
+        inventory.totalStockamtRlp += Math.round(rlpbyPcs * Number(item.returnQty));
       } else {
-        inventory.unsalableQty =
-          (inventory.unsalableQty || 0) + Number(item.returnQty);
-        inventory.totalUnsalableamtDlp += Math.round(
-          dlpbyPcs * Number(item.returnQty),
-        );
-        inventory.totalUnsalableStockamtRlp += Math.round(
-          rlpbyPcs * Number(item.returnQty),
-        );
+        inventory.unsalableQty = (inventory.unsalableQty || 0) + Number(item.returnQty);
+        inventory.totalUnsalableamtDlp += Math.round(dlpbyPcs * Number(item.returnQty));
+        inventory.totalUnsalableStockamtRlp += Math.round(rlpbyPcs * Number(item.returnQty));
       }
-
-      inventory.totalQty =
-        (inventory.availableQty || 0) + (inventory.unsalableQty || 0);
+      inventory.totalQty = (inventory.availableQty || 0) + (inventory.unsalableQty || 0);
       await inventory.save();
-
-      // const transaction = await Transaction.create({
-      //   distributorId: req.user._id,
-      //   transactionId: stockId,
-      //   invItemId: item.inventoryId,
-      //   productId: inventory.productId,
-      //   qty: item.returnQty,
-      //   date: new Date(),
-      //   type: "In",
-      //   description: `Sales Return for ${salesReturnNo}`,
-      //   balanceCount:
-      //     goodsType === "Salable"
-      //       ? inventory.availableQty
-      //       : inventory.unsalableQty,
-      //   transactionType: "salesreturn",
-      //   stockType: goodsType === "Salable" ? "salable" : "unsalable",
-      // });
-      // transactions.push(transaction);
 
       const transactionData = {
         distributorId: req.user._id,
         transactionId: stockId,
         invItemId: item.inventoryId,
         productId: inventory.productId,
-        billId: bill?._id,
+        billId: itemBill?._id,
         billLineItemId: item._id,
         qty: item.returnQty,
         date: backdateFields.deliveryDate || new Date(),
         type: "In",
-        description: `Sales Return for ${salesReturnNo}`,
-        balanceCount:
-          goodsType === "Salable"
-            ? inventory.availableQty
-            : inventory.unsalableQty,
+        description: `Sales Return for ${salesReturnNo} (Bill ${itemBill?.billNo || ""})`,
+        balanceCount: goodsType === "Salable" ? inventory.availableQty : inventory.unsalableQty,
         transactionType: "salesreturn",
         stockType: goodsType === "Salable" ? "salable" : "unsalable",
         dates: {
@@ -354,7 +344,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         enabledBackDate: backdateFields.enabledBackDate,
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         transactionData.createdAt = backdateFields.deliveryDate;
         transactionData.updatedAt = backdateFields.deliveryDate;
@@ -362,7 +351,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
       const transaction = await Transaction.create(transactionData);
 
-      // Create stock ledger entry for sales return
       try {
         await createStockLedgerEntry(transaction._id);
       } catch (error) {
@@ -370,17 +358,15 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
           `Stock ledger creation failed for transaction ${transaction._id}:`,
           error.message,
         );
-        // Don't throw - allow sales return to continue
       }
 
       transactions.push(transaction);
 
       if (item.salesReturnType === "Credit Note") {
-        creditNoteItems.push({ ...item, adjustmentId: transaction._id });
+        creditNoteItems.push({ ...item, adjustmentId: transaction._id, billId: itemBill?._id });
       }
-
       if (item.salesReturnType === "Replacement") {
-        replacementItems.push({ ...item, adjustmentId: transaction._id });
+        replacementItems.push({ ...item, adjustmentId: transaction._id, billId: itemBill?._id });
       }
     }
 
@@ -395,7 +381,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         distributorId: req.user._id,
         outletId: salesReturn.retailerId,
         salesReturnId: salesReturn._id,
-        billId: bill?._id,
+        billId: creditNoteItems.map((i) => i.billId), // multiple bills possible
         lineItems: creditNoteItems,
         creditNoteNo,
         amount: Math.round(totalAmount),
@@ -405,7 +391,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         creditNoteType: "With Reference",
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         creditNoteData.createdAt = backdateFields.deliveryDate;
         creditNoteData.updatedAt = backdateFields.deliveryDate;
@@ -413,16 +398,13 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
       const creditNote = await CreditNoteModel.create(creditNoteData);
 
-      // bill update with credit note
-      if (bill) await Bill.findByIdAndUpdate(
-        { _id: bill._id },
-        {
-          $push: { creditNoteId: creditNote._id },
-        },
-        { new: true },
+      // Attach credit note to every bill it references
+      const creditNoteBillIds = [...new Set(creditNoteItems.map((i) => String(i.billId)))];
+      await Bill.updateMany(
+        { _id: { $in: creditNoteBillIds } },
+        { $push: { creditNoteId: creditNote._id } },
       );
 
-      // TODO: Add a debit transaction for the ledger
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       const latestLedger = await Ledger.findOne({
@@ -430,11 +412,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         retailerId: salesReturn.retailerId,
       }).sort({ createdAt: -1 });
 
-      let latestLedgerBalance = 0;
-      if (latestLedger) {
-        latestLedgerBalance = latestLedger?.balance;
-      }
-
+      const latestLedgerBalance = latestLedger?.balance || 0;
       const transactionId = await ledgerTransactionCode("LEDG", req.user._id);
 
       const ledgerCreditNoteData = {
@@ -445,13 +423,10 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         transactionFor: "Credit Note",
         creditNoteId: creditNote?._id,
         transactionAmount: Math.round(totalAmount),
-        balance: (
-          Number(latestLedgerBalance) - Math.round(totalAmount)
-        ).toFixed(2),
+        balance: (Number(latestLedgerBalance) - Math.round(totalAmount)).toFixed(2),
         date: backdateFields.deliveryDate || new Date(),
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         ledgerCreditNoteData.createdAt = backdateFields.deliveryDate;
         ledgerCreditNoteData.updatedAt = backdateFields.deliveryDate;
@@ -467,7 +442,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         distributorId: req.user._id,
         outletId: salesReturn.retailerId,
         salesReturnId: salesReturn._id,
-        billId: bill?._id,
+        billId: replacementItems.map((i) => i.billId),
         lineItems: replacementItems,
         replacementNo,
         replacementDate: backdateFields.deliveryDate || new Date(),
@@ -476,7 +451,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         replacementType: "With Reference",
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         replacementData.createdAt = backdateFields.deliveryDate;
         replacementData.updatedAt = backdateFields.deliveryDate;
@@ -484,50 +458,23 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
       const replacement = await Replacement.create(replacementData);
 
-      // bill update with replacement
-      if (bill) await Bill.findByIdAndUpdate(
-        { _id: bill._id },
-        {
-          $push: { replacementId: replacement._id },
-        },
-        { new: true },
+      const replacementBillIds = [...new Set(replacementItems.map((i) => String(i.billId)))];
+      await Bill.updateMany(
+        { _id: { $in: replacementBillIds } },
+        { $push: { replacementId: replacement._id } },
       );
     }
 
-    /*-------- **CHANGED: RBP Point Transaction with scheme validation** ---------*/
-
-    // **CHANGED: Only process base points if RBP scheme is mapped**
+    /*-------- RBP points logic — unchanged except bill.retailerId -> retailerId --------*/
 
     if (totalBasePoints > 0 && distributor.RBPSchemeMapped === "yes") {
-      console.log(
-        `Processing base points for sales return - distributor ${distributor.dbCode} with RBP scheme mapped`,
-      );
-
-      // Distributor side: credit points back
       const lastDistributorTxn = await DistributorTransaction.findOne({
         distributorId: req.user._id,
       }).sort({ createdAt: -1 });
 
-      const distributorPrevBalance = lastDistributorTxn
-        ? Number(lastDistributorTxn.balance)
-        : 0;
-
+      const distributorPrevBalance = lastDistributorTxn ? Number(lastDistributorTxn.balance) : 0;
       const points = Number(totalBasePoints);
 
-      // **OLD TRANSACTION CREATION - COMMENTED OUT**
-      // const distributorTxn = await DistributorTransaction.create({
-      //   distributorId: req.user._id,
-      //   transactionType: "credit",
-      //   transactionFor: "Sales Return",
-      //   point: points,
-      //   balance: distributorPrevBalance + points,
-      //   salesReturnId: salesReturn._id,
-      //   retailerId: bill.retailerId,
-      //   status: "Success",
-      //   remark: `Points deducted for Sales Return no ${salesReturnNo} for Retailer UID ${retailer.outletUID} and DB Code ${req.user.dbCode}`,
-      // });
-
-      // **NEW TRANSACTION CREATION - With enabledBackDate field**
       const distributorTxnData = {
         distributorId: req.user._id,
         transactionType: "credit",
@@ -535,7 +482,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         point: points,
         balance: distributorPrevBalance + points,
         salesReturnId: salesReturn._id,
-        retailerId: bill?.retailerId,
+        retailerId, // was bill?.retailerId — now use the top-level retailerId directly
         status: "Success",
         remark: `Points deducted for Sales Return no ${salesReturnNo} for Retailer UID ${retailer.outletUID} and DB Code ${req.user.dbCode}`,
         dates: {
@@ -545,16 +492,13 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         enabledBackDate: backdateFields.enabledBackDate,
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         distributorTxnData.createdAt = backdateFields.deliveryDate;
         distributorTxnData.updatedAt = backdateFields.deliveryDate;
       }
 
-      const distributorTxn =
-        await DistributorTransaction.create(distributorTxnData);
+      const distributorTxn = await DistributorTransaction.create(distributorTxnData);
 
-      // Retailer side: debit points
       const lastRetailerTxn2 = await RetailerOutletTransaction.findOne({
         retailerId: salesReturn.retailerId,
       }).sort({ createdAt: -1 });
@@ -563,28 +507,11 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         ? Number(lastRetailerTxn2.balance)
         : Number(retailer.currentPointBalance) || 0;
 
-      // **OLD TRANSACTION CREATION - COMMENTED OUT**
-      // const retailerOutletTxnSR = await RetailerOutletTransaction.create({
-      //   retailerId: salesReturn.retailerId,
-      //   distributorId: req.user._id,
-      //   salesReturnId: salesReturn._id,
-      //   billId: bill._id,
-      //   distributorTransactionId: distributorTxn._id,
-      //   transactionId: await retailerOutletTransactionCode("RTO"),
-      //   transactionType: "debit",
-      //   transactionFor: "Sales Return",
-      //   point: points,
-      //   balance: retailerPrevBalance - points,
-      //   status: "Success",
-      //   remark: `Points deducted for Sales Return no ${salesReturnNo} for Retailer UID ${retailer.outletUID} and DB Code ${req.user.dbCode}`,
-      // });
-
-      // **NEW TRANSACTION CREATION - With enabledBackDate field**
       const retailerOutletTxnSRData = {
         retailerId: salesReturn.retailerId,
         distributorId: req.user._id,
         salesReturnId: salesReturn._id,
-        billId: bill._id,
+        billId: uniqueBillIds, // spans potentially multiple bills now
         distributorTransactionId: distributorTxn._id,
         transactionId: await retailerOutletTransactionCode("RTO"),
         transactionType: "debit",
@@ -600,69 +527,33 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         enabledBackDate: backdateFields.enabledBackDate,
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         retailerOutletTxnSRData.createdAt = backdateFields.deliveryDate;
         retailerOutletTxnSRData.updatedAt = backdateFields.deliveryDate;
       }
 
-      const retailerOutletTxnSR = await RetailerOutletTransaction.create(
-        retailerOutletTxnSRData,
-      );
+      const retailerOutletTxnSR = await RetailerOutletTransaction.create(retailerOutletTxnSRData);
 
-      // Link back to distributor transaction
       await DistributorTransaction.updateOne(
         { _id: distributorTxn._id },
         { $set: { retailerOutletTransactionId: retailerOutletTxnSR._id } },
       );
 
-      // Update retailer snapshot balance (UI only)
       await OutletApproved.updateOne(
         { _id: salesReturn.retailerId },
         { $inc: { currentPointBalance: -points } },
       );
-
-      console.log(
-        `Successfully recorded base point debit of ${points} for sales return and credited distributor ledger`,
-      );
-    } else if (totalBasePoints > 0) {
-      console.log(
-        `Skipping base points processing - RBP scheme not mapped for distributor ${distributor.dbCode} (RBPSchemeMapped: ${distributor.RBPSchemeMapped})`,
-      );
     }
 
-    // **CHANGED: Only process multiplier points if RBP scheme is mapped**
     if (
       totalMultiplierPointsToDeduct > 0 &&
       totalBasePoints > 0 &&
       distributor.RBPSchemeMapped === "yes"
     ) {
-      console.log(
-        `Processing multiplier points for sales return - distributor ${distributor.dbCode} with RBP scheme mapped`,
-      );
-
-      // **OLD LOGIC - COMMENTED OUT**
-      // const billDeliveredDate = moment.tz(
-      //   bill?.dates?.deliveryDate,
-      //   "Asia/Kolkata",
-      // );
-      // const billDeliveredMonthInNumber = billDeliveredDate.month() + 1;
-      // const billDeliveredYear = billDeliveredDate.year();
-
-      // **NEW LOGIC - Use backdated sales return date for month/year determination**
-      const salesReturnDateForCalculation = moment.tz(
-        salesReturn.salesReturnDate,
-        "Asia/Kolkata",
-      );
-      const salesReturnMonthInNumber =
-        salesReturnDateForCalculation.month() + 1;
+      const salesReturnDateForCalculation = moment.tz(salesReturn.salesReturnDate, "Asia/Kolkata");
+      const salesReturnMonthInNumber = salesReturnDateForCalculation.month() + 1;
       const salesReturnYear = salesReturnDateForCalculation.year();
 
-      console.log(
-        `Using sales return date for multiplier calculation: ${salesReturnDateForCalculation.format("YYYY-MM-DD")} (Month: ${salesReturnMonthInNumber}, Year: ${salesReturnYear})`,
-      );
-
-      // Record multiplier ledger for retailer
       const lastRetailerTxn3 = await RetailerOutletTransaction.findOne({
         retailerId: salesReturn.retailerId,
       }).sort({ createdAt: -1 });
@@ -671,27 +562,11 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         ? Number(lastRetailerTxn3.balance)
         : Number(retailer.currentPointBalance) || 0;
 
-      // **OLD TRANSACTION CREATION - COMMENTED OUT**
-      // const retailerOutletTxnSM = await RetailerOutletTransaction.create({
-      //   retailerId: salesReturn.retailerId,
-      //   distributorId: req.user._id,
-      //   salesReturnId: salesReturn._id,
-      //   billId: bill._id,
-      //   transactionId: await retailerOutletTransactionCode("RTO"),
-      //   transactionType: "debit",
-      //   transactionFor: "Sales Multiplier",
-      //   point: totalMultiplierPointsToDeduct,
-      //   balance: retailerPrevBalance2 - totalMultiplierPointsToDeduct,
-      //   status: "Success",
-      //   remark: `Multiplier Points deducted for Sales Return no ${salesReturnNo} on total points ${totalBasePoints}`,
-      // });
-
-      // **NEW TRANSACTION CREATION - With enabledBackDate field**
       const retailerOutletTxnSMData = {
         retailerId: salesReturn.retailerId,
         distributorId: req.user._id,
         salesReturnId: salesReturn._id,
-        billId: bill._id,
+        billId: uniqueBillIds,
         transactionId: await retailerOutletTransactionCode("RTO"),
         transactionType: "debit",
         transactionFor: "Multiplier Sales Return",
@@ -706,23 +581,18 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         enabledBackDate: backdateFields.enabledBackDate,
       };
 
-      // Explicitly set timestamps for backdate
       if (backdateFields.deliveryDate) {
         retailerOutletTxnSMData.createdAt = backdateFields.deliveryDate;
         retailerOutletTxnSMData.updatedAt = backdateFields.deliveryDate;
       }
 
-      const retailerOutletTxnSM = await RetailerOutletTransaction.create(
-        retailerOutletTxnSMData,
-      );
+      const retailerOutletTxnSM = await RetailerOutletTransaction.create(retailerOutletTxnSMData);
 
-      // Update retailer snapshot balance (UI only)
       await OutletApproved.updateOne(
         { _id: salesReturn.retailerId },
         { $inc: { currentPointBalance: -totalMultiplierPointsToDeduct } },
       );
 
-      // Record multiplier meta transaction
       await new RetailerMultiplierTransaction({
         retailerId: salesReturn.retailerId,
         retailerOutletTransactionId: retailerOutletTxnSM._id,
@@ -735,14 +605,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         status: "Success",
         remark: `Multiplier Points deducted for Sales Return no ${salesReturnNo} on total points ${totalBasePoints} for Retailer UID ${retailer.outletUID} and DB Code ${req.user.dbCode}`,
       }).save();
-
-      console.log(
-        `Successfully created retailer multiplier transaction for ${totalMultiplierPointsToDeduct} multiplier points for sales return`,
-      );
-    } else if (totalMultiplierPointsToDeduct > 0) {
-      console.log(
-        `Skipping multiplier points processing - RBP scheme not mapped for distributor ${distributor.dbCode} (RBPSchemeMapped: ${distributor.RBPSchemeMapped})`,
-      );
     }
 
     res.status(201).json({
@@ -756,93 +618,52 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
   }
 });
 
-// **FUNCTION SIGNATURE CHANGED**
-// OLD: const getMultiplierPointsToDeduct = async (bill, totalBasePoints) => {
-// NEW: Added salesReturnDate parameter to use backdated return date instead of bill delivery date
+// Signature changed: now takes retailerId directly instead of a single bill,
+// since a batch can span multiple bills.
 const getMultiplierPointsToDeduct = async (
-  bill,
+  retailerId,
   totalBasePoints,
   salesReturnDate,
   enabledBackDate = false,
 ) => {
-  let result = {
-    pointsToDeduct: 0,
-    percentage: 0,
-  };
+  let result = { pointsToDeduct: 0, percentage: 0 };
 
-  // If sales return is backdated, multiplier must not be deducted.
-  if (enabledBackDate) {
-    return result;
-  }
+  if (enabledBackDate) return result;
 
-  // **OLD LOGIC - COMMENTED OUT**
-  // const billDeliveredDate = moment.tz(
-  //   bill?.dates?.deliveryDate,
-  //   "Asia/Kolkata",
-  // );
-  // const billDeliveredMonth = billDeliveredDate.month() + 1; // month() is 0-based
-  // const billDeliveredYear = billDeliveredDate.year();
-  // // If bill is from current month, no deduction
-  // if (
-  //   billDeliveredMonth === currentMonth &&
-  //   billDeliveredYear === currentYear
-  // ) {
-  //   return result;
-  // }
-
-  // **NEW LOGIC - Use the backdated sales return date for calculations**
   const returnDateMoment = moment.tz(salesReturnDate, "Asia/Kolkata");
-
-  const returnMonth = returnDateMoment.month() + 1; // month() is 0-based
+  const returnMonth = returnDateMoment.month() + 1;
   const returnYear = returnDateMoment.year();
 
   const currentMonth = moment().month() + 1;
   const currentYear = moment().year();
 
-  // If return is from current month, no deduction
   if (returnMonth === currentMonth && returnYear === currentYear) {
     return result;
   }
 
-  // Helper: fetch multipliers for a given month/year
   const fetchMultiplierPercentage = async (month, year) => {
     const multipliers =
       (await RetailerMultiplierTransaction.find({
-        retailerId: bill.retailerId,
+        retailerId,
         transactionType: "credit",
         month,
         year,
       }).lean()) || [];
 
-    return multipliers.reduce(
-      (sum, item) => sum + (Number(item.slabPercentage) || 0),
-      0,
-    );
+    return multipliers.reduce((sum, item) => sum + (Number(item.slabPercentage) || 0), 0);
   };
 
   let highestPercentage = 0;
-
-  // Start from current month
   const now = moment();
 
   for (let i = 1; i <= 3; i++) {
-    // Subtract i months from current month
     const date = moment(now).subtract(i, "month");
-    const month = date.month() + 1; // month() is 0-based
-    const year = date.year();
-
-    const percentage = await fetchMultiplierPercentage(month, year);
-
-    if (percentage > highestPercentage) {
-      highestPercentage = percentage;
-    }
+    const percentage = await fetchMultiplierPercentage(date.month() + 1, date.year());
+    if (percentage > highestPercentage) highestPercentage = percentage;
   }
 
-  // Calculate points to deduct
   if (highestPercentage > 0 && totalBasePoints > 0) {
-    result.pointsToDeduct = Math.round(
-      (Number(totalBasePoints) * highestPercentage) / 100,
-    );
+    result.pointsToDeduct = Math.round((Number(totalBasePoints) * highestPercentage) / 100);
     result.percentage = highestPercentage;
   }
 

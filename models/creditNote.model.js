@@ -92,10 +92,12 @@ const creditNoteSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "SalesReturn",
     },
-    billId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Bill",
-    },
+    billId: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Bill",
+      },
+    ],
     adjustmentId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Transaction",
