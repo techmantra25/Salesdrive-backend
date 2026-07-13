@@ -56,6 +56,7 @@ const convertOrderEnquiryToOrderEntry = asyncHandler(async (req, res) => {
       totalBasePoints: source.totalBasePoints,
       grossAmount: source.grossAmount,
       schemeDiscount: source.schemeDiscount,
+      manualDate: source.manualDate,
       distributorDiscount: source.distributorDiscount,
       taxableAmount: source.taxableAmount,
       cgst: source.cgst,

@@ -118,6 +118,10 @@ const OrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "OutletApproved",
     },
+    manualDate: {
+      type: Date,
+      default: Date.now,
+    },
     orderType: {
       type: String,
       enum: ["Counter", "Normal-Sale"],
