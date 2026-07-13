@@ -24,9 +24,27 @@ const paginatedOrderEntryReport = asyncHandler(async (req, res) => {
     let query = { distributorId };
 
     if (orderNo) query.orderNo = { $regex: orderNo, $options: "i" };
-    if (salesmanName) query.salesmanName = salesmanName;
-    if (routeId) query.routeId = routeId;
-    if (retailerId) query.retailerId = retailerId;
+    // Multi Select Support
+    if (salesmanName) {
+      query.salesmanName = {
+        $in: salesmanName.split(","),
+      };
+      console.log("salesmanName", salesmanName);
+    }
+
+    if (routeId) {
+      query.routeId = {
+        $in: routeId.split(","),
+      };
+      console.log("routeId", routeId);
+    }
+
+    if (retailerId) {
+      query.retailerId = {
+        $in: retailerId.split(","),
+      };
+      console.log("retailerId", retailerId);
+    }
     if (orderType) query.orderType = orderType;
     if (orderSource) query.orderSource = orderSource;
     if (paymentMode) query.paymentMode = paymentMode;
@@ -238,8 +256,8 @@ const paginatedOrderEntryReport = asyncHandler(async (req, res) => {
               select: "",
             },
             {
-              path:"salesReturnId",
-              select:"",
+              path: "salesReturnId",
+              select: "",
             }
           ],
         },

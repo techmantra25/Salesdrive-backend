@@ -41,12 +41,24 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
 
     if (billNo) query.billNo = { $regex: billNo, $options: "i" };
     if (orderNo) query.orderNo = { $regex: orderNo, $options: "i" };
-    if (salesmanName) query.salesmanName = salesmanName;
+    // Multi Select Filters
+    if (salesmanName) {
+      query.salesmanName = {
+        $in: salesmanName.split(","),
+      };
+    }
 
-    //  Route (Beat)
-    if (routeId) query.routeId = routeId;
+    if (routeId) {
+      query.routeId = {
+        $in: routeId.split(","),
+      };
+    }
 
-    if (retailerId) query.retailerId = retailerId;
+    if (retailerId) {
+      query.retailerId = {
+        $in: retailerId.split(","),
+      };
+    }
     if (billStatus) query.status = billStatus;
 
     //  Created Date
