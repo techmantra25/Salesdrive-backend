@@ -281,6 +281,7 @@ await purchaseOrder.save();
         qty: requestedQty,
         receivedQty: requestedQty,
         poNumber: purchaseOrder.purchaseOrderNo,
+        soNumber: poItem.soNumber || "",
         grossAmount,
         discountAmount: 0,
         specialDiscountAmount: 0,

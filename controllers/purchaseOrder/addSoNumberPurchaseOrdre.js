@@ -2,18 +2,40 @@ const PurchaseOrderEntry = require("../../models/purchaseOrder.model");
 
 exports.addSoNumberToOrder = async (req, res) => {
   try {
-    const { purchaseOrderId } = req.params;
-    const { soNumber } = req.body;
-console.log("Received SO Number:", soNumber, "for Order ID:", purchaseOrderId);
-    if (!purchaseOrderId || !soNumber) {
+    // The frontend currently sends the payload wrapped one level too deep —
+    // { soNumber: { purchaseOrderId, lineItemIds, soNumber } } — instead of
+    // { purchaseOrderId, lineItemIds, soNumber } directly. This normalizes
+    // both shapes so the endpoint works regardless, until the frontend
+    // wrapping bug (in addSoNumberToPurchaseOrder in api/purchaseOrder.js)
+    // is fixed.
+    const body =
+      req.body?.soNumber && typeof req.body.soNumber === "object"
+        ? req.body.soNumber
+        : req.body;
+
+    const purchaseOrderId = req.params.purchaseOrderId || body.purchaseOrderId;
+    const { lineItemIds } = body;
+    const soNumber = body.soNumber;
+
+    if (
+      !purchaseOrderId ||
+      !soNumber ||
+      typeof soNumber !== "string" ||
+      !Array.isArray(lineItemIds) ||
+      lineItemIds.length === 0
+    ) {
       return res.status(400).json({
         success: false,
-        message: "purchaseOrderId and soNumber are required",
+        message:
+          "purchaseOrderId, soNumber and at least one lineItemId are required",
       });
     }
 
-    // ✅ Check duplicate
-    const exists = await PurchaseOrderEntry.findOne({ soNumber });
+    // Check duplicate across ALL line items (any PO), since soNumber lives
+    // per line item rather than on the PO root.
+    const exists = await PurchaseOrderEntry.findOne({
+      "lineItems.soNumber": soNumber,
+    });
 
     if (exists) {
       return res.status(400).json({
@@ -22,10 +44,14 @@ console.log("Received SO Number:", soNumber, "for Order ID:", purchaseOrderId);
       });
     }
 
-    const updatedOrder = await PurchaseOrderEntry.findByIdAndUpdate(
-      purchaseOrderId,
-      { soNumber }, // ✅ direct root update
-      { new: true }
+    // Set the same soNumber on every selected line item only.
+    const updatedOrder = await PurchaseOrderEntry.findOneAndUpdate(
+      { _id: purchaseOrderId },
+      { $set: { "lineItems.$[elem].soNumber": soNumber } },
+      {
+        new: true,
+        arrayFilters: [{ "elem._id": { $in: lineItemIds } }],
+      }
     );
 
     if (!updatedOrder) {
@@ -41,7 +67,6 @@ console.log("Received SO Number:", soNumber, "for Order ID:", purchaseOrderId);
       data: updatedOrder,
     });
   } catch (error) {
-    // ✅ handle duplicate index error
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,

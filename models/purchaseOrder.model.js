@@ -16,7 +16,11 @@ const LineItemSchema = new mongoose.Schema({
     required: true,
   },
 
-  // ✅ ADDED (NEW FIELD)
+    soNumber: {
+    type: String,
+    trim: true,
+    default: "",
+  },
   l1Basic: {
     type: Number,
     default: 0,
@@ -122,12 +126,7 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
     },
-    soNumber: {
-      type: String,
-      unique: true,
-      sparse: true,
-      trim: true,
-    },
+ 
     expectedDeliveryDate: {
       type: Date,
     },

@@ -20,6 +20,11 @@ const LineItemSchema = new mongoose.Schema({
   receivedQty: { type: Number },
 
   poNumber: { type: String },
+  soNumber: {
+  type: String,
+  trim: true,
+  default: "",
+},
 
   grossAmount: { type: Number },
   discountAmount: { type: Number, default: 0 }, // trade discount after + before
