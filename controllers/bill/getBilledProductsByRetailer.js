@@ -141,6 +141,8 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
                 inventoryId: "$lineItems.inventoryId",
                 totalBilledQty: "$lineItems.billQty",  // same value, old key name
                 grossAmt: "$lineItems.grossAmt",
+                taxableAmt: "$lineItems.taxableAmt",
+
                 netAmt: "$lineItems.netAmt",
                 totalReturnedQty: 1,
                 returnIds: 1,
@@ -164,11 +166,23 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
         distributorIdFromUser
       );
 
-      data = data.map((row) => {
-        const priceArray = pricingByProduct[row.productId.toString()] || [];
-        const price = priceArray.length > 0 ? priceArray[0] : null;
-        return { ...row, price };
-      });
+     data = data.map((row) => {
+  const priceArray = pricingByProduct[row.productId.toString()] || [];
+  const price = priceArray.length > 0 ? priceArray[0] : null;
+
+  const qty = Number(row.totalBilledQty || 0);
+
+  const effectivePrice =
+    qty > 0
+      ? Number(row.taxableAmt || 0) / qty
+      : Number(price?.rlp_price || 0);
+
+  return {
+    ...row,
+    price,
+    effectivePrice: Number(effectivePrice.toFixed(2)),
+  };
+});
     }
 
     return res.status(200).json({
