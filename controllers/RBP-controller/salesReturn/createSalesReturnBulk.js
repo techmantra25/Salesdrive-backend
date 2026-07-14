@@ -54,6 +54,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       roundOffAmount,
       cashDiscount,
       netAmount,
+      manualDate,
     } = req.body;
 
     const missingFields = [
@@ -68,6 +69,31 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
         status: 400,
         message: `Missing required fields: ${missingFields.join(", ")}`,
       });
+    }
+
+    // NEW — resolve the return date+time that will be saved on
+    // salesReturnDate / manualDate: the DATE the user picked on the
+    // frontend, combined with the CURRENT time-of-day (i.e. the moment
+    // this request is being processed) — never midnight, and never the
+    // frontend's own clock. Falls back to "right now" entirely if no
+    // manualDate was sent.
+    const nowInKolkata = moment.tz("Asia/Kolkata");
+    let resolvedReturnDate = nowInKolkata.toDate();
+    if (manualDate) {
+      const parsedManualDate = moment.tz(manualDate, "YYYY-MM-DD", true, "Asia/Kolkata");
+      if (!parsedManualDate.isValid()) {
+        return res.status(400).json({
+          status: 400,
+          message: `Invalid manualDate "${manualDate}" — expected format YYYY-MM-DD`,
+        });
+      }
+      parsedManualDate.set({
+        hour: nowInKolkata.hour(),
+        minute: nowInKolkata.minute(),
+        second: nowInKolkata.second(),
+        millisecond: nowInKolkata.millisecond(),
+      });
+      resolvedReturnDate = parsedManualDate.toDate();
     }
 
     // Bill-wise return: every line item MUST carry its own billId now.
@@ -173,8 +199,29 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       (sum, item) => sum + Number(item.returnQty || 0),
       0,
     );
+    const getNextSalesReturnNo = async () => {
+      const lastSalesReturn = await SalesReturnModel.findOne({})
+        .sort({ _id: -1 })
+        .select("salesReturnNo");
 
-    const salesReturnNo = await generateCodeForSalesReturn("SR", distributor._id);
+      console.log("salesReturnNo:", JSON.stringify(lastSalesReturn?.salesReturnNo));
+
+      if (!lastSalesReturn) {
+        return "SR-001";
+      }
+
+      const match = lastSalesReturn.salesReturnNo.match(/\d+$/);
+
+      console.log("match:", match);
+
+      const nextNumber = match ? Number(match[0]) + 1 : 1;
+
+      console.log("nextNumber:", nextNumber);
+
+      return `SR-${String(nextNumber).padStart(3, "0")}`;
+    };
+
+    let salesReturnNo = await getNextSalesReturnNo();
 
 
 
@@ -196,6 +243,13 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       actualReturnDate,
       enableBackdateBilling,
     );
+
+    // NOTE — manualDate is intentionally kept separate from backdateFields
+    // here. backdateFields still drives createdAt/updatedAt (and every
+    // downstream transaction/ledger/credit-note/replacement/RBP date)
+    // exactly as before, so those all stay pinned to the real creation
+    // time. manualDate only ever ends up on the salesReturnDate field
+    // itself, below.
 
     if (backdateFields.enabledBackDate) {
       console.log(
@@ -246,7 +300,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
     const salesReturnData = {
       distributorId: req.user._id,
-      salesReturnNo,
       billId: uniqueBillIds, // NOTE: schema must allow [ObjectId] now, not a single ObjectId — see note below
       salesmanName,
       routeId,
@@ -269,17 +322,64 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       roundOffAmount,
       cashDiscount,
       netAmount,
-      salesReturnDate: backdateFields.deliveryDate,
+      // NEW — both fields save the frontend-picked date stamped with the
+      // current time (see resolvedReturnDate above). createdAt/updatedAt
+      // are intentionally left alone below — they always stay as
+      // Mongoose's own auto-generated record-creation timestamps.
+      salesReturnDate: resolvedReturnDate,
       originalSalesReturnDate: backdateFields.originalDeliveryDate,
       enabledBackDate: backdateFields.enabledBackDate,
     };
 
-    if (backdateFields.deliveryDate) {
-      salesReturnData.createdAt = backdateFields.deliveryDate;
-      salesReturnData.updatedAt = backdateFields.deliveryDate;
+    // NEW — salesReturnNo can collide under concurrent requests if
+    // generateCodeForSalesReturn isn't perfectly atomic (e.g. two requests
+    // both read the same "last number" before either writes). Rather than
+    // fail the whole return, catch the duplicate-key error, generate a
+    // fresh number, and retry a few times before giving up.
+    const MAX_SALES_RETURN_NO_RETRIES = 5;
+    let salesReturn;
+    for (let attempt = 0; attempt <= MAX_SALES_RETURN_NO_RETRIES; attempt++) {
+      try {
+        salesReturn = await SalesReturnModel.create({
+          ...salesReturnData,
+          salesReturnNo,
+        });
+
+
+        await SalesReturnModel.updateOne(
+          { _id: salesReturn._id },
+          {
+            $set: {
+              createdAt: resolvedReturnDate,
+              updatedAt: resolvedReturnDate,
+            },
+          },
+          {
+            timestamps: false,
+          }
+        );
+
+        salesReturn.createdAt = resolvedReturnDate;
+        salesReturn.updatedAt = resolvedReturnDate;
+        const last = await SalesReturnModel.findOne({})
+          .sort({ _id: -1 })
+          .select("salesReturnNo createdAt");
+
+
+        break;
+      } catch (err) {
+        const isDuplicateSalesReturnNo =
+          err?.code === 11000 &&
+          (err?.keyPattern?.salesReturnNo || /salesReturnNo/.test(err?.message || ""));
+
+        if (!isDuplicateSalesReturnNo || attempt === MAX_SALES_RETURN_NO_RETRIES) {
+          throw err;
+        }
+
+        salesReturnNo = await getNextSalesReturnNo();
+      }
     }
 
-    const salesReturn = await SalesReturnModel.create(salesReturnData);
     await updateSecondaryTargetOnSalesReturn(salesReturn);
 
     // Mark every involved bill with this return — not just one
