@@ -136,6 +136,7 @@ const getBilledProductsByRetailer = asyncHandler(async (req, res) => {
                 _id: 0,
                 billId: "$_id",
                 billNo: "$billNo",
+                billDate: "$createdAt",
                 productId: "$productInfo._id",
                 product: "$productInfo",
                 inventoryId: "$lineItems.inventoryId",
