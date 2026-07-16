@@ -120,11 +120,10 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
   <!-- HEADER -->
   <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 12px; border-bottom:1px solid #000;">
     <div style="flex:0 0 100px; height:100px; display:flex; align-items:center; justify-content:center;">
-      ${
-        options?.logoBase64
-          ? `<img src="${escapeHtml(options.logoBase64)}" alt="Company Logo" style="width:100%; height:100%; object-fit:contain; display:block;" onerror="this.style.display='none'" />`
-          : `<div style="width:100px;height:100px;border:1px solid #ccc;display:flex;align-items:center;justify-content:center;font-size:11px;color:#aaa;">Logo</div>`
-      }
+      ${options?.logoBase64
+      ? `<img src="${escapeHtml(options.logoBase64)}" alt="Company Logo" style="width:100%; height:100%; object-fit:contain; display:block;" onerror="this.style.display='none'" />`
+      : `<div style="width:100px;height:100px;border:1px solid #ccc;display:flex;align-items:center;justify-content:center;font-size:11px;color:#aaa;">Logo</div>`
+    }
     </div>
     <div style="flex:1; text-align:right; padding-left:8px;">
       <div style="font-size:20px; font-weight:bold; letter-spacing:0.5px;">${escapeHtml(distributor?.name || "Company Name")}</div>
@@ -201,11 +200,7 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
                 <td style="font-size:9px;">Route</td>
                 <td style="font-size:9px;">: ${escapeHtml(route?.beat_name || route?.name || "")}${route?.code ? ` (${escapeHtml(route.code)})` : ""}</td>
               </tr>
-              ${salesReturn.goodsType ? `
-              <tr>
-                <td style="font-size:9px;">Goods Type</td>
-                <td style="font-size:9px;">: ${escapeHtml(salesReturn.goodsType)}</td>
-              </tr>` : ""}
+           
               ${salesReturn.collectionStatus ? `
               <tr>
                 <td style="font-size:9px;">Collection Status</td>
@@ -233,18 +228,16 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
         <th style="width:6%;">UOM</th>
         <th style="width:7%;">Bill<br/>Qty</th>
         <th style="width:7%;">Return<br/>Qty</th>
-        <th style="width:9%;">Basic Rate</th>
-        <th style="width:9%;">Gross Amt</th>
-        <th style="width:8%;">Scheme<br/>Disc</th>
-        <th style="width:9%;">Taxable<br/>Amt</th>
-        <th style="width:8%;">TAX Amt</th>
-        <th style="width:9%;">Net Amt</th>
+<th style="width:8%;">MRP</th>
+<th style="width:9%;">Basic Rate</th>
+<th style="width:9%;">Gross Amt</th>
+      
       </tr>
     </thead>
     <tbody>
       ${validLineItems.map((item, index) => {
-        const product = item.product || {};
-        return `
+      const product = item.product || {};
+      return `
       <tr>
         <td class="text-center">${index + 1}</td>
         <td class="text-left">${escapeHtml(product.name || "")}</td>
@@ -252,20 +245,36 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
         <td class="text-center">${escapeHtml((item.uom || "").toUpperCase())}</td>
         <td class="text-center">${item.billQty || 0}</td>
         <td class="text-center">${item.returnQty || 0}</td>
-        <td class="text-right">&#8377;${formatCurrency(item.price?.rlp_price || 0)}</td>
-        <td class="text-right">&#8377;${formatCurrency(item.grossAmt)}</td>
-        <td class="text-right">&#8377;${formatCurrency(item.schemeDisc)}</td>
-        <td class="text-right">&#8377;${formatCurrency(item.taxableAmt)}</td>
-        <td class="text-right">&#8377;${formatCurrency((Number(item.totalCGST) || 0) + (Number(item.totalSGST) || 0) + (Number(item.totalIGST) || 0))}</td>
-        <td class="text-right">&#8377;${formatCurrency(item.netAmt)}</td>
+
+<td class="text-right">
+  &#8377;${formatCurrency(item.price?.mrp_price || 0)}
+</td>
+
+<td class="text-right">
+  &#8377;${formatCurrency(
+    Number(item.taxableAmt || 0) /
+    Number(item.returnQty || item.billQty || 1)
+  )}
+</td>
+
+<td class="text-right">
+  &#8377;${formatCurrency(item.grossAmt)}
+</td>
+       
       </tr>`;
-      }).join("")}
+    }).join("")}
       ${Array.from({ length: blankRowsNeeded }).map(() => `
-      <tr>
-        <td class="text-center">-</td>
-        <td></td><td></td><td></td><td></td><td></td>
-        <td></td><td></td><td></td><td></td><td></td><td></td>
-      </tr>`).join("")}
+<tr>
+  <td class="text-center">-</td>
+  <td></td>
+  <td></td>
+  <td></td>
+  <td></td>
+  <td></td>
+  <td></td>
+  <td></td>
+  <td></td>
+</tr>`).join("")}
     </tbody>
   </table>
 
@@ -327,16 +336,6 @@ const generateSalesReturnHTML = (salesReturn, options = {}) => {
                 <td style="width:60%; font-size:9px;">Gross Amount</td>
                 <td style="width:10%;" class="text-center">:</td>
                 <td style="width:30%;" class="text-right" style="font-size:9px;">&#8377;${formatCurrency(salesReturn.grossAmount)}</td>
-              </tr>
-              <tr>
-                <td style="font-size:9px;">Scheme Discount</td>
-                <td class="text-center">:</td>
-                <td class="text-right" style="font-size:9px;">&#8377;${formatCurrency(salesReturn.schemeDiscount)}</td>
-              </tr>
-              <tr>
-                <td style="font-size:9px;">Special Discount</td>
-                <td class="text-center">:</td>
-                <td class="text-right" style="font-size:9px;">&#8377;${formatCurrency(salesReturn.distributorDiscount)}</td>
               </tr>
               <tr>
                 <td style="font-size:9px;">Taxable Amount</td>
