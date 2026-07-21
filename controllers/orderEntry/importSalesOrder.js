@@ -179,48 +179,53 @@ const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
   return { cgst, sgst, igst };
 };
 
+/**
+ * Mirrors the manual "Order Entry" screen exactly (EntryProductCatalogue.jsx):
+ *
+ *  - Effective Price is the actual per-unit billed price. If the uploader leaves it
+ *    blank, we bill at RLP (no discount, no markup) — same as never touching the
+ *    "Effective Price" box on the manual entry screen.
+ *  - The Special/Distributor Discount is stored as a ₹-PER-UNIT AMOUNT
+ *    (distributorDiscUnit = "amount"), exactly like handleBillPriceChange() does:
+ *        distributorDisc = rlpPrice - effectivePrice
+ *    This is intentionally NOT clamped to >= 0. If Effective Price is uploaded
+ *    HIGHER than RLP, distributorDisc comes out negative (a markup), and taxableAmt
+ *    correctly comes out ABOVE grossAmt — exactly like the "-9.46" example in the UI
+ *    where Effective Price (140) > Base Rate (130.54).
+ *  - Total Discount % / Amount are always measured against MRP using the actual
+ *    effective price, matching getTotalDiscountData() on the manual entry screen.
+ *    When Effective Price isn't uploaded, effPrice defaults to RLP, so Total Discount
+ *    naturally shows the baseline MRP→RLP discount every product already carries.
+ */
 const buildLineItem = ({
   product,
   price,
   inventory,
   qty,
   effectivePrice,
-  specialDiscount,
   isIgst,
 }) => {
   const rlpPrice = safeNumber(price.rlp_price);
-  const grossAmt = toTwoDecimal(qty * rlpPrice);
-  const effectivePriceDiscount =
-    effectivePrice !== null && rlpPrice > 0
-      ? ((rlpPrice - effectivePrice) / rlpPrice) * 100
-      : null;
-  const distributorDiscountPercent = toTwoDecimal(
-    Math.min(
-      Math.max(
-        safeNumber(
-          effectivePriceDiscount !== null
-            ? effectivePriceDiscount
-            : specialDiscount,
-        ),
-        0,
-      ),
-      100,
-    ),
-  );
-  const distributorDiscount = toTwoDecimal(
-    grossAmt * (distributorDiscountPercent / 100),
-  );
-  const taxableAmt = toTwoDecimal(grossAmt - distributorDiscount);
   const mrpPrice = safeNumber(price.mrp_price);
+  const grossAmt = toTwoDecimal(qty * rlpPrice);
 
+  // Effective Price actually billed. Falls back to RLP when not uploaded.
+  const effPrice =
+    effectivePrice !== null ? safeNumber(effectivePrice) : rlpPrice;
+
+  // ₹-per-unit amount, uncapped (can be negative -> markup above RLP).
+  const distributorDiscUnitAmount = toTwoDecimal(rlpPrice - effPrice);
+  const distributorDiscount = toTwoDecimal(distributorDiscUnitAmount * qty);
+
+  const taxableAmt = toTwoDecimal(grossAmt - distributorDiscount);
+
+  // Always against MRP, using the actual effective price.
   const totalDiscountPercentage =
     mrpPrice > 0
-      ? toTwoDecimal(((mrpPrice - effectivePrice) / mrpPrice) * 100)
+      ? toTwoDecimal(((mrpPrice - effPrice) / mrpPrice) * 100)
       : 0;
+  const totalDiscountAmount = toTwoDecimal((mrpPrice - effPrice) * qty);
 
-  const totalDiscountAmount = toTwoDecimal(
-    (mrpPrice - effectivePrice) * qty
-  );
   const taxRate = getApplicableTaxRate({ product, taxableAmt, qty });
   const totalCGST = isIgst
     ? 0
@@ -243,8 +248,8 @@ const buildLineItem = ({
     ),
     grossAmt,
     schemeDisc: 0,
-    distributorDisc: distributorDiscountPercent,
-    distributorDiscUnit: "percent",
+    distributorDisc: distributorDiscUnitAmount,
+    distributorDiscUnit: "amount",
     taxableAmt,
     totalDiscountPercentage,
     totalDiscountAmount,
@@ -269,23 +274,22 @@ const mergeRowsByProduct = (rows) => {
       const existingQty = safeNumber(map[productCode].orderQty);
       const newQty = safeNumber(row.orderQty);
       const totalQty = existingQty + newQty;
-      const weightedDiscount =
-        totalQty > 0
-          ? (safeNumber(map[productCode].specialDiscount) * existingQty +
-            safeNumber(row.specialDiscount) * newQty) /
-          totalQty
-          : 0;
+
+      // Weighted-average the Effective Price across merged rows for the same
+      // product code. If EITHER row omitted Effective Price, we can't weight it
+      // meaningfully (we don't know RLP yet at merge time), so we leave it null —
+      // buildLineItem() will then fall back to RLP for the whole merged quantity,
+      // same as if Effective Price had simply never been supplied.
       const weightedEffectivePrice =
         totalQty > 0 &&
-          map[productCode].effectivePrice !== null &&
-          row.effectivePrice !== null
+        map[productCode].effectivePrice !== null &&
+        row.effectivePrice !== null
           ? (safeNumber(map[productCode].effectivePrice) * existingQty +
             safeNumber(row.effectivePrice) * newQty) /
           totalQty
           : null;
 
       map[productCode].orderQty += row.orderQty;
-      map[productCode].specialDiscount = weightedDiscount;
       map[productCode].effectivePrice = weightedEffectivePrice;
     }
   }
@@ -363,46 +367,12 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
         inventory,
         qty: item.orderQty,
         effectivePrice: item.effectivePrice,
-        specialDiscount: item.specialDiscount,
         isIgst,
       }),
     );
   }
 
   const orderNo = await orderNumberGeneratorNew("ORD");
-
-  // if (validationErrors.length > 0) {
-  //   throw {
-  //     message: "Sales order cancelled due to validation errors",
-  //     validationErrors: rows.map((row) => {
-  //       const matchedErrors = validationErrors
-  //         .filter(
-  //           (error) =>
-  //             String(error.productCode).trim() ===
-  //             String(row.productCode).trim(),
-  //         )
-  //         .map((error) => error.reason);
-
-  //       const failedProductCodes = validationErrors
-  //         .filter(
-  //           (error) =>
-  //             String(error.productCode).trim() !==
-  //             String(row.productCode).trim(),
-  //         )
-  //         .map((error) => String(error.productCode).trim());
-
-  //       const uniqueFailedCodes = [...new Set(failedProductCodes)];
-
-  //       return {
-  //         ...row,
-  //         reason:
-  //           matchedErrors.length > 0
-  //             ? matchedErrors.join(" | ")
-  //             : `Cancelled because Product Code(s) ${uniqueFailedCodes.join(", ")} in Order ${orderNo} failed`,
-  //       };
-  //     }),
-  //   };
-  // }
 
   if (!lineItems.length) {
     throw {
@@ -429,11 +399,13 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
 
   const netAmount = total("netAmt");
 
+  // distributorDisc is now a ₹-per-unit AMOUNT (can be negative for a markup),
+  // so the order-level total is simply the sum of (distributorDisc * qty) per line —
+  // equivalent to total(grossAmt) - total(taxableAmt).
   const totalDistributorDiscount = toTwoDecimal(
     lineItems.reduce(
       (sum, item) =>
-        sum +
-        safeNumber(item.grossAmt) * (safeNumber(item.distributorDisc) / 100),
+        sum + safeNumber(item.distributorDisc) * safeNumber(item.oderQty),
       0,
     ),
   );
@@ -526,6 +498,8 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const orderQty = safeNumber(getFirstValue(row, ["Order Quantity"]));
       const orderType = DEFAULT_ORDER_TYPE;
       const paymentMode = DEFAULT_PAYMENT_MODE;
+      // Positive-only: a 0 or negative Effective Price in the sheet is treated as
+      // "not supplied" and falls back to RLP, same guard as before.
       const effectivePrice = safeOptionalPositiveNumber(
         getFirstValue(row, ["Effective Price"]),
       );
@@ -533,7 +507,6 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         getFirstValue(row, ["Net Amt ( Incl. GST)"]),
       );
       const remark = String(getFirstValue(row, ["Remark"])).trim();
-      const specialDiscount = undefined;
 
       if (!salesmanCode || !retailerCode || !retailerName || !productCode) {
         skippedRowCount += 1;
@@ -568,7 +541,6 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         productCode,
         orderQty,
         effectivePrice,
-        specialDiscount,
         retailerName,
         netAmount,
         remark,
