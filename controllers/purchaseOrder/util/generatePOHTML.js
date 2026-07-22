@@ -323,11 +323,11 @@ function generatePOHTML(purchaseOrder, options = {}) {
                     }</span>
                 </div>
                 <div class="detail-row">
-                    <span class="detail-label">Quotation Date:</span>
-                    <span class="detail-value">${formatDate(
-                      purchaseOrder.createdAt
-                    )}</span>
-                </div>
+    <span class="detail-label">Quotation Date:</span>
+    <span class="detail-value">${formatDate(
+      purchaseOrder.manualDate || purchaseOrder.createdAt
+    )}</span>
+</div>
             </div>
             <div class="rupa-logo">
                 <img src="${options.logoBase64 || "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media"}" alt="Company Logo" />

@@ -170,51 +170,63 @@ td, th {
     <td class="label" width="17%">Invoice Number :</td>
     <td width="15%">${data.invoiceNumber || ""}</td>
   </tr>
+
   <tr>
     <td class="label">Desp Adv No &amp; Date:</td>
     <td>${data.adviceNo || ""} Dt. ${formatDate(data.adviceDate)}</td>
     <td class="label">Lorry No :</td>
     <td>${data.lorryNo || ""}</td>
   </tr>
+
   <tr>
-   <td class="label">Party Name &amp; Mob:</td>
-<td>
-  ${data.retailer?.outletName || ""}
-  ${data.retailer?.mobile1 ? ` - ${data.retailer.mobile1}` : ""}
-</td>
+    <td class="label">Outlet Code :</td>
+    <td>${data.retailer?.outletCode || ""}</td>
     <td class="label">Driver Name &amp; Number :</td>
     <td>${data.driverName || ""}</td>
   </tr>
+
   <tr>
-    <td class="label">Tally Billing Name :</td>
-    <td>${data.tallyBillingName || ""}</td>
+    <td class="label">Party Name :</td>
+    <td>${data.retailer?.outletName || ""}</td>
     <td class="label">Total Boxes :</td>
     <td>${data.summary?.totalBoxes || 0}</td>
   </tr>
+
+  <tr>
+    <td class="label">Tally Billing Name :</td>
+    <td>${data.tallyBillingName || ""}</td>
+    <td class="label">Total Pipe Packets :</td>
+    <td>${data.summary?.totalPipePackets || 0}</td>
+  </tr>
+
   <tr>
     <td class="label">Sales Officer Name &amp; Number :</td>
     <td>${data.salesman?.name || ""}</td>
-    <td class="label">Total Pipe Packets :</td>
-   <td>${data.summary?.totalPipePackets || 0}</td>
-  </tr>
-  <tr>
-    <td class="label">Beat &amp; Route:</td>
-    <td>${data.beatName || ""}</td>
     <td class="label">Total Loose Pipes :</td>
-    <td>${data.summary?.totalLoosePipes || 0}</td> 
+    <td>${data.summary?.totalLoosePipes || 0}</td>
   </tr>
+
   <tr>
-   <td class="label">Ph Number</td>
-<td>${data.retailer?.mobile1 || ""}</td>
+    <td class="label">Beat &amp; Route :</td>
+    <td>${data.beatName || ""}</td>
     <td class="label">Material Sorted By :</td>
     <td>${data.materialSortedBy || ""}</td>
   </tr>
+
   <tr>
-    <td class="label">Handling &amp; Freight charges :</td>
-    <td>${data.freightCharge || ""}</td>
+    <td class="label">Ph. Number :</td>
+    <td>${data.retailer?.mobile1 || ""}</td>
     <td class="label">Verified :</td>
     <td>${data.verifiedBy || ""}</td>
   </tr>
+
+  <tr>
+    <td class="label">Handling &amp; Freight Charges :</td>
+    <td>${data.freightCharge || ""}</td>
+    <td></td>
+    <td></td>
+  </tr>
+
   <tr>
     <td class="label">Remarks :</td>
     <td colspan="3">${data.remarks || ""}</td>

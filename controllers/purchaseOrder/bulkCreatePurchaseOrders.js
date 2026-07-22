@@ -1,4 +1,3 @@
-
 const asyncHandler = require("express-async-handler");
 const axios = require("axios");
 
@@ -23,6 +22,16 @@ const REQUIRED_ROW_FIELDS = ["brand", "product_code", "uom_qty", "so_number"];
  * bad values (e.g. a blank product_code on one row) are caught later,
  * per-row, and only fail that row's so_number group.
  */
+function parseDDMMYYYY(dateStr) {
+  if (!dateStr) return null;
+
+  const [day, month, year] = dateStr.split("-").map(Number);
+
+  if (!day || !month || !year) return null;
+
+  return new Date(year, month - 1, day);
+}
+
 function validateRows(rows) {
   if (!Array.isArray(rows) || !rows.length) {
     throw new Error("`rows` must be a non-empty array");
@@ -83,15 +92,21 @@ async function resolvePrice(productId, distributor) {
 /**
  * Resolve one row object into a lineItem object, or throw with a
  * descriptive message (caller attaches row number for context).
+ *
+ * NOTE: soNumber lives on the LINE ITEM in the schema (there is no
+ * root-level `soNumber` field on PurchaseOrder), so it's set here and
+ * carried through on every lineItem this group produces.
  */
 async function buildLineItemFromRow(row, distributor) {
   const brandName = String(row.brand || "").trim();
   const productCode = String(row.product_code || "").trim();
   const uomQty = Number(row.uom_qty);
+  const soNumber = String(row.so_number || "").trim();
 
   if (!brandName) throw new Error("Missing brand");
   if (!productCode) throw new Error("Missing product_code");
   if (!uomQty || uomQty <= 0) throw new Error(`Invalid uom_qty "${row.uom_qty}"`);
+  if (!soNumber) throw new Error("Missing so_number");
 
   const brand = await Brand.findOne({
     name: new RegExp(`^${brandName}$`, "i"),
@@ -182,6 +197,7 @@ async function buildLineItemFromRow(row, distributor) {
     price: price._id,
     inventoryId: inventory ? inventory._id : undefined,
     lineItemUOM: uom,
+    soNumber,
     boxOrderQty,
     orderQty,
     l1Basic: l1DiscountPct,
@@ -204,8 +220,16 @@ async function buildLineItemFromRow(row, distributor) {
 
 /**
  * Build + save one PurchaseOrderEntry from a group of rows sharing the
- * same so_number. Returns a result object; throws only on truly fatal
- * per-group errors (caller catches and records the failure).
+ * same so_number.
+ *
+ * Returns either:
+ *   - the saved PurchaseOrder document (success), or
+ *   - { success: false, soNumber, rowErrors } if the so_number is a
+ *     duplicate, or if one or more rows in the group failed to resolve
+ *     (either case fails the whole so_number group).
+ *
+ * Throws only for truly fatal, non-row-specific errors (e.g. PO save
+ * itself failing) — the caller catches those and records the failure.
  */
 async function createSinglePoFromGroup({
   soNumber,
@@ -220,37 +244,49 @@ async function createSinglePoFromGroup({
   status,
   approvedStatus,
   approved_by,
+  manualDate,
 }) {
+  // soNumber lives on lineItems, not on the PO root — check for a duplicate
+  // across ALL existing purchase orders' line items before doing any work,
+  // mirroring the uniqueness check in addSoNumberToOrder.
+  const existing = await PurchaseOrder.findOne({
+    "lineItems.soNumber": soNumber,
+  });
+
+  if (existing) {
+    return {
+      success: false,
+      soNumber,
+      rowErrors: rows.map((row) => ({
+        ...row,
+        error: `SO Number "${soNumber}" already exists`,
+      })),
+    };
+  }
+
   const lineItems = [];
+  const rowErrors = [];
 
   for (const row of rows) {
     try {
       const lineItem = await buildLineItemFromRow(row, distributor);
       lineItems.push(lineItem);
     } catch (err) {
-      // Attach row context and bubble up — this fails the whole so_number group
-      const lineItems = [];
-const rowErrors = [];
-
-for (const row of rows) {
-  try {
-    const lineItem = await buildLineItemFromRow(row, distributor);
-    lineItems.push(lineItem);
-  } catch (err) {
-    rowErrors.push({
-      ...row,
-      error: err.message,
-    });
-  }
-}
-
-if (rowErrors.length) {
-  return {
-    success: false,
-    rowErrors,
-  };
-}
+      rowErrors.push({
+        ...row,
+        error: err.message,
+      });
     }
+  }
+
+  // Any bad row fails the whole so_number group — report all row errors
+  // together instead of silently creating a partial PO.
+  if (rowErrors.length) {
+    return {
+      success: false,
+      soNumber,
+      rowErrors,
+    };
   }
 
   if (!lineItems.length) {
@@ -282,10 +318,14 @@ if (rowErrors.length) {
     selectedBrand,
     selectedPlant,
     purchaseOrderNo: orderNumber,
-    soNumber,
+    // NOTE: no root-level `soNumber` here — the schema doesn't define one,
+    // so it was being silently stripped on save. Each lineItem above now
+    // carries its own soNumber instead, matching the schema and matching
+    // how addSoNumberToOrder reads/writes it elsewhere.
     supplierId,
     expectedDeliveryDate,
     lineItems,
+    manualDate,
     totalLines: lineItems.length,
 
     grossAmount: grossAmountCalc,
@@ -307,7 +347,25 @@ if (rowErrors.length) {
     orderRemark,
   });
 
-  const saved = await newPurchaseOrder.save();
+  let saved;
+  try {
+    saved = await newPurchaseOrder.save();
+  } catch (saveErr) {
+    // Catch a duplicate-key race (two concurrent uploads using the same
+    // so_number both passing the findOne check above) if a unique index
+    // on lineItems.soNumber exists at the DB level.
+    if (saveErr.code === 11000) {
+      return {
+        success: false,
+        soNumber,
+        rowErrors: rows.map((row) => ({
+          ...row,
+          error: `SO Number "${soNumber}" already exists`,
+        })),
+      };
+    }
+    throw saveErr;
+  }
 
   // Best-effort inventory update — does not fail the PO if it errors
   for (const item of lineItems) {
@@ -334,29 +392,27 @@ if (rowErrors.length) {
 // ---------------------------------------------------------------------------
 
 const bulkCreatePurchaseOrders = asyncHandler(async (req, res) => {
+  // protectDisRoute guarantees req.user is a valid distributor
+  const distributor = req.user;
 
-// protectDisRoute guarantees req.user is a valid distributor
-const distributor = req.user;
+  if (!distributor) {
+    return res.status(401).json({
+      message: "Distributor authentication failed.",
+    });
+  }
 
-if (!distributor) {
-  return res.status(401).json({
-    message: "Distributor authentication failed.",
+  const supplier = await Supplier.findOne({
+    distributorId: distributor._id,
+    status: "active",
   });
-}
 
-console.log("Distributor:", distributor._id);
-const supplier = await Supplier.findOne({
-  distributorId: distributor._id,
-  status: "active",
-});
+  if (!supplier) {
+    return res.status(404).json({
+      message: "No active supplier found for this distributor.",
+    });
+  }
 
-if (!supplier) {
-  return res.status(404).json({
-    message: "No active supplier found for this distributor.",
-  });
-}
-
-const supplierId = supplier._id;
+  const supplierId = supplier._id;
   const {
     selectedBrand,
     selectedPlant,
@@ -366,8 +422,6 @@ const supplierId = supplier._id;
     status = "Confirmed",
     rows: rawRows,
   } = req.body;
-
-
 
   let rows;
   try {
@@ -399,13 +453,15 @@ const supplierId = supplier._id;
   }
 
   const groups = groupBySoNumber(rows);
-  const rowsWithoutSoNumber = rows.length - Array.from(groups.values()).reduce((s, g) => s + g.length, 0);
+  const rowsWithoutSoNumber =
+    rows.length - Array.from(groups.values()).reduce((s, g) => s + g.length, 0);
 
   const results = [];
 
   for (const [soNumber, groupRows] of groups.entries()) {
+    const manualDate = parseDDMMYYYY(groupRows[0].po_date);
     try {
-      const saved = await createSinglePoFromGroup({
+      const result = await createSinglePoFromGroup({
         soNumber,
         rows: groupRows,
         distributor,
@@ -413,6 +469,7 @@ const supplierId = supplier._id;
         selectedBrand,
         selectedPlant,
         expectedDeliveryDate,
+        manualDate,
         remarks,
         orderRemark,
         status,
@@ -420,6 +477,20 @@ const supplierId = supplier._id;
         approved_by,
       });
 
+      // createSinglePoFromGroup returns { success: false, ... } when the
+      // so_number is a duplicate or one or more rows in the group failed —
+      // treat that as a failed group instead of assuming success.
+      if (result && result.success === false) {
+        results.push({
+          soNumber,
+          success: false,
+          error: "One or more rows failed validation; purchase order was not created.",
+          rowErrors: result.rowErrors,
+        });
+        continue;
+      }
+
+      const saved = result;
       results.push({
         soNumber,
         success: true,

@@ -16,7 +16,7 @@ const LineItemSchema = new mongoose.Schema({
     required: true,
   },
 
-    soNumber: {
+  soNumber: {
     type: String,
     trim: true,
     default: "",
@@ -35,7 +35,7 @@ const LineItemSchema = new mongoose.Schema({
   lineItemUOM: {
     type: String,
     enum: {
-      values: ["pcs", "bndl", "box", "coil","packet"],
+      values: ["pcs", "bndl", "box", "coil", "packet"],
       message: "Values allowed pcs/box/bndl/coil/packet",
     },
   },
@@ -76,18 +76,18 @@ const LineItemSchema = new mongoose.Schema({
   },
   usedBasePoint: { type: Number, default: null },
   foreclose: {
-  type: Boolean,
-  default: false,
-},
-forecloseUom: {
-  type: Number,
-  default: 0,
-},
+    type: Boolean,
+    default: false,
+  },
+  forecloseUom: {
+    type: Number,
+    default: 0,
+  },
 
-forecloseReason: {
-  type: String,
-  default: "",
-},
+  forecloseReason: {
+    type: String,
+    default: "",
+  },
 });
 
 const PurchasOrderEntrySchema = new mongoose.Schema(
@@ -126,9 +126,13 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Supplier",
     },
- 
+
     expectedDeliveryDate: {
       type: Date,
+    },
+    manualDate: {
+      type: Date,
+      default: null,
     },
 
     lineItems: [LineItemSchema],
