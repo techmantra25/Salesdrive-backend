@@ -209,10 +209,11 @@ const buildLineItem = ({
   const mrpPrice = safeNumber(price.mrp_price);
   const grossAmt = toTwoDecimal(qty * rlpPrice);
 
-  // Effective Price actually billed. Falls back to RLP when not uploaded.
-  const effPrice =
-    effectivePrice !== null ? safeNumber(effectivePrice) : rlpPrice;
-
+// Effective Price actually billed. Falls back to RLP when not uploaded.
+const effPrice =
+  effectivePrice !== null && qty > 0
+    ? safeNumber(effectivePrice) / qty
+    : rlpPrice;
   // ₹-per-unit amount, uncapped (can be negative -> markup above RLP).
   const distributorDiscUnitAmount = toTwoDecimal(rlpPrice - effPrice);
   const distributorDiscount = toTwoDecimal(distributorDiscUnitAmount * qty);
@@ -280,17 +281,14 @@ const mergeRowsByProduct = (rows) => {
       // meaningfully (we don't know RLP yet at merge time), so we leave it null —
       // buildLineItem() will then fall back to RLP for the whole merged quantity,
       // same as if Effective Price had simply never been supplied.
-      const weightedEffectivePrice =
-        totalQty > 0 &&
-        map[productCode].effectivePrice !== null &&
-        row.effectivePrice !== null
-          ? (safeNumber(map[productCode].effectivePrice) * existingQty +
-            safeNumber(row.effectivePrice) * newQty) /
-          totalQty
+       const combinedEffectivePrice =
+        map[productCode].effectivePrice !== null && row.effectivePrice !== null
+          ? safeNumber(map[productCode].effectivePrice) +
+            safeNumber(row.effectivePrice)
           : null;
 
       map[productCode].orderQty += row.orderQty;
-      map[productCode].effectivePrice = weightedEffectivePrice;
+      map[productCode].effectivePrice = combinedEffectivePrice;
     }
   }
 
