@@ -448,14 +448,20 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
 
   const createdOrder = await OrderEntry.create(orderData);
 
-  if (orderDate) {
-    await OrderEntry.collection.updateOne(
-      { _id: createdOrder._id },
-      { $set: { createdAt: orderDate, updatedAt: orderDate } },
-    );
-    createdOrder.createdAt = orderDate;
-    createdOrder.updatedAt = orderDate;
-  }
+if (orderDate) {
+  await OrderEntry.collection.updateOne(
+    { _id: createdOrder._id },
+    {
+      $set: {
+        manualOrderDate: orderDate,
+        updatedAt: orderDate, 
+      },
+    }
+  );
+
+  createdOrder.manualOrderDate = orderDate;
+  createdOrder.updatedAt = orderDate;
+}
 
   return {
     order: createdOrder,
