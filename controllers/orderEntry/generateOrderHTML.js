@@ -12,8 +12,30 @@ const formatDate = (date) => {
   ).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
 };
 
+// Groups line items so that entries for the same product sit next to each
+// other in the printed list, instead of appearing in whatever scattered
+// order they were added to the order. Grouping is by product code (falling
+// back to description if code is missing), and groups keep the position of
+// their FIRST occurrence in the original list — so the overall ordering
+// still feels natural, it just clusters repeats of the same product.
+const groupItemsByProduct = (items) => {
+  const groupOrder = [];
+  const groups = new Map();
+
+  items.forEach((item) => {
+    const key = item.code || item.description || "";
+    if (!groups.has(key)) {
+      groups.set(key, []);
+      groupOrder.push(key);
+    }
+    groups.get(key).push(item);
+  });
+
+  return groupOrder.flatMap((key) => groups.get(key));
+};
+
 const generateOrderHTML = (data) => {
-  const items = data?.items || [];
+  const items = groupItemsByProduct(data?.items || []);
 
   const productRows = items
     .map(
