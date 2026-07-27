@@ -494,8 +494,7 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                 <td class="text-right">${escapeHtml(
           formatCurrency(item?.netAmt),
         )}</td>
-                  formatCurrency(item?.schemeDisc),
-                )}</td>
+               
                  <td class="text-right">${escapeHtml(
           formatCurrency(item?.l1Basic),
         )}</td>
@@ -595,8 +594,8 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
                         <td class="text-right">${escapeHtml(
       formatCurrency(orderEntry?.distributorDiscount),
     )}</td>
-                          formatCurrency(orderEntry?.schemeDiscount),
-                        )}</td>
+                         
+                        </td>
                       </tr>
                       <tr>
                          <td>L1 Basic Total</td>
