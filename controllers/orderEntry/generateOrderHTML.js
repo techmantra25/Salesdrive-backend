@@ -12,18 +12,26 @@ const formatDate = (date) => {
   ).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
 };
 
-// Groups line items so that entries for the same product sit next to each
-// other in the printed list, instead of appearing in whatever scattered
-// order they were added to the order. Grouping is by product code (falling
-// back to description if code is missing), and groups keep the position of
-// their FIRST occurrence in the original list — so the overall ordering
-// still feels natural, it just clusters repeats of the same product.
+// Groups line items by PRODUCT FAMILY so all SWR items sit together, all
+// UPVC items sit together, etc. — instead of grouping by exact product
+// code (which does nothing, since codes are always unique per line item).
+// The family is taken from the first "-" segment of the description, e.g.
+// "SWR-F-75MM-M/PLUS-..." -> "SWR", "UPVC-P-15MM-..." -> "UPVC".
+// Groups keep the position of their FIRST occurrence in the original list,
+// so the overall ordering still feels natural — it just clusters repeats
+// of the same family instead of scattering them.
+const getProductFamilyKey = (item) => {
+  const description = item.description || "";
+  const firstSegment = description.split("-")[0]?.trim();
+  return firstSegment || item.code || "";
+};
+
 const groupItemsByProduct = (items) => {
   const groupOrder = [];
   const groups = new Map();
 
   items.forEach((item) => {
-    const key = item.code || item.description || "";
+    const key = getProductFamilyKey(item);
     if (!groups.has(key)) {
       groups.set(key, []);
       groupOrder.push(key);
