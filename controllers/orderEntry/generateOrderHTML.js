@@ -280,7 +280,7 @@ td, th {
 <table class="product-table">
 <tr class="total-row">
   <td colspan="11" style="text-align:right;">Total :</td>
-  <td>₹ ${formatCurrency(data.summary?.grossAmount)}</td>
+  <td>₹ ${formatCurrency(data.summary?.netAmount)}</td>
   <td>${Number(data.summary?.totalBoxes || 0).toFixed(2)}</td>
 </tr>
   <tr>
