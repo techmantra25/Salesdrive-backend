@@ -1,7 +1,7 @@
 const formatCurrency = (amount = 0) =>
   Number(amount || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 
 const formatDate = (date) => {
@@ -218,8 +218,11 @@ td, th {
   <tr>
     <td class="label">Party Name :</td>
     <td>${data.retailer?.outletName || ""}</td>
-    <td class="label">Total Boxes :</td>
-    <td>${data.summary?.totalBoxes || 0}</td>
+   <td class="label">Total Boxes :</td>
+<td>${Number(data.summary?.totalBoxes || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}</td>
   </tr>
 
   <tr>
@@ -264,11 +267,11 @@ td, th {
 </table>
 
 <table class="product-table">
-  <tr class="total-row">
-    <td colspan="10" style="text-align:right;">Total :</td>
-    <td>₹ ${formatCurrency(data.summary?.grossAmount)}</td>
-    <td>${data.summary?.totalBoxes || 0}</td>
-  </tr>
+<tr class="total-row">
+  <td colspan="10" style="text-align:right;">Total :</td>
+  <td>₹ ${formatCurrency(data.summary?.grossAmount)}</td>
+  <td>${Number(data.summary?.totalBoxes || 0).toFixed(2)}</td>
+</tr>
   <tr>
     <th width="4%">Sl No</th>
     <th width="10%">Code</th>
