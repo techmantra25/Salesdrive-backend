@@ -20,6 +20,9 @@ const {
 const {
   orderEnquiryPrintPDF,
 } = require("../../controllers/orderEnquiry/orderEnquiryPrintPDF.js");
+const {
+  generateSalesEnquiryReport,
+} = require("../../controllers/orderEnquiry/generateSalesEnquiryReport.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const {closeOrderEnquiry}=require("../../controllers/orderEnquiry/closedOrderEnquiry.js");
@@ -39,6 +42,10 @@ orderEnquiryRoutes
 orderEnquiryRoutes
   .route("/order-enquiry-print-pdf/:orderEnquiryId")
   .get(protect, orderEnquiryPrintPDF);
+
+orderEnquiryRoutes
+  .route("/generate-report")
+  .get(protect, generateSalesEnquiryReport);
 
 orderEnquiryRoutes.patch(
   "/closed-order-enquiry/:id",
