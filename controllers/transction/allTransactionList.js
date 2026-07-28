@@ -91,41 +91,45 @@ const allTransactionList = asyncHandler(async (req, res) => {
       matchStage.transactionType = transactionFor;
     }
     // Enhanced search logic: If searchTerm is provided, check if it matches product codes
-    if (searchTerm) {
-      // First, find products that match the search term
-      const matchingProducts = await Product.find({
-        $or: [
-          { product_code: { $regex: searchTerm, $options: "i" } },
-          { name: { $regex: searchTerm, $options: "i" } },
-        ],
-      }).select("_id");
+if (searchTerm) {
+  const tokens = searchTerm.trim().split(/\s+/).filter(Boolean);
 
-      // adjust path
-      const matchingBills = await Bill.find({
-        $or: [
-          { billNo: { $regex: searchTerm, $options: "i" } },
-          { new_billno: { $regex: searchTerm, $options: "i" } },
-        ],
-      }).select("_id");
+  const tokenConditions = (fields) =>
+    tokens.map((token) => ({
+      $or: fields.map((field) => ({
+        [field]: { $regex: token, $options: "i" },
+      })),
+    }));
 
-      const productIds = matchingProducts.map((p) => p._id);
-      const billIds = matchingBills.map((b) => b._id);
+  // First, find products that match the search term (all tokens must match)
+  const matchingProducts = await Product.find({
+    $and: tokenConditions(["product_code", "name"]),
+  }).select("_id");
 
-      // Build search condition for transactions
-      matchStage.$or = [
-        { transactionId: { $regex: searchTerm, $options: "i" } },
-        { description: { $regex: searchTerm, $options: "i" } },
-      ];
+  // adjust path
+  const matchingBills = await Bill.find({
+    $and: tokenConditions(["billNo", "new_billno"]),
+  }).select("_id");
 
-      // If we found matching products, add them to the search
-      if (productIds.length > 0) {
-        matchStage.$or.push({ productId: { $in: productIds } });
-      }
-      if (billIds.length > 0) {
-        matchStage.$or.push({ billId: { $in: billIds } });
-        console.log("i was called");
-      }
-    }
+  const productIds = matchingProducts.map((p) => p._id);
+  const billIds = matchingBills.map((b) => b._id);
+
+  // Build search condition for transactions (all tokens must match transactionId or description)
+  const transactionTokenMatch = {
+    $and: tokenConditions(["transactionId", "description"]),
+  };
+
+  const orConditions = [transactionTokenMatch];
+
+  if (productIds.length > 0) {
+    orConditions.push({ productId: { $in: productIds } });
+  }
+  if (billIds.length > 0) {
+    orConditions.push({ billId: { $in: billIds } });
+  }
+
+  matchStage.$or = orConditions;
+}
 
     // Fetch filtered transactions with population of related fields
     const transactionData = await Transaction.find(matchStage)

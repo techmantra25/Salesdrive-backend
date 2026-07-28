@@ -93,22 +93,16 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       productMatchStage["product._id"] = new mongoose.Types.ObjectId(productId);
     }
 
-    if (searchTerm) {
-      productMatchStage["$or"] = [
-        {
-          "product.product_code": {
-            $regex: searchTerm,
-            $options: "i",
-          },
-        },
-        {
-          "product.name": {
-            $regex: searchTerm,
-            $options: "i",
-          },
-        },
-      ];
-    }
+ if (searchTerm) {
+  const tokens = searchTerm.trim().split(/\s+/).filter(Boolean);
+
+  productMatchStage["$and"] = tokens.map((token) => ({
+    $or: [
+      { "product.product_code": { $regex: token, $options: "i" } },
+      { "product.name": { $regex: token, $options: "i" } },
+    ],
+  }));
+}
 
     if (brandId) {
       productMatchStage["product.brand"] = new mongoose.Types.ObjectId(brandId);
