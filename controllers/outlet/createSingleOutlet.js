@@ -549,6 +549,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       outletUID,
 
       outletName: data.outletName.trim(),
+      sudoName: data.sudoName?.trim() || null,
       ownerName: data.ownerName.trim(),
 
       pin: data.pin || null,

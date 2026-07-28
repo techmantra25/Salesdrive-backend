@@ -3986,6 +3986,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         outletCode: outletCode,
                         outletUID: outletUID,
                         outletName: row["Outlet Name"].trim(),
+                        sudoName: row["Sudo Name"]?.trim() || null,
                         ownerName: row["Owner Name"].trim(),
                         pin: row["PIN"]?.trim() || null,
                         district: districtId,
