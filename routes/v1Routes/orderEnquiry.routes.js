@@ -25,7 +25,13 @@ const {
 } = require("../../controllers/orderEnquiry/generateSalesEnquiryReport.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
-const {closeOrderEnquiry}=require("../../controllers/orderEnquiry/closedOrderEnquiry.js");
+const { closeOrderEnquiry } = require("../../controllers/orderEnquiry/closedOrderEnquiry.js");
+const {
+  remarksOrderEnquiry,
+} = require("../../controllers/orderEnquiry/remarksOrderEnquiry.js");
+const {
+  viewRemarksOrderEnquiry,
+} = require("../../controllers/orderEnquiry/viewRemarksOrderEnquiry.js");
 
 const orderEnquiryRoutes = express.Router();
 
@@ -51,6 +57,18 @@ orderEnquiryRoutes.patch(
   "/closed-order-enquiry/:id",
   protectDisRoute,
   closeOrderEnquiry
+);
+
+orderEnquiryRoutes.patch(
+  "/remarks-order-enquiry/:id",
+  protectDisRoute,
+  remarksOrderEnquiry
+);
+
+orderEnquiryRoutes.get(
+  "/remarks-order-enquiry/:id",
+  protect,
+  viewRemarksOrderEnquiry
 );
 
 module.exports = orderEnquiryRoutes;
