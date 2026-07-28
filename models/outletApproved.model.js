@@ -59,6 +59,9 @@ const outletApprovedSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    sudoName: {
+      type: String,
+    },
     ownerName: {
       type: String,
       required: true,

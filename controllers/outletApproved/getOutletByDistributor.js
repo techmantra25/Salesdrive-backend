@@ -31,7 +31,8 @@ const getOutletMinimalByDistributor = asyncHandler(async (req, res) => {
         outletCode: 1,
         outletUID: 1,
         beatId: 1,
-        mobile1:1,
+        mobile1: 1,
+        sudoName: 1,
       }
     )
       .sort({ outletName: 1 })
@@ -99,6 +100,7 @@ const searchOutletsByDistributor = asyncHandler(async (req, res) => {
         outletCode: 1,
         outletUID: 1,
         beatId: 1,
+        sudoName: 1,
       }
     )
       .sort({ score: { $meta: "textScore" } })

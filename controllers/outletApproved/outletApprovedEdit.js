@@ -152,6 +152,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
     // ---------------- ALLOWED FIELDS (ONLY ADD massistRefIds) ----------------
     const allowedFields = [
       "outletName",
+      "sudoName",
       "ownerName",
       "pin",
       "mobile1",
