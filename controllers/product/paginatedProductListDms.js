@@ -38,17 +38,24 @@ const buildDmsProductFilter = ({ distributorProductIds, query }) => {
     };
   }
 
-  if (query.search) {
-    const searchRegex = new RegExp(query.search, "i");
-    filter.$or = [
-      { product_code: searchRegex },
-      { name: searchRegex },
-      { sku_group_id: searchRegex },
-      { sku_group__name: searchRegex },
-      { product_hsn_code: searchRegex },
-      { ean11: searchRegex },
-    ];
-  }
+if (query.search) {
+  const tokens = query.search.trim().split(/\s+/).filter(Boolean);
+  const searchFields = [
+    "product_code",
+    "name",
+    "sku_group_id",
+    "sku_group__name",
+    "product_hsn_code",
+    "ean11",
+  ];
+
+  filter.$and = tokens.map((token) => {
+    const tokenRegex = new RegExp(token, "i");
+    return {
+      $or: searchFields.map((field) => ({ [field]: tokenRegex })),
+    };
+  });
+}
 
   return filter;
 };
