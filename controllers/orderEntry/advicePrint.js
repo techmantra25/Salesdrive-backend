@@ -133,47 +133,54 @@ const advicePrint = asyncHandler(async (req, res) => {
 
       remarks: order.remark || "",
 
-      items: order.lineItems.map((item, index) => ({
-        slNo: index + 1,
 
-        code: item.product?.product_code || "",
 
-        description: item.product?.name || "",
 
-        delQty: Number(item.oderQty || 0),
 
-        orderQty: Number(item.oderQty || 0),
 
-        stdBox:
-          Number(item.product?.no_of_pieces_in_a_box || 0),
 
-        stdPkt:
-          Number(item.product?.pack || 0),
 
-        stock:
-          Number(item.inventoryId?.availableQty || 0),
 
-        mrp:
-          Number(
-            item.price?.mrp_price ||
-            item.price?.rlp_price ||
-            item.price?.dlp_price ||
-            0
-          ),
+  items: order.lineItems.map((item, index) => {
+  const grossAmt = Number(item.grossAmt || 0);
+  const distributorDisc = Number(item.distributorDisc || 0);
 
-        discount:
-          Number(
-            item.totalDiscountPercentage ||
-            item.distributorDisc ||
-            0
-          ),
+  // SO Value = Gross Amt minus the special/distributor discount,
+  // handling both percent-based and flat-amount discount units.
+  const soValue =
+    item.distributorDiscUnit === "amount"
+      ? grossAmt - distributorDisc
+      : grossAmt * (1 - distributorDisc / 100);
 
-        grossAmt:
-          Number(item.grossAmt || 0),
+  return {
+    slNo: index + 1,
+    code: item.product?.product_code || "",
+    description: item.product?.name || "",
+    delQty: Number(item.oderQty || 0),
+    orderQty: Number(item.oderQty || 0),
+    stdBox: Number(item.product?.no_of_pieces_in_a_box || 0),
+    stdPkt: Number(item.product?.pack || 0),
+    stock: Number(item.inventoryId?.availableQty || 0),
+    mrp: Number(
+      item.price?.mrp_price ||
+      item.price?.rlp_price ||
+      item.price?.dlp_price ||
+      0
+    ),
+    discount: Number(
+      item.totalDiscountPercentage ||
+      item.distributorDisc ||
+      0
+    ),
+    grossAmt: soValue, // now holds SO Value instead of raw Gross Amt
+    boxQty: Number(item.boxOrderQty || 0),
+  };
+})
 
-        boxQty:
-          Number(item.boxOrderQty || 0),
-      }))
+
+
+
+
     };
 
     let htmlContent = generateOrderHTML(dispatchAdviceData);

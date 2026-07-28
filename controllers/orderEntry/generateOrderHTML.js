@@ -54,53 +54,63 @@ const getBasicRate = (item) => {
 const generateOrderHTML = (data) => {
   const items = groupItemsByProduct(data?.items || []);
 
-  const productRows = items
-    .map(
-      (item, index) => `
+  const totalBasicAmt = items.reduce(
+    (sum, item) => sum + (Number(item.grossAmt) || 0),
+    0
+  )
+
+
+
+const productRows = items
+  .map(
+    (item, index) => `
 <tr>
-  <td>${index + 1}</td>
-  <td>${item.code || ""}</td>
+  <td class="right">${index + 1}</td>
+
+  <td class="center">${
+    item.code !== null &&
+    item.code !== undefined &&
+    item.code !== "" &&
+    !isNaN(Number(item.code))
+      ? Number(item.code).toFixed(2)
+      : item.code || ""
+  }</td>
+
   <td class="left">${item.description || ""}</td>
 
+  <td class="right">${""}</td>
 
 
+  <td class="right">${item.orderQty ?? 0}</td>
 
+  <td class="right">${item.stdBox ?? 0}</td>
 
-<td class="center">${item.delQty ?? 0}</td>
-<td class="center">${item.orderQty ?? 0}</td>
+  <td class="right">${item.stock ?? 0}</td>
 
-<td class="center">${item.stdBox ?? 0}</td>
-<td class="center">${item.stdPkt ?? 0}</td>
+  <td class="right">₹ ${formatCurrency(item.mrp ?? 0)}</td>
 
-<td class="center">${item.stock ?? 0}</td>
+  <td class="center">${formatCurrency(item.discount ?? 0)}%</td>
 
-<td class="right">₹ ${formatCurrency(item.mrp ?? 0)}</td>
+  <td class="right">₹ ${formatCurrency(getBasicRate(item))}</td>
 
-<td class="right">${item.discount ?? 0}%</td>
-
-<td class="right">₹ ${formatCurrency(getBasicRate(item))}</td>
-
-<td class="right">₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
-
-<td class="center">${Number(item.boxQty ?? 0).toFixed(2)}</td>
-
+  <td class="right">₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
 </tr>
 `
-    )
-    .join("");
+  )
+  .join("");
 
-  const emptyRows = Array.from({
-    length: Math.max(0, 20 - items.length),
-  })
-    .map(
-      () => `
+const emptyRows = Array.from({
+  length: Math.max(0, 20 - items.length),
+})
+  .map(
+    () => `
 <tr class="empty-row">
-  <td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td>
-  <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+  <td>&nbsp;</td><td></td><td></td><td></td><td></td>
+  <td></td><td></td><td></td><td></td><td></td><td></td>
 </tr>
 `
-    )
-    .join("");
+  )
+  .join("");
 
   return `
 <!DOCTYPE html>
@@ -230,24 +240,21 @@ td, th {
     <td class="label">Party Name :</td>
     <td>${data.retailer?.outletName || ""}</td>
    <td class="label">Total Boxes :</td>
-<td>${Number(data.summary?.totalBoxes || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}</td>
+<td></td>
   </tr>
 
   <tr>
     <td class="label">Tally Billing Name :</td>
     <td>${data.tallyBillingName || ""}</td>
-    <td class="label">Total Pipe Packets :</td>
-    <td>${data.summary?.totalPipePackets || 0}</td>
+   <td class="label">Total Pipe Packets :</td>
+  <td></td>
   </tr>
 
   <tr>
     <td class="label">Sales Officer Name &amp; Number :</td>
     <td>${data.salesman?.name || ""}</td>
     <td class="label">Total Loose Pipes :</td>
-    <td>${data.summary?.totalLoosePipes || 0}</td>
+    <td></td>
   </tr>
 
   <tr>
@@ -279,24 +286,23 @@ td, th {
 
 <table class="product-table">
 <tr class="total-row">
-  <td colspan="11" style="text-align:right;">Total :</td>
-  <td>₹ ${formatCurrency(data.summary?.netAmount)}</td>
-  <td>${Number(data.summary?.totalBoxes || 0).toFixed(2)}</td>
+  <td colspan="10" style="text-align:right;">Total :</td>
+  <td>₹ ${formatCurrency(totalBasicAmt)}</td>
 </tr>
   <tr>
-    <th width="4%">Sl No</th>
-    <th width="9%">Code</th>
-    <th width="33%">Product Description</th>
-    <th width="5%">Del Qnty</th>
-    <th width="5%">Order Qnty</th>
-    <th width="5%">Std Box</th>
-    <th width="5%">Std Pkt</th>
-    <th width="5%">Avil Stock</th>
-    <th width="6%">MRP</th>
-    <th width="6%">Disc%</th>
-    <th width="7%">Basic Rate</th>
-    <th width="8%">Basic Amt</th>
-    <th width="6%">Total Box</th>
+<tr>
+  <th width="4%">Sl No</th>
+  <th width="8%">Code</th>
+  <th width="33%">Product Description</th>
+  <th width="6%">Del Qnty</th>
+  <th width="6%">Order Qnty</th>
+  <th width="6%">Std Box</th>
+  <th width="6%">Avil Stock</th>
+  <th width="7%">MRP</th>
+  <th width="6%">Disc%</th>
+  <th width="8%">Basic Rate</th>
+  <th width="10%">Basic Amt</th>
+</tr>
   </tr>
   ${productRows}
   ${emptyRows}
