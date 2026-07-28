@@ -1,7 +1,7 @@
 const formatCurrency = (amount = 0) =>
   Number(amount || 0).toLocaleString("en-IN", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   });
 
 const formatDate = (date) => {
@@ -42,6 +42,15 @@ const groupItemsByProduct = (items) => {
   return groupOrder.flatMap((key) => groups.get(key));
 };
 
+// Basic Rate = Basic Amt (grossAmt) divided by quantity. Uses delQty as the
+// primary quantity; falls back to orderQty if delQty is 0/missing, so we
+// never divide by zero.
+const getBasicRate = (item) => {
+  const qty = Number(item.delQty) || Number(item.orderQty) || 0;
+  const amt = Number(item.grossAmt) || 0;
+  return qty > 0 ? amt / qty : 0;
+};
+
 const generateOrderHTML = (data) => {
   const items = groupItemsByProduct(data?.items || []);
 
@@ -69,9 +78,11 @@ const generateOrderHTML = (data) => {
 
 <td class="right">${item.discount ?? 0}%</td>
 
+<td class="right">₹ ${formatCurrency(getBasicRate(item))}</td>
+
 <td class="right">₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
 
-<td class="center">${item.boxQty ?? 0}</td>
+<td class="center">${Number(item.boxQty ?? 0).toFixed(2)}</td>
 
 </tr>
 `
@@ -85,7 +96,7 @@ const generateOrderHTML = (data) => {
       () => `
 <tr class="empty-row">
   <td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td>
-  <td></td><td></td><td></td><td></td><td></td><td></td>
+  <td></td><td></td><td></td><td></td><td></td><td></td><td></td>
 </tr>
 `
     )
@@ -218,8 +229,11 @@ td, th {
   <tr>
     <td class="label">Party Name :</td>
     <td>${data.retailer?.outletName || ""}</td>
-    <td class="label">Total Boxes :</td>
-    <td>${data.summary?.totalBoxes || 0}</td>
+   <td class="label">Total Boxes :</td>
+<td>${Number(data.summary?.totalBoxes || 0).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}</td>
   </tr>
 
   <tr>
@@ -264,22 +278,23 @@ td, th {
 </table>
 
 <table class="product-table">
-  <tr class="total-row">
-    <td colspan="10" style="text-align:right;">Total :</td>
-    <td>₹ ${formatCurrency(data.summary?.grossAmount)}</td>
-    <td>${data.summary?.totalBoxes || 0}</td>
-  </tr>
+<tr class="total-row">
+  <td colspan="11" style="text-align:right;">Total :</td>
+  <td>₹ ${formatCurrency(data.summary?.netAmount)}</td>
+  <td>${Number(data.summary?.totalBoxes || 0).toFixed(2)}</td>
+</tr>
   <tr>
     <th width="4%">Sl No</th>
-    <th width="10%">Code</th>
-    <th width="38%">Product Description</th>
-    <th width="6%">Del Qnty</th>
-    <th width="6%">Order Qnty</th>
+    <th width="9%">Code</th>
+    <th width="33%">Product Description</th>
+    <th width="5%">Del Qnty</th>
+    <th width="5%">Order Qnty</th>
     <th width="5%">Std Box</th>
     <th width="5%">Std Pkt</th>
-    <th width="6%">Avil Stock</th>
+    <th width="5%">Avil Stock</th>
     <th width="6%">MRP</th>
     <th width="6%">Disc%</th>
+    <th width="7%">Basic Rate</th>
     <th width="8%">Basic Amt</th>
     <th width="6%">Total Box</th>
   </tr>
