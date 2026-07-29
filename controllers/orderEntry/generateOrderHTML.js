@@ -12,14 +12,6 @@ const formatDate = (date) => {
   ).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
 };
 
-// Groups line items by PRODUCT FAMILY so all SWR items sit together, all
-// UPVC items sit together, etc. — instead of grouping by exact product
-// code (which does nothing, since codes are always unique per line item).
-// The family is taken from the first "-" segment of the description, e.g.
-// "SWR-F-75MM-M/PLUS-..." -> "SWR", "UPVC-P-15MM-..." -> "UPVC".
-// Groups keep the position of their FIRST occurrence in the original list,
-// so the overall ordering still feels natural — it just clusters repeats
-// of the same family instead of scattering them.
 const getProductFamilyKey = (item) => {
   const description = item.description || "";
   const firstSegment = description.split("-")[0]?.trim();
@@ -57,13 +49,11 @@ const generateOrderHTML = (data) => {
   const totalBasicAmt = items.reduce(
     (sum, item) => sum + (Number(item.grossAmt) || 0),
     0
-  )
+  );
 
-
-
-const productRows = items
-  .map(
-    (item, index) => `
+  const productRows = items
+    .map(
+      (item, index) => `
 <tr>
   <td class="right">${index + 1}</td>
 
@@ -96,21 +86,21 @@ const productRows = items
   <td class="right">₹ ${formatCurrency(item.grossAmt ?? 0)}</td>
 </tr>
 `
-  )
-  .join("");
+    )
+    .join("");
 
-const emptyRows = Array.from({
-  length: Math.max(0, 20 - items.length),
-})
-  .map(
-    () => `
+  const emptyRows = Array.from({
+    length: Math.max(0, 20 - items.length),
+  })
+    .map(
+      () => `
 <tr class="empty-row">
   <td>&nbsp;</td><td></td><td></td><td></td><td></td>
   <td></td><td></td><td></td><td></td><td></td><td></td>
 </tr>
 `
-  )
-  .join("");
+    )
+    .join("");
 
   return `
 <!DOCTYPE html>
@@ -121,7 +111,20 @@ const emptyRows = Array.from({
 
 @page {
   size: A4 landscape;
-  margin: 8mm;
+  margin: 8mm 8mm 14mm 8mm;
+
+  /* Page number in the bottom-right corner of every printed page.
+     Supported by print/PDF engines that implement CSS Paged Media
+     (e.g. wkhtmltopdf, WeasyPrint, Prince, Firefox print preview).
+     Chromium's own print pipeline does not render @page margin-box
+     content, so if this is printed straight from Chrome the counter
+     below will not show — the on-page footer fallback further down
+     (".page-footer") is what covers that case instead. */
+  @bottom-right {
+    content: "Page - " counter(page);
+    font-family: Arial, sans-serif;
+    font-size: 10px;
+  }
 }
 
 * {
@@ -206,7 +209,29 @@ td, th {
   font-weight: bold;
 }
 
+/* Repeat the table header (and the Total row that sits above it) on
+   every printed page. This relies on the standard <thead> print
+   behaviour, which is supported by every browser's print engine
+   (Chrome, Firefox, Edge, Safari) as well as Puppeteer/wkhtmltopdf. */
+.product-table thead {
+  display: table-header-group;
+}
+.product-table tbody {
+  display: table-row-group;
+}
+
 .empty-row td { height: 22px; }
+
+/* Fallback / guaranteed page number footer for engines (like Chrome's
+   print pipeline) that ignore @page margin boxes. This prints once at
+   the very end of the content — for a true per-physical-page number in
+   Chrome you'd need Puppeteer's page.pdf({ footerTemplate }) option,
+   since Chrome does not expose page-break positions to plain CSS/HTML. */
+.page-footer {
+  margin-top: 6px;
+  text-align: right;
+  font-size: 10px;
+}
 
 </style>
 </head>
@@ -267,7 +292,7 @@ td, th {
   <tr>
     <td class="label">Ph. Number :</td>
     <td>${data.retailer?.mobile1 || ""}</td>
-    <td class="label">Verified :</td>
+    <td class="label">Verified By :</td>
     <td>${data.verifiedBy || ""}</td>
   </tr>
 
@@ -285,27 +310,29 @@ td, th {
 </table>
 
 <table class="product-table">
-<tr class="total-row">
-  <td colspan="10" style="text-align:right;">Total :</td>
-  <td>₹ ${formatCurrency(totalBasicAmt)}</td>
-</tr>
-  <tr>
-<tr>
-  <th width="4%">Sl No</th>
-  <th width="8%">Code</th>
-  <th width="33%">Product Description</th>
-  <th width="6%">Del Qnty</th>
-  <th width="6%">Order Qnty</th>
-  <th width="6%">Std Box</th>
-  <th width="6%">Avil Stock</th>
-  <th width="7%">MRP</th>
-  <th width="6%">Disc%</th>
-  <th width="8%">Basic Rate</th>
-  <th width="10%">Basic Amt</th>
-</tr>
+<thead>
+  <tr class="total-row">
+    <td colspan="10" style="text-align:right;">Total :</td>
+    <td>₹ ${formatCurrency(totalBasicAmt)}</td>
   </tr>
+  <tr>
+    <th width="4%">Sl No</th>
+    <th width="8%">Code</th>
+    <th width="33%">Product Description</th>
+    <th width="6%">Del Qnty</th>
+    <th width="6%">Order Qnty</th>
+    <th width="6%">Std Box</th>
+    <th width="6%">Avil Stock</th>
+    <th width="7%">MRP</th>
+    <th width="6%">Disc%</th>
+    <th width="8%">Basic Rate</th>
+    <th width="10%">Basic Amt</th>
+  </tr>
+</thead>
+<tbody>
   ${productRows}
   ${emptyRows}
+</tbody>
 </table>
 
 </div>
