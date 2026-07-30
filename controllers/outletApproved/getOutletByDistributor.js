@@ -8,6 +8,7 @@ const mongoose = require("mongoose");
 const getOutletMinimalByDistributor = asyncHandler(async (req, res) => {
   try {
     const { did } = req.params; //distributor id
+    const { search, limit } = req.query;
 
     //get all beats for this distributor
 
@@ -18,25 +19,43 @@ const getOutletMinimalByDistributor = asyncHandler(async (req, res) => {
 
     const beatIds = beats.map((beat) => beat._id);
 
+    const filter = {
+      beatId: { $in: beatIds },
+      status: true,
+    };
+
+    //dynamic search across outletName, outletCode, outletUID, sudoName
+    //only applied when a valid search term is provided
+
+    if (search && search.trim().length >= 2) {
+      const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(escapedSearch, "i");
+
+      filter.$or = [
+        { outletName: searchRegex },
+        { outletCode: searchRegex },
+        { outletUID: searchRegex },
+        { sudoName: searchRegex },
+      ];
+    }
+
     //get only the outlet data that is required for the usage
 
-    const outlets = await OutletApproved.find(
-      {
-        beatId: { $in: beatIds },
-        status: true,
-      },
-      {
-        _id: 1,
-        outletName: 1,
-        outletCode: 1,
-        outletUID: 1,
-        beatId: 1,
-        mobile1: 1,
-        sudoName: 1,
-      }
-    )
-      .sort({ outletName: 1 })
-      .lean();
+    let outletsQuery = OutletApproved.find(filter, {
+      _id: 1,
+      outletName: 1,
+      outletCode: 1,
+      outletUID: 1,
+      beatId: 1,
+      mobile1: 1,
+      sudoName: 1,
+    }).sort({ outletName: 1 });
+
+    if (limit) {
+      outletsQuery = outletsQuery.limit(parseInt(limit));
+    }
+
+    const outlets = await outletsQuery.lean();
 
     // const testids = outlets.map(o=> o.beatId);
     // console.log(testids);
@@ -78,6 +97,11 @@ const searchOutletsByDistributor = asyncHandler(async (req, res) => {
       });
     }
 
+    //escape regex special charecters so user input can't break the query
+
+    const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(escapedSearch, "i");
+
     //get beat id for this distributor
 
     const beats = await Beat.find(
@@ -87,14 +111,20 @@ const searchOutletsByDistributor = asyncHandler(async (req, res) => {
 
     const beatIds = beats.map((beat) => beat._id);
 
+    //dynamic search across outletName, outletCode, outletUID, sudoName
+
     const outlets = await OutletApproved.find(
       {
-        $text: { $search: search },
         beatId: { $in: beatIds },
         status: true,
+        $or: [
+          { outletName: searchRegex },
+          { outletCode: searchRegex },
+          { outletUID: searchRegex },
+          { sudoName: searchRegex },
+        ],
       },
       {
-        score: { $meta: "textScore" },
         _id: 1,
         outletName: 1,
         outletCode: 1,
@@ -103,7 +133,7 @@ const searchOutletsByDistributor = asyncHandler(async (req, res) => {
         sudoName: 1,
       }
     )
-      .sort({ score: { $meta: "textScore" } })
+      .sort({ outletName: 1 })
       .limit(parseInt(limit))
       .lean();
 
@@ -219,20 +249,44 @@ const getOutletDetailById = asyncHandler(async (req, res) => {
   }
 });
 
+//controller to dynamically search/list outlets by distributor
+//matches against outletName, outletCode, outletUID, sudoName when a search term is provided
+
 const getOutletByDistributor = asyncHandler(async (req, res) => {
   try {
     const { did } = req.params;
+    const { search, limit = 50 } = req.query;
 
-    const beats = await Beat.find({
-      distributorId: { $in: [did] },
-    });
+    //get beat id for this distributor
+
+    const beats = await Beat.find(
+      { distributorId: { $in: [did] } },
+      { _id: 1 }
+    ).lean();
 
     const beatIds = beats.map((beat) => beat._id);
 
-    const outletsApproved = await OutletApproved.find({
+    const filter = {
       beatId: { $in: beatIds },
       status: true,
-    })
+    };
+
+    //dynamic search across outletName, outletCode, outletUID, sudoName
+    //only applied when a valid search term is provided
+
+    if (search && search.trim().length >= 2) {
+      const escapedSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const searchRegex = new RegExp(escapedSearch, "i");
+
+      filter.$or = [
+        { outletName: searchRegex },
+        { outletCode: searchRegex },
+        { outletUID: searchRegex },
+        { sudoName: searchRegex },
+      ];
+    }
+
+    const outletsApproved = await OutletApproved.find(filter)
       .populate([
         {
           path: "zoneId",
@@ -293,7 +347,8 @@ const getOutletByDistributor = asyncHandler(async (req, res) => {
           select: "",
         },
       ])
-      .sort({ _id: -1 });
+      .sort({ _id: -1 })
+      .limit(parseInt(limit));
 
     return res.status(200).json({
       status: 200,
