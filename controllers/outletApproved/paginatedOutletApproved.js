@@ -31,13 +31,8 @@ const SORTABLE_FIELDS = {
   updatedAt: "updatedAt",
 };
 
-const AGGREGATE_SORTABLE_FIELDS = new Set(["beat"]);
 
-const SEARCHABLE_FIELDS = {
-  outletName: "outletName",
-  outletCode: "outletCode",
-  sudoName: "sudoName",
-};
+const AGGREGATE_SORTABLE_FIELDS = new Set(["beat"]);
 
 // Shared populate list used by every path that returns full outlet docs,
 // so the beat-sort aggregation path and the normal path stay in sync.
@@ -62,47 +57,6 @@ const OUTLET_POPULATE = [
   { path: "referenceId", select: "" },
 ];
 
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const buildSearchAnd = (searchTerm, searchFieldsParam) => {
-  if (!searchTerm) return null;
-
-  let fieldsToSearch = Object.values(SEARCHABLE_FIELDS);
-
-  if (searchFieldsParam) {
-    const requested = String(searchFieldsParam)
-      .split(",")
-      .map((f) => f.trim())
-      .filter(Boolean);
-
-    const whitelisted = requested
-      .map((f) => SEARCHABLE_FIELDS[f])
-      .filter(Boolean);
-
-    // Only narrow the field set if at least one requested field was valid;
-    // otherwise fall back to searching everything.
-    if (whitelisted.length) {
-      fieldsToSearch = whitelisted;
-    }
-  }
-
-  const tokens = String(searchTerm)
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
-  if (!tokens.length) return null;
-
-  return tokens.map((token) => {
-    const safeToken = escapeRegex(token);
-    return {
-      $or: fieldsToSearch.map((field) => ({
-        [field]: { $regex: safeToken, $options: "i" },
-      })),
-    };
-  });
-};
 
 const buildSortOption = (query) => {
   // Legacy param support (existing frontend toggle) — keep working as-is.
@@ -157,10 +111,15 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
   try {
     const query = {};
 
-    // SEARCH (dynamic, token-based — see buildSearchAnd / SEARCHABLE_FIELDS above)
-    const searchAnd = buildSearchAnd(req.query.search, req.query.searchFields);
-    if (searchAnd) {
-      query.$and = searchAnd;
+    if (req.query.search) {
+      query.$or = [
+        { outletCode: { $regex: req.query.search, $options: "i" } },
+        { outletUID: { $regex: req.query.search, $options: "i" } },
+        { outletName: { $regex: req.query.search, $options: "i" } },
+        { ownerName: { $regex: req.query.search, $options: "i" } },
+        { mobile1: { $regex: req.query.search, $options: "i" } },
+        { massistRefIds: { $regex: req.query.search, $options: "i" } },
+      ];
     }
     if (req.query.phoneSearch) {
       // Remove all non-numeric characters from search term
