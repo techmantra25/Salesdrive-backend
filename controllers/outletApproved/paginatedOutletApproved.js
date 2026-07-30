@@ -31,6 +31,19 @@ const SORTABLE_FIELDS = {
   updatedAt: "updatedAt",
 };
 
+// Whitelist of fields the free-text "search" box is allowed to match against.
+// Same defaults as before (kept 1:1 with the old hardcoded $or), but now
+// expressed as a list so new fields can be added here without touching
+// the query-building logic below.
+const SEARCHABLE_FIELDS = [
+  "outletCode",
+  "outletUID",
+  "outletName",
+  "sudoName",
+  "ownerName",
+  "mobile1",
+  "massistRefIds",
+];
 
 const AGGREGATE_SORTABLE_FIELDS = new Set(["beat"]);
 
@@ -57,6 +70,25 @@ const OUTLET_POPULATE = [
   { path: "referenceId", select: "" },
 ];
 
+// Builds the $or clause for the free-text search box dynamically from
+// SEARCHABLE_FIELDS, instead of a hardcoded array of { field: regex } objects.
+const buildSearchQuery = (searchTerm) => {
+  const words = searchTerm
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) return {};
+
+  // One $or per word (word can match any field), ANDed together.
+  const andClauses = words.map((word) => ({
+    $or: SEARCHABLE_FIELDS.map((field) => ({
+      [field]: { $regex: word, $options: "i" },
+    })),
+  }));
+
+  return andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
+};
 
 const buildSortOption = (query) => {
   // Legacy param support (existing frontend toggle) — keep working as-is.
@@ -112,14 +144,8 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
     const query = {};
 
     if (req.query.search) {
-      query.$or = [
-        { outletCode: { $regex: req.query.search, $options: "i" } },
-        { outletUID: { $regex: req.query.search, $options: "i" } },
-        { outletName: { $regex: req.query.search, $options: "i" } },
-        { ownerName: { $regex: req.query.search, $options: "i" } },
-        { mobile1: { $regex: req.query.search, $options: "i" } },
-        { massistRefIds: { $regex: req.query.search, $options: "i" } },
-      ];
+      const searchQuery = buildSearchQuery(req.query.search);
+      Object.assign(query, searchQuery);
     }
     if (req.query.phoneSearch) {
       // Remove all non-numeric characters from search term
