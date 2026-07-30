@@ -31,12 +31,12 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
     if (orderType && orderType !== "all") query.orderType = orderType;
     if (orderSource && orderSource !== "all") query.orderSource = orderSource;
     if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
-   if (status && status !== "all") {
-  query.status = status;
-} else {
-  // By default don't show closed enquiries
-  query.status = { $ne: "Closed" };
-}
+    if (status && status !== "all") {
+      query.status = status;
+    } else {
+      // By default don't show closed enquiries
+      query.status = { $ne: "Closed" };
+    }
     if (retailerId && retailerId !== "all") query.retailerId = retailerId;
 
     if (retailerPhone && retailerPhone !== "all") {
@@ -115,7 +115,12 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { path: "distributorId" },
         { path: "salesmanName" },
         { path: "routeId" },
-        { path: "retailerId" },
+        {
+          path: "retailerId",
+          populate: {
+            path: "employeeId",
+          },
+        },
         { path: "lineItems.product" },
         { path: "lineItems.price" },
         { path: "lineItems.inventoryId" },
