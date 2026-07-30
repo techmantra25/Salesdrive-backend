@@ -57,14 +57,12 @@ const generateOrderHTML = (data) => {
 <tr>
   <td class="right">${index + 1}</td>
 
-  <td class="center">${
-    item.code !== null &&
-    item.code !== undefined &&
-    item.code !== "" &&
-    !isNaN(Number(item.code))
-      ? Number(item.code).toFixed(2)
-      : item.code || ""
-  }</td>
+  <td class="center">${item.code !== null &&
+          item.code !== undefined &&
+          item.code !== ""
+          ? item.code
+          : ""
+        }</td>
 
   <td class="left">${item.description || ""}</td>
 
