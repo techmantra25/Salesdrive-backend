@@ -1,6 +1,11 @@
 const asyncHandler = require("express-async-handler");
 const OrderEnquiry = require("../../models/orderEnquiry.model");
 const OutletApproved = require("../../models/outletApproved.model");
+// NOTE: Assumed model path/name for State — update if your State model
+// lives elsewhere or is named differently. State documents are expected
+// to carry a `zoneId` field, and OutletApproved documents are expected
+// to carry `stateId` and `district` fields (as seen in existing outlet data).
+const State = require("../../models/state.model");
 
 const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
   try {
@@ -15,6 +20,8 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       retailerId,
       retailerPhone,
       outletCode,
+      zoneId,
+      districtId,
       orderType,
       orderSource,
       paymentMode,
@@ -25,19 +32,43 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
 
     const query = { distributorId };
 
+    // Helper: turns "id1,id2,id3" into a Mongo $in filter (also works for a single id)
+    const toInFilter = (value) => {
+      const ids = value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+      return ids.length > 0 ? { $in: ids } : undefined;
+    };
+
     if (enquiryNo) query.enquiryNo = { $regex: enquiryNo, $options: "i" };
-    if (salesmanName && salesmanName !== "all") query.salesmanName = salesmanName;
-    if (routeId && routeId !== "all") query.routeId = routeId;
+
+    if (salesmanName && salesmanName !== "all") {
+      const filter = toInFilter(salesmanName);
+      if (filter) query.salesmanName = filter;
+    }
+
+    if (routeId && routeId !== "all") {
+      const filter = toInFilter(routeId);
+      if (filter) query.routeId = filter;
+    }
+
     if (orderType && orderType !== "all") query.orderType = orderType;
     if (orderSource && orderSource !== "all") query.orderSource = orderSource;
     if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
-   if (status && status !== "all") {
-  query.status = status;
-} else {
-  // By default don't show closed enquiries
-  query.status = { $ne: "Closed" };
-}
-    if (retailerId && retailerId !== "all") query.retailerId = retailerId;
+
+    if (status && status !== "all") {
+      const filter = toInFilter(status);
+      query.status = filter || status;
+    } else {
+      // By default don't show closed enquiries
+      query.status = { $ne: "Closed" };
+    }
+
+    if (retailerId && retailerId !== "all") {
+      const filter = toInFilter(retailerId);
+      if (filter) query.retailerId = filter;
+    }
 
     if (retailerPhone && retailerPhone !== "all") {
       const frontendDigits = retailerPhone.replace(/\D/g, "").slice(-10);
@@ -91,6 +122,68 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
 
       if (!retailerId || retailerId === "all") {
         query.retailerId = outlet._id;
+      }
+    }
+
+    if (zoneId && zoneId !== "all") {
+      const zoneFilter = toInFilter(zoneId);
+      const matchedStates = await State.find(
+        zoneFilter ? { zoneId: zoneFilter } : {},
+        { _id: 1 }
+      );
+      const stateIds = matchedStates.map((state) => state._id);
+
+      const matchedOutlets = await OutletApproved.find(
+        { stateId: { $in: stateIds } },
+        { _id: 1 }
+      );
+
+      if (matchedOutlets.length === 0) {
+        return res.status(200).json({
+          status: 200,
+          message: "Order enquiries list",
+          data: [],
+          pagination: {
+            currentPage: Number(page),
+            limit: Number(limit),
+            totalPages: 0,
+            totalCount: 0,
+            filteredCount: 0,
+            totalActiveCount: 0,
+          },
+        });
+      }
+
+      if (!retailerId || retailerId === "all") {
+        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
+      }
+    }
+
+    if (districtId && districtId !== "all") {
+      const districtFilter = toInFilter(districtId);
+      const matchedOutlets = await OutletApproved.find(
+        districtFilter ? { district: districtFilter } : {},
+        { _id: 1 }
+      );
+
+      if (matchedOutlets.length === 0) {
+        return res.status(200).json({
+          status: 200,
+          message: "Order enquiries list",
+          data: [],
+          pagination: {
+            currentPage: Number(page),
+            limit: Number(limit),
+            totalPages: 0,
+            totalCount: 0,
+            filteredCount: 0,
+            totalActiveCount: 0,
+          },
+        });
+      }
+
+      if (!retailerId || retailerId === "all") {
+        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
       }
     }
 
