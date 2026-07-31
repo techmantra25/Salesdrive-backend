@@ -258,9 +258,16 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
 
       // $in does not preserve order, so re-apply the sorted order here.
       const orderIndex = new Map(pageIds.map((id, idx) => [String(id), idx]));
-      const outletsApproved = unorderedDocs.sort(
-        (a, b) => orderIndex.get(String(a._id)) - orderIndex.get(String(b._id))
-      );
+    const outletsApproved = unorderedDocs
+  .sort(
+    (a, b) =>
+      orderIndex.get(String(a._id)) -
+      orderIndex.get(String(b._id))
+  )
+  .map((outlet) => ({
+    ...outlet.toObject(),
+    empId: outlet.employeeId?.empId || null,
+  }));
 
       return res.status(200).json({
         status: 200,
@@ -279,11 +286,16 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
     // SORTING (whitelisted — see buildSortOption / SORTABLE_FIELDS above)
     const sortOption = buildSortOption(req.query);
 
-    const outletsApproved = await OutletApproved.find(query)
-      .populate(OUTLET_POPULATE)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limit);
+  const outletDocs = await OutletApproved.find(query)
+  .populate(OUTLET_POPULATE)
+  .sort(sortOption)
+  .skip(skip)
+  .limit(limit);
+
+const outletsApproved = outletDocs.map((outlet) => ({
+  ...outlet.toObject(),
+  empId: outlet.employeeId?.empId || null,
+}));
 
     const filteredCount = await OutletApproved.countDocuments(query);
     const totalItems = await OutletApproved.countDocuments();

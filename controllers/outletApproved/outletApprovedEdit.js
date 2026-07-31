@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 const OutletApproved = require("../../models/outletApproved.model.js");
 const Beat = require("../../models/beat.model.js");
 const mongoose = require("mongoose");
+const Employee = require("../../models/employee.model.js")
 
 const isValidIndianMobile = (mobile) => {
   if (!mobile) return true;
@@ -13,7 +14,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 
   try {
     const { outletAppId } = req.params;
-    console.log(req.body,'req.body')
+    console.log(req.body, 'req.body')
     // ---------------- BASIC VALIDATION (UNCHANGED) ----------------
     if (!mongoose.Types.ObjectId.isValid(outletAppId)) {
       res.status(400);
@@ -105,7 +106,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
     if (phoneNumbersToCheck.length > 0) {
       const duplicateOutlet = await OutletApproved.findOne({
         _id: { $ne: outletAppId },
-        status: true, 
+        status: true,
         $or: [
           { mobile1: { $in: phoneNumbersToCheck } },
           { mobile2: { $in: phoneNumbersToCheck } },
@@ -149,6 +150,31 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 
     const updateFields = {};
 
+    // ---------------- EMPLOYEE VALIDATION ----------------
+    if (req.body.empId !== undefined) {
+      const empId = req.body.empId?.toString().trim();
+
+      if (!empId) {
+        res.status(400);
+        throw new Error("Employee ID is required");
+      }
+
+      // Only lookup if employee has actually changed
+      const currentEmployee = outlet.employeeId
+        ? await Employee.findById(outlet.employeeId).select("empId")
+        : null;
+
+      if (currentEmployee?.empId !== empId) {
+        const employee = await Employee.findOne({ empId });
+
+        if (!employee) {
+          res.status(404);
+          throw new Error(`Employee not found with Employee ID: ${empId}`);
+        }
+
+        updateFields.employeeId = employee._id;
+      }
+    }
     // ---------------- ALLOWED FIELDS (ONLY ADD massistRefIds) ----------------
     const allowedFields = [
       "outletName",
@@ -178,22 +204,22 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "shipToPincode",
       "competitorBrands",
       "massistRefIds",
-      "googleMapLink", 
+      "googleMapLink",
     ];
 
- allowedFields.forEach((field) => {
-  if (
-    req.body[field] !== undefined &&
-    req.body[field] !== null
-  ) {
-    // Allow gstin, panNumber, aadharNumber, email to be updated with empty strings
-    if (field === 'gstin' || field === 'panNumber' || field === 'aadharNumber') {
-      updateFields[field] = req.body[field];
-    } else if (req.body[field] !== "") {
-      updateFields[field] = req.body[field];
-    }
-  }
-});
+    allowedFields.forEach((field) => {
+      if (
+        req.body[field] !== undefined &&
+        req.body[field] !== null
+      ) {
+        // Allow gstin, panNumber, aadharNumber, email to be updated with empty strings
+        if (field === 'gstin' || field === 'panNumber' || field === 'aadharNumber') {
+          updateFields[field] = req.body[field];
+        } else if (req.body[field] !== "") {
+          updateFields[field] = req.body[field];
+        }
+      }
+    });
 
     // ---------------- OBJECT ID FIELDS (UNCHANGED) ----------------
     const objectIdFields = {
@@ -268,33 +294,33 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
     //   throw new Error("Invalid enrolled status");
     // }
 
- // =========================================================
-// SOURCE ID DEDUPLICATION + OUTLET CODE PROTECTION
-// =========================================================
+    // =========================================================
+    // SOURCE ID DEDUPLICATION + OUTLET CODE PROTECTION
+    // =========================================================
 
-// if (Array.isArray(req.body.massistRefIds)) {
+    // if (Array.isArray(req.body.massistRefIds)) {
 
-//   const cleanedSourceIds = [
-//     ...new Set(
-//       req.body.massistRefIds
-//         .map((id) => id?.toString().trim())
-//         .filter(Boolean)
-//     ),
-//   ];
+    //   const cleanedSourceIds = [
+    //     ...new Set(
+    //       req.body.massistRefIds
+    //         .map((id) => id?.toString().trim())
+    //         .filter(Boolean)
+    //     ),
+    //   ];
 
-//   // ❌ Prevent removal of outletCode from massistRefIds
-//   if (
-//     outlet.outletCode &&
-//     !cleanedSourceIds.includes(outlet.outletCode.toString())
-//   ) {
-//     res.status(400);
-//     throw new Error(
-//       `Outlet Code (${outlet.outletCode}) cannot be removed from Source IDs`
-//     );
-//   }
+    //   // ❌ Prevent removal of outletCode from massistRefIds
+    //   if (
+    //     outlet.outletCode &&
+    //     !cleanedSourceIds.includes(outlet.outletCode.toString())
+    //   ) {
+    //     res.status(400);
+    //     throw new Error(
+    //       `Outlet Code (${outlet.outletCode}) cannot be removed from Source IDs`
+    //     );
+    //   }
 
-//   updateFields.massistRefIds = cleanedSourceIds;
-// }
+    //   updateFields.massistRefIds = cleanedSourceIds;
+    // }
 
     //find only NEW source IDs
     // let newSourceIdsToCheck = [];
