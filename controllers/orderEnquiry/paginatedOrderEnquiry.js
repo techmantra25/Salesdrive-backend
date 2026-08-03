@@ -43,34 +43,6 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
 
     if (enquiryNo) query.enquiryNo = { $regex: enquiryNo, $options: "i" };
 
-    if (employeeId && employeeId !== "all") {
-      const employeeFilter = toInFilter(employeeId);
-      const matchedOutlets = await OutletApproved.find(
-        employeeFilter ? { employeeId: employeeFilter } : {},
-        { _id: 1 }
-      );
-
-      if (matchedOutlets.length === 0) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order enquiries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
-      }
-
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
-      }
-    }
-
     if (routeId && routeId !== "all") {
       const filter = toInFilter(routeId);
       if (filter) query.routeId = filter;
@@ -88,9 +60,26 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       query.status = { $ne: "Closed" };
     }
 
+    // Collect outlet-id constraints from every filter that narrows down retailerId.
+    // We intersect them all at the end instead of letting one filter silently
+    // overwrite another when multiple are applied together (e.g. Salesman + Retailer).
+    let retailerIdConstraints = [];
+
     if (retailerId && retailerId !== "all") {
-      const filter = toInFilter(retailerId);
-      if (filter) query.retailerId = filter;
+      const ids = retailerId
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+      if (ids.length > 0) retailerIdConstraints.push(ids);
+    }
+
+    if (employeeId && employeeId !== "all") {
+      const employeeFilter = toInFilter(employeeId);
+      const matchedOutlets = await OutletApproved.find(
+        employeeFilter ? { employeeId: employeeFilter } : {},
+        { _id: 1 }
+      );
+      retailerIdConstraints.push(matchedOutlets.map((outlet) => outlet._id.toString()));
     }
 
     if (retailerPhone && retailerPhone !== "all") {
@@ -102,50 +91,12 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
           .slice(-10);
         return schemaDigits === frontendDigits;
       });
-
-      if (matchedRetailers.length === 0) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order enquiries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
-      }
-
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedRetailers.map((retailer) => retailer._id) };
-      }
+      retailerIdConstraints.push(matchedRetailers.map((retailer) => retailer._id.toString()));
     }
 
     if (outletCode && outletCode !== "all") {
       const outlet = await OutletApproved.findOne({ outletCode }, { _id: 1 });
-
-      if (!outlet) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order enquiries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
-      }
-
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = outlet._id;
-      }
+      retailerIdConstraints.push(outlet ? [outlet._id.toString()] : []);
     }
 
     if (zoneId && zoneId !== "all") {
@@ -160,26 +111,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { stateId: { $in: stateIds } },
         { _id: 1 }
       );
-
-      if (matchedOutlets.length === 0) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order enquiries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
-      }
-
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
-      }
+      retailerIdConstraints.push(matchedOutlets.map((outlet) => outlet._id.toString()));
     }
 
     if (districtId && districtId !== "all") {
@@ -188,8 +120,17 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         districtFilter ? { district: districtFilter } : {},
         { _id: 1 }
       );
+      retailerIdConstraints.push(matchedOutlets.map((outlet) => outlet._id.toString()));
+    }
 
-      if (matchedOutlets.length === 0) {
+    // Intersect all constraint sets (if any filters were applied)
+    if (retailerIdConstraints.length > 0) {
+      const intersected = retailerIdConstraints.reduce((acc, ids) => {
+        const idSet = new Set(ids);
+        return acc.filter((id) => idSet.has(id));
+      });
+
+      if (intersected.length === 0) {
         return res.status(200).json({
           status: 200,
           message: "Order enquiries list",
@@ -205,9 +146,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         });
       }
 
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
-      }
+      query.retailerId = { $in: intersected };
     }
 
     if (fromDate || toDate) {
