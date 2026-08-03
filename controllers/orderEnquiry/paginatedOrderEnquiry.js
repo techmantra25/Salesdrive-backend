@@ -233,7 +233,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { path: "routeId" },
         {
           path: "retailerId",
-          populate: { path: "employeeId" }, // <-- resolves outlet's assigned salesman
+          populate: { path: "employeeId" },   // <-- resolves outlet's assigned salesman
         },
         { path: "lineItems.product" },
         { path: "lineItems.price" },
