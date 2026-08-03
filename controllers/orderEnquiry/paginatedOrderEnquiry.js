@@ -15,7 +15,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       page = 1,
       limit = 10,
       enquiryNo,
-      salesmanName,
+      employeeId,
       routeId,
       retailerId,
       retailerPhone,
@@ -43,9 +43,32 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
 
     if (enquiryNo) query.enquiryNo = { $regex: enquiryNo, $options: "i" };
 
-    if (salesmanName && salesmanName !== "all") {
-      const filter = toInFilter(salesmanName);
-      if (filter) query.salesmanName = filter;
+    if (employeeId && employeeId !== "all") {
+      const employeeFilter = toInFilter(employeeId);
+      const matchedOutlets = await OutletApproved.find(
+        employeeFilter ? { employeeId: employeeFilter } : {},
+        { _id: 1 }
+      );
+
+      if (matchedOutlets.length === 0) {
+        return res.status(200).json({
+          status: 200,
+          message: "Order enquiries list",
+          data: [],
+          pagination: {
+            currentPage: Number(page),
+            limit: Number(limit),
+            totalPages: 0,
+            totalCount: 0,
+            filteredCount: 0,
+            totalActiveCount: 0,
+          },
+        });
+      }
+
+      if (!retailerId || retailerId === "all") {
+        query.retailerId = { $in: matchedOutlets.map((outlet) => outlet._id) };
+      }
     }
 
     if (routeId && routeId !== "all") {
@@ -208,7 +231,10 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { path: "distributorId" },
         { path: "salesmanName" },
         { path: "routeId" },
-        { path: "retailerId" },
+        {
+          path: "retailerId",
+          populate: { path: "employeeId" },   // <-- resolves outlet's assigned salesman
+        },
         { path: "lineItems.product" },
         { path: "lineItems.price" },
         { path: "lineItems.inventoryId" },
