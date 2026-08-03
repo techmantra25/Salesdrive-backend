@@ -31,13 +31,21 @@ const SORTABLE_FIELDS = {
   updatedAt: "updatedAt",
 };
 
-const AGGREGATE_SORTABLE_FIELDS = new Set(["beat"]);
+// Whitelist of fields the free-text "search" box is allowed to match against.
+// Same defaults as before (kept 1:1 with the old hardcoded $or), but now
+// expressed as a list so new fields can be added here without touching
+// the query-building logic below.
+const SEARCHABLE_FIELDS = [
+  "outletCode",
+  "outletUID",
+  "outletName",
+  "sudoName",
+  "ownerName",
+  "mobile1",
+  "massistRefIds",
+];
 
-const SEARCHABLE_FIELDS = {
-  outletName: "outletName",
-  outletCode: "outletCode",
-  sudoName: "sudoName",
-};
+const AGGREGATE_SORTABLE_FIELDS = new Set(["beat"]);
 
 // Shared populate list used by every path that returns full outlet docs,
 // so the beat-sort aggregation path and the normal path stay in sync.
@@ -62,46 +70,24 @@ const OUTLET_POPULATE = [
   { path: "referenceId", select: "" },
 ];
 
-
-const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const buildSearchAnd = (searchTerm, searchFieldsParam) => {
-  if (!searchTerm) return null;
-
-  let fieldsToSearch = Object.values(SEARCHABLE_FIELDS);
-
-  if (searchFieldsParam) {
-    const requested = String(searchFieldsParam)
-      .split(",")
-      .map((f) => f.trim())
-      .filter(Boolean);
-
-    const whitelisted = requested
-      .map((f) => SEARCHABLE_FIELDS[f])
-      .filter(Boolean);
-
-    // Only narrow the field set if at least one requested field was valid;
-    // otherwise fall back to searching everything.
-    if (whitelisted.length) {
-      fieldsToSearch = whitelisted;
-    }
-  }
-
-  const tokens = String(searchTerm)
+// Builds the $or clause for the free-text search box dynamically from
+// SEARCHABLE_FIELDS, instead of a hardcoded array of { field: regex } objects.
+const buildSearchQuery = (searchTerm) => {
+  const words = searchTerm
     .trim()
     .split(/\s+/)
     .filter(Boolean);
 
-  if (!tokens.length) return null;
+  if (words.length === 0) return {};
 
-  return tokens.map((token) => {
-    const safeToken = escapeRegex(token);
-    return {
-      $or: fieldsToSearch.map((field) => ({
-        [field]: { $regex: safeToken, $options: "i" },
-      })),
-    };
-  });
+  // One $or per word (word can match any field), ANDed together.
+  const andClauses = words.map((word) => ({
+    $or: SEARCHABLE_FIELDS.map((field) => ({
+      [field]: { $regex: word, $options: "i" },
+    })),
+  }));
+
+  return andClauses.length === 1 ? andClauses[0] : { $and: andClauses };
 };
 
 const buildSortOption = (query) => {
@@ -157,10 +143,9 @@ const paginatedOutletApproved = asyncHandler(async (req, res) => {
   try {
     const query = {};
 
-    // SEARCH (dynamic, token-based — see buildSearchAnd / SEARCHABLE_FIELDS above)
-    const searchAnd = buildSearchAnd(req.query.search, req.query.searchFields);
-    if (searchAnd) {
-      query.$and = searchAnd;
+    if (req.query.search) {
+      const searchQuery = buildSearchQuery(req.query.search);
+      Object.assign(query, searchQuery);
     }
     if (req.query.phoneSearch) {
       // Remove all non-numeric characters from search term
