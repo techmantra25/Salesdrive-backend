@@ -126,26 +126,28 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
 
     const beatIds = beats.map((beat) => beat._id);
 
-    // =========================
-    // EMPLOYEE + BEAT VALIDATION
-    // =========================
-    if (employee) {
-      const employeeExistsInBeat = beats.some(
-        (beat) =>
-          beat.employeeId
-            ?.map((id) => id.toString())
-            .includes(employee._id.toString())
-      );
+    // // =========================
+    // // EMPLOYEE + BEAT VALIDATION
+    // // =========================
+    // if (employee) {
+    //   const employeeExistsInBeat = beats.some(
+    //     (beat) =>
+    //       beat.employeeId
+    //         ?.map((id) => id.toString())
+    //         .includes(employee._id.toString())
+    //   );
 
-      if (!employeeExistsInBeat) {
-        return res.status(400).json({
-          status: false,
-          message:
-            "Selected employee is not mapped with selected beat",
-        });
-      }
-    }
-    // =========================
+    //   if (!employeeExistsInBeat) {
+    //     return res.status(400).json({
+    //       status: false,
+    //       message:
+    //         "Selected employee is not mapped with selected beat",
+    //     });
+    //   }
+    // }
+
+
+    // // =========================
     // REGION VALIDATION
     // =========================
 

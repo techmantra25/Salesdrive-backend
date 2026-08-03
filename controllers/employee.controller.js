@@ -1273,11 +1273,31 @@ const listByBeat = asyncHandler(async (req, res) => {
 const getEmployeeByDistributor = asyncHandler(async (req, res) => {
   try {
     const { did } = req.params;
+    const { retailerId } = req.query;
 
-    const employees = await Employee.find({
+    const filter = {
       distributorId: did,
       status: true,
-    })
+    };
+
+    // If a retailer is specified, scope the result to only that retailer's assigned salesman
+    if (retailerId) {
+      const Outlet = require("../models/outletApproved.model.js"); // adjust path/filename to match your actual outlet model
+      const outlet = await Outlet.findById(retailerId).select("employeeId");
+
+      if (!outlet || !outlet.employeeId) {
+        // Retailer not found or has no salesman assigned — return empty list
+        return res.status(200).json({
+          status: 200,
+          message: "Employee List By Distributor",
+          data: [],
+        });
+      }
+
+      filter._id = outlet.employeeId;
+    }
+
+    const employees = await Employee.find(filter)
       .populate([
         {
           path: "desgId",

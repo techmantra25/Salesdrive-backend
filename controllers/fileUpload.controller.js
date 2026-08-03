@@ -641,6 +641,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   "Product Name",
                   "Brand Code",
                   "Sub Brand Code",
+                  "Employee Code",
                   "Collection Code",
                   "Category Code",
                   "Supplier Code",
@@ -3804,15 +3805,27 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     lookupMaps.existingOutletCodes.add(outletCode);
                     lookupMaps.existingOutletUIDs.add(outletUID);
 
-                    // Lookup foreign key references
-                    const employeeId = lookupMaps.employees.get(
-                      row["Employee Code"].trim(),
-                    );
+
+
+             // Lookup and validate Employee Code (Salesman Code)
+                    const employeeCode = row["Employee Code"]?.trim();
+                    let employeeId = null;
+
+                    if (employeeCode) {
+                      employeeId = lookupMaps.employees.get(employeeCode);
+                      if (!employeeId) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Employee/Salesman with code ${employeeCode} not found at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
+                    }
 
                     const stateId = lookupMaps.states.get(
                       row["State Code"].trim(),
                     );
-
                     // Optional references
                     const zoneId = row["Zone Code"]?.trim()
                       ? lookupMaps.zones.get(row["Zone Code"].trim())
