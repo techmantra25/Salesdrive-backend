@@ -3,6 +3,9 @@ const {
   createOrderEnquiry,
 } = require("../../controllers/orderEnquiry/createOrderEnquiry.js");
 const {
+  bulkCreateOrderEnquiry,
+} = require("../../controllers/orderEnquiry/bulkCreateOrderEnquiry .js");
+const {
   paginatedOrderEnquiry,
 } = require("../../controllers/orderEnquiry/paginatedOrderEnquiry.js");
 const {
@@ -36,6 +39,9 @@ const {
 const orderEnquiryRoutes = express.Router();
 
 orderEnquiryRoutes.route("/create").post(protectDisRoute, createOrderEnquiry);
+orderEnquiryRoutes
+  .route("/bulk-create")
+  .post(protectDisRoute, bulkCreateOrderEnquiry);
 orderEnquiryRoutes
   .route("/paginated-list")
   .get(protectDisRoute, paginatedOrderEnquiry);
