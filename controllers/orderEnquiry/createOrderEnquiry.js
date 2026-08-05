@@ -4,6 +4,7 @@ const Distributor = require("../../models/distributor.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
+const OutletApproved = require("../../models/outletApproved.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 const createOrderEnquiry = asyncHandler(async (req, res) => {
@@ -50,7 +51,13 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
     }
+const outlet = await OutletApproved.findById(retailerId);
 
+if (!outlet) {
+  return res.status(404).json({
+    message: "Outlet not found",
+  });
+}
     for (const item of lineItems) {
       const product = await Product.findById(item.product);
       if (!product) {
@@ -106,6 +113,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      cso: outlet?.cso ?? null,
       orderType,
       orderSource,
       paymentMode,
