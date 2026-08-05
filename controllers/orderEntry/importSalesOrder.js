@@ -209,11 +209,11 @@ const buildLineItem = ({
   const mrpPrice = safeNumber(price.mrp_price);
   const grossAmt = toTwoDecimal(qty * rlpPrice);
 
-// Effective Price actually billed. Falls back to RLP when not uploaded.
-const effPrice =
-  effectivePrice !== null && qty > 0
-    ? safeNumber(effectivePrice) / qty
-    : rlpPrice;
+  // Effective Price actually billed. Falls back to RLP when not uploaded.
+  const effPrice =
+    effectivePrice !== null && qty > 0
+      ? safeNumber(effectivePrice) / qty
+      : rlpPrice;
   // ₹-per-unit amount, uncapped (can be negative -> markup above RLP).
   const distributorDiscUnitAmount = toTwoDecimal(rlpPrice - effPrice);
   const distributorDiscount = toTwoDecimal(distributorDiscUnitAmount * qty);
@@ -281,10 +281,10 @@ const mergeRowsByProduct = (rows) => {
       // meaningfully (we don't know RLP yet at merge time), so we leave it null —
       // buildLineItem() will then fall back to RLP for the whole merged quantity,
       // same as if Effective Price had simply never been supplied.
-       const combinedEffectivePrice =
+      const combinedEffectivePrice =
         map[productCode].effectivePrice !== null && row.effectivePrice !== null
           ? safeNumber(map[productCode].effectivePrice) +
-            safeNumber(row.effectivePrice)
+          safeNumber(row.effectivePrice)
           : null;
 
       map[productCode].orderQty += row.orderQty;
@@ -426,6 +426,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     salesmanName: orderMeta.employee._id,
     routeId: orderMeta.routeId,
     retailerId: orderMeta.retailer._id,
+    cso: orderMeta.retailer?.cso ?? null,
     orderType: orderMeta.orderType,
     orderSource: "Distributor",
     paymentMode: orderMeta.paymentMode,
@@ -448,20 +449,20 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
 
   const createdOrder = await OrderEntry.create(orderData);
 
-if (orderDate) {
-  await OrderEntry.collection.updateOne(
-    { _id: createdOrder._id },
-    {
-      $set: {
-        manualOrderDate: orderDate,
-        updatedAt: orderDate, 
-      },
-    }
-  );
+  if (orderDate) {
+    await OrderEntry.collection.updateOne(
+      { _id: createdOrder._id },
+      {
+        $set: {
+          manualOrderDate: orderDate,
+          updatedAt: orderDate,
+        },
+      }
+    );
 
-  createdOrder.manualOrderDate = orderDate;
-  createdOrder.updatedAt = orderDate;
-}
+    createdOrder.manualOrderDate = orderDate;
+    createdOrder.updatedAt = orderDate;
+  }
 
   return {
     order: createdOrder,
