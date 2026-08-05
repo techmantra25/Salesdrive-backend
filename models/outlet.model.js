@@ -19,6 +19,10 @@ const outletSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
     },
+    cso: {
+      type: String,
+      default: null,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       refPath: "createdBy_type",
