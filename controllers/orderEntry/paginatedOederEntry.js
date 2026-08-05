@@ -8,13 +8,19 @@ const OutletApproved = require("../../models/outletApproved.model");
 // empty string, undefined, etc.
 const toArray = (val) => {
   if (!val || val === "all") return [];
-  if (Array.isArray(val)) return val.filter(Boolean);
+
+  if (Array.isArray(val)) {
+    return val
+      .flatMap((item) => String(item).split(","))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
   return String(val)
     .split(",")
-    .map((v) => v.trim())
+    .map((item) => item.trim())
     .filter(Boolean);
 };
-
 const paginatedOrderEntry = asyncHandler(async (req, res) => {
   try {
     const distributorId = req.user.id;
@@ -37,6 +43,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     } = req.query;
 
     let query = { distributorId };
+    console.log("raw retailerId param:", req.query.retailerId, typeof req.query.retailerId);
 
     const emptyResponse = () =>
       res.status(200).json({
@@ -96,6 +103,8 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     // RETAILER NAME FILTER (multi)
     // --------------------------------------------------
     const retailerIdArr = toArray(retailerId);
+    console.log("Raw retailerId:", retailerId);
+    console.log("Retailer Array:", retailerIdArr);
     if (retailerIdArr.length === 1) query.retailerId = retailerIdArr[0];
     else if (retailerIdArr.length > 1) query.retailerId = { $in: retailerIdArr };
 
@@ -175,6 +184,10 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     // --------------------------------------------------
     // FETCH ORDER DATA
     // --------------------------------------------------
+    console.log("Final query:", JSON.stringify(query));
+    console.log("Retailer Param:", retailerId);
+    console.log("Retailer Array:", retailerIdArr);
+    console.log("Mongo Query:", JSON.stringify(query, null, 2));
     const orderEntries = await OrderEntry.find(query)
       .populate([
         { path: "distributorId" },
@@ -215,7 +228,9 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    console.log("Error:", error);
+    console.log("Error name:", error.name);
+    console.log("Error message:", error.message);
+    console.log("Error stack:", error.stack);
     res.status(400);
     throw new Error(error?.message || "Something went wrong");
   }
