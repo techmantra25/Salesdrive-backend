@@ -327,7 +327,7 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
     if (!item.orderQty || item.orderQty <= 0) {
       validationErrors.push({
         ...item,
-        reason: `Invalid Order Quantity for Product Code ${item.productCode}`,
+        reason: `Invalid Enquiry Quantity for Product Code ${item.productCode}`,
       });
       continue;
     }
@@ -417,10 +417,10 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
 
   if (!manualDate) {
     throw {
-      message: "Invalid Order Date",
+      message: "Invalid Enquiry Date",
       validationErrors: rows.map((row) => ({
         ...row,
-        reason: `Invalid Order Date ${enquiryMeta.orderDate}`,
+        reason: `Invalid Enquiry Date ${enquiryMeta.orderDate}`,
       })),
     };
   }
@@ -495,9 +495,15 @@ const bulkCreateOrderEnquiry = asyncHandler(async (req, res) => {
       const salesmanCode = String(getFirstValue(row, ["Salesman Code"])).trim();
       const retailerCode = String(getFirstValue(row, ["Retailer Code"])).trim();
       const retailerName = String(getFirstValue(row, ["Retailer Name"])).trim();
-      const orderDate = getFirstValue(row, ["Order Date"]);
+      // "Enquiry Date" is the current CSV header; "Order Date" kept as a
+      // fallback so previously-downloaded/older sheets keep working.
+      const orderDate = getFirstValue(row, ["Enquiry Date", "Order Date"]);
       const productCode = String(getFirstValue(row, ["Product Code"])).trim();
-      const orderQty = safeNumber(getFirstValue(row, ["Order Quantity"]));
+      // "Enquiry Quantity" is the current CSV header; "Order Quantity" kept
+      // as a fallback for the same reason.
+      const orderQty = safeNumber(
+        getFirstValue(row, ["Enquiry Quantity", "Order Quantity"]),
+      );
       const orderType = ["Counter", "Normal-Sale"].includes(
         getFirstValue(row, ["Order Type"]),
       )
