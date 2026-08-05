@@ -3,6 +3,18 @@ const OrderEntry = require("../../models/orderEntry.model");
 const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
 const OutletApproved = require("../../models/outletApproved.model");
 
+// Splits a comma-separated query param (or accepts an already-parsed array)
+// into a clean array of trimmed, non-empty values. Returns [] for "all",
+// empty string, undefined, etc.
+const toArray = (val) => {
+  if (!val || val === "all") return [];
+  if (Array.isArray(val)) return val.filter(Boolean);
+  return String(val)
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+};
+
 const paginatedOrderEntry = asyncHandler(async (req, res) => {
   try {
     const distributorId = req.user.id;
@@ -26,6 +38,21 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
 
     let query = { distributorId };
 
+    const emptyResponse = () =>
+      res.status(200).json({
+        status: 200,
+        message: "Order entries list",
+        data: [],
+        pagination: {
+          currentPage: Number(page),
+          limit: Number(limit),
+          totalPages: 0,
+          totalCount: 0,
+          filteredCount: 0,
+          totalActiveCount: 0,
+        },
+      });
+
     // --------------------------------------------------
     // ORDER NUMBER FILTER
     // --------------------------------------------------
@@ -38,89 +65,94 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       }
     }
 
-    if (salesmanName && salesmanName !== "all") query.salesmanName = salesmanName;
-    if (routeId && routeId !== "all") query.routeId = routeId;
-    if (orderType && orderType !== "all") query.orderType = orderType;
-    if (orderSource && orderSource !== "all") query.orderSource = orderSource;
-    if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
-    if (status && status !== "all") query.status = status;
+    // --------------------------------------------------
+    // SIMPLE MULTI-VALUE FILTERS ($in when more than one value given)
+    // --------------------------------------------------
+    const salesmanNameArr = toArray(salesmanName);
+    if (salesmanNameArr.length === 1) query.salesmanName = salesmanNameArr[0];
+    else if (salesmanNameArr.length > 1) query.salesmanName = { $in: salesmanNameArr };
+
+    const routeIdArr = toArray(routeId);
+    if (routeIdArr.length === 1) query.routeId = routeIdArr[0];
+    else if (routeIdArr.length > 1) query.routeId = { $in: routeIdArr };
+
+    const orderTypeArr = toArray(orderType);
+    if (orderTypeArr.length === 1) query.orderType = orderTypeArr[0];
+    else if (orderTypeArr.length > 1) query.orderType = { $in: orderTypeArr };
+
+    const orderSourceArr = toArray(orderSource);
+    if (orderSourceArr.length === 1) query.orderSource = orderSourceArr[0];
+    else if (orderSourceArr.length > 1) query.orderSource = { $in: orderSourceArr };
+
+    const paymentModeArr = toArray(paymentMode);
+    if (paymentModeArr.length === 1) query.paymentMode = paymentModeArr[0];
+    else if (paymentModeArr.length > 1) query.paymentMode = { $in: paymentModeArr };
+
+    const statusArr = toArray(status);
+    if (statusArr.length === 1) query.status = statusArr[0];
+    else if (statusArr.length > 1) query.status = { $in: statusArr };
 
     // --------------------------------------------------
-    // RETAILER NAME FILTER
+    // RETAILER NAME FILTER (multi)
     // --------------------------------------------------
-    if (retailerId && retailerId !== "all") {
-      query.retailerId = retailerId;
-    }
+    const retailerIdArr = toArray(retailerId);
+    if (retailerIdArr.length === 1) query.retailerId = retailerIdArr[0];
+    else if (retailerIdArr.length > 1) query.retailerId = { $in: retailerIdArr };
 
     // --------------------------------------------------
-    // RETAILER PHONE FILTER (Normalize both schema + frontend)
+    // RETAILER PHONE FILTER (multi, normalize both schema + frontend)
     // --------------------------------------------------
-    if (retailerPhone && retailerPhone !== "all") {
-     
+    const retailerPhoneArr = toArray(retailerPhone);
+    if (retailerPhoneArr.length > 0) {
+      // Normalize frontend phones -> last 10 digits
+      const frontendDigitsSet = new Set(
+        retailerPhoneArr.map((p) => p.replace(/\D/g, "").slice(-10))
+      );
 
-      // Normalize frontend phone → last 10 digits
-      const frontendDigits = retailerPhone.replace(/\D/g, "").slice(-10);
       // Get retailers (we will filter manually)
       const allRetailers = await OutletApproved.find({}, { _id: 1, mobile1: 1 });
 
-      // Normalize schema numbers → last 10 digits
+      // Normalize schema numbers -> last 10 digits
       const matchedRetailers = allRetailers.filter((r) => {
         const schemaDigits = (r.mobile1 || "").replace(/\D/g, "").slice(-10);
-        return schemaDigits === frontendDigits;
+        return frontendDigitsSet.has(schemaDigits);
       });
 
       if (matchedRetailers.length === 0) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order entries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
+        return emptyResponse();
       }
 
+      const matchedIds = matchedRetailers.map((r) => r._id);
+
       // Apply phone filter only if retailerId is NOT already selected
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = { $in: matchedRetailers.map((r) => r._id) };
+      if (retailerIdArr.length === 0) {
+        query.retailerId =
+          matchedIds.length === 1 ? matchedIds[0] : { $in: matchedIds };
       }
     }
 
     // --------------------------------------------------
-    // OUTLET CODE FILTER
+    // OUTLET CODE FILTER (multi)
     // --------------------------------------------------
-    if (outletCode && outletCode !== "all") {
-      const outlet = await OutletApproved.findOne(
-        { outletCode },
+    const outletCodeArr = toArray(outletCode);
+    if (outletCodeArr.length > 0) {
+      const outlets = await OutletApproved.find(
+        { outletCode: { $in: outletCodeArr } },
         { _id: 1 }
       );
 
-      if (!outlet) {
-        return res.status(200).json({
-          status: 200,
-          message: "Order entries list",
-          data: [],
-          pagination: {
-            currentPage: Number(page),
-            limit: Number(limit),
-            totalPages: 0,
-            totalCount: 0,
-            filteredCount: 0,
-            totalActiveCount: 0,
-          },
-        });
+      if (outlets.length === 0) {
+        return emptyResponse();
       }
 
       // Apply outletCode filter ONLY if retailerId is not already set
-      if (!retailerId || retailerId === "all") {
-        query.retailerId = outlet._id;
+      if (retailerIdArr.length === 0 && retailerPhoneArr.length === 0) {
+        const outletIds = outlets.map((o) => o._id);
+        query.retailerId =
+          outletIds.length === 1 ? outletIds[0] : { $in: outletIds };
       }
     }
+
     // --------------------------------------------------
     // DATE RANGE FILTER
     // --------------------------------------------------
