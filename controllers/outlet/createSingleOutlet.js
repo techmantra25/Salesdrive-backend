@@ -541,6 +541,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       leadId,
 
       employeeId: employee?._id || null,
+      cso: data.cso?.trim() || null,
 
       zoneId,
       stateId: state._id,

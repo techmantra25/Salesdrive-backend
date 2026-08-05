@@ -10,6 +10,8 @@ const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config.js");
 const BillDeliverySetting = require("../../models/billDeliverySetting.model");
 const { getOrderBackdate } = require("../../utils/backdateOrderHelper");
+const OutletApproved = require("../../models/outletApproved.model");
+
 
 // Create Order Entry
 const createOrderEntry = asyncHandler(async (req, res) => {
@@ -60,7 +62,13 @@ const createOrderEntry = asyncHandler(async (req, res) => {
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
     }
+    const outlet = await OutletApproved.findById(retailerId);
 
+    if (!outlet) {
+      return res.status(404).json({
+        message: "Outlet not found",
+      });
+    }
     // Validate each line item for product, price, and inventory
     for (const item of lineItems) {
       const product = await Product.findById(item.product);
@@ -116,6 +124,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      cso: outlet?.cso ?? null,
       orderType,
       orderSource,
       paymentMode,

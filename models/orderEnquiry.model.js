@@ -125,6 +125,10 @@ const OrderEnquirySchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    cso: {
+      type: String,
+      default: null,
+    },
     lineItems: [LineItemSchema],
     totalLines: {
       type: Number,

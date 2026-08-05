@@ -180,6 +180,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "outletName",
       "sudoName",
       "ownerName",
+      "cso",
       "pin",
       "mobile1",
       "mobile2",

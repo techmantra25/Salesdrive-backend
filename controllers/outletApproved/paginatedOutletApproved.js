@@ -11,6 +11,7 @@ const Beat = require("../../models/beat.model");
 const SORTABLE_FIELDS = {
   outletName: "outletName",
   ownerName: "ownerName",
+  cso: "cso",
   outletCode: "outletCode",
   outletUID: "outletUID",
   mobile1: "mobile1",
