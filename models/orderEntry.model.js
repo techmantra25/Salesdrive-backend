@@ -110,6 +110,10 @@ const OrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
     },
+    cso: {
+      type: String,
+      default: null,
+    },
     routeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Beat",
