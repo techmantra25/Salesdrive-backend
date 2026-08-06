@@ -44,7 +44,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     } = req.query;
 
     let query = { distributorId };
-    console.log("raw retailerId param:", req.query.retailerId, typeof req.query.retailerId);
+    // console.log("raw retailerId param:", req.query.retailerId, typeof req.query.retailerId);
 
     const emptyResponse = () =>
       res.status(200).json({
@@ -100,16 +100,32 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     if (statusArr.length === 1) query.status = statusArr[0];
     else if (statusArr.length > 1) query.status = { $in: statusArr };
 
+    // --------------------------------------------------
+    // CSO FILTER
+    // CSO can live on the order itself (order.cso) OR only on the outlet
+    // (retailerId.cso) — the frontend displays retailerId.cso, so the filter
+    // must match against BOTH sources via $or, not just the order's own
+    // field, otherwise a selected CSO can silently exclude/include the wrong
+    // rows whenever the two values diverge or one is unset.
+    // --------------------------------------------------
     const csoArr = toArray(cso);
-    if (csoArr.length === 1) query.cso = csoArr[0];
-    else if (csoArr.length > 1) query.cso = { $in: csoArr };
+    let csoOutletIds = [];
+    if (csoArr.length > 0) {
+      const csoFilter = csoArr.length === 1 ? csoArr[0] : { $in: csoArr };
+
+      const matchedOutlets = await OutletApproved.find(
+        { cso: csoFilter },
+        { _id: 1 }
+      );
+      csoOutletIds = matchedOutlets.map((o) => o._id);
+    }
 
     // --------------------------------------------------
     // RETAILER NAME FILTER (multi)
     // --------------------------------------------------
     const retailerIdArr = toArray(retailerId);
-    console.log("Raw retailerId:", retailerId);
-    console.log("Retailer Array:", retailerIdArr);
+    // console.log("Raw retailerId:", retailerId);
+    // console.log("Retailer Array:", retailerIdArr);
     if (retailerIdArr.length === 1) query.retailerId = retailerIdArr[0];
     else if (retailerIdArr.length > 1) query.retailerId = { $in: retailerIdArr };
 
@@ -168,6 +184,32 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     }
 
     // --------------------------------------------------
+    // APPLY CSO OR-CONDITION
+    // Combine "order.cso matches" OR "order.retailerId is one of the outlets
+    // whose cso matches" — if retailerId is already constrained by another
+    // filter above (retailer/phone/outletCode), AND them together via $and
+    // so CSO further narrows rather than silently overriding the existing
+    // retailerId constraint.
+    // --------------------------------------------------
+    if (csoArr.length > 0) {
+      const csoFilter = csoArr.length === 1 ? csoArr[0] : { $in: csoArr };
+
+      const csoOrConditions = [{ cso: csoFilter }];
+      if (csoOutletIds.length > 0) {
+        csoOrConditions.push({
+          retailerId: csoOutletIds.length === 1 ? csoOutletIds[0] : { $in: csoOutletIds },
+        });
+      }
+
+      if (query.retailerId) {
+        // retailerId already constrained elsewhere — narrow further via $and
+        query.$and = (query.$and || []).concat([{ $or: csoOrConditions }]);
+      } else {
+        query.$or = csoOrConditions;
+      }
+    }
+
+    // --------------------------------------------------
     // DATE RANGE FILTER
     // --------------------------------------------------
     if (fromDate || toDate) {
@@ -189,10 +231,10 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     // --------------------------------------------------
     // FETCH ORDER DATA
     // --------------------------------------------------
-    console.log("Final query:", JSON.stringify(query));
-    console.log("Retailer Param:", retailerId);
-    console.log("Retailer Array:", retailerIdArr);
-    console.log("Mongo Query:", JSON.stringify(query, null, 2));
+    // console.log("Final query:", JSON.stringify(query));
+    // console.log("Retailer Param:", retailerId);
+    // console.log("Retailer Array:", retailerIdArr);
+    // console.log("Mongo Query:", JSON.stringify(query, null, 2));
     const orderEntries = await OrderEntry.find(query)
       .populate([
         { path: "distributorId" },
@@ -233,9 +275,9 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    console.log("Error name:", error.name);
-    console.log("Error message:", error.message);
-    console.log("Error stack:", error.stack);
+    // console.log("Error name:", error.name);
+    // console.log("Error message:", error.message);
+    // console.log("Error stack:", error.stack);
     res.status(400);
     throw new Error(error?.message || "Something went wrong");
   }

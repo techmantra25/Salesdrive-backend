@@ -1,10 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const OrderEnquiry = require("../../models/orderEnquiry.model");
 const OutletApproved = require("../../models/outletApproved.model");
-// NOTE: Assumed model path/name for State — update if your State model
-// lives elsewhere or is named differently. State documents are expected
-// to carry a `zoneId` field, and OutletApproved documents are expected
-// to carry `stateId` and `district` fields (as seen in existing outlet data).
 const State = require("../../models/state.model");
 
 const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
@@ -33,7 +29,6 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
 
     const query = { distributorId };
 
-    // Helper: turns "id1,id2,id3" into a Mongo $in filter (also works for a single id)
     const toInFilter = (value) => {
       const ids = value
         .split(",")
@@ -53,23 +48,14 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
     if (orderSource && orderSource !== "all") query.orderSource = orderSource;
     if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
 
-    // CSO is a top-level field on OrderEnquiry itself, so it's a direct $in filter
-    if (cso && cso !== "all") {
-      const filter = toInFilter(cso);
-      if (filter) query.cso = filter;
-    }
-
     if (status && status !== "all") {
       const filter = toInFilter(status);
       query.status = filter || status;
     } else {
-      // By default don't show closed enquiries
       query.status = { $ne: "Closed" };
     }
 
     // Collect outlet-id constraints from every filter that narrows down retailerId.
-    // We intersect them all at the end instead of letting one filter silently
-    // overwrite another when multiple are applied together (e.g. Salesman + Retailer).
     let retailerIdConstraints = [];
 
     if (retailerId && retailerId !== "all") {
@@ -130,6 +116,28 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       retailerIdConstraints.push(matchedOutlets.map((outlet) => outlet._id.toString()));
     }
 
+    // CSO can live either directly on the enquiry (query.cso) OR only on the
+    // outlet (retailerId.cso). Resolve it to a set of matching retailerIds
+    // (via OutletApproved.cso) and OR that against a direct cso match on the
+    // enquiry itself, rather than only checking the enquiry's own field —
+    // otherwise enquiries whose CSO only lives on the outlet get missed.
+    let csoOr = null;
+    if (cso && cso !== "all") {
+      const csoFilter = toInFilter(cso);
+      if (csoFilter) {
+        const matchedOutlets = await OutletApproved.find(
+          { cso: csoFilter },
+          { _id: 1 }
+        );
+        const matchedOutletIds = matchedOutlets.map((outlet) => outlet._id.toString());
+
+        csoOr = [{ cso: csoFilter }];
+        if (matchedOutletIds.length > 0) {
+          csoOr.push({ retailerId: { $in: matchedOutletIds } });
+        }
+      }
+    }
+
     // Intersect all constraint sets (if any filters were applied)
     if (retailerIdConstraints.length > 0) {
       const intersected = retailerIdConstraints.reduce((acc, ids) => {
@@ -156,6 +164,17 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       query.retailerId = { $in: intersected };
     }
 
+    // Apply the CSO OR-condition. If retailerId is already constrained by
+    // other filters (above), combine both via $and so CSO further narrows
+    // rather than overrides.
+    if (csoOr) {
+      if (query.retailerId) {
+        query.$and = (query.$and || []).concat([{ $or: csoOr }]);
+      } else {
+        query.$or = csoOr;
+      }
+    }
+
     if (fromDate || toDate) {
       query.createdAt = {};
 
@@ -179,7 +198,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { path: "routeId" },
         {
           path: "retailerId",
-          populate: { path: "employeeId" },   // <-- resolves outlet's assigned salesman
+          populate: { path: "employeeId" },
         },
         { path: "lineItems.product" },
         { path: "lineItems.price" },
@@ -212,7 +231,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       },
     });
   } catch (error) {
-    console.log("Error:", error);
+    // console.log("Error:", error);
     res.status(400);
     throw new Error(error?.message || "Something went wrong");
   }
