@@ -15,6 +15,7 @@ const paginatedBillList = asyncHandler(async (req, res) => {
       fromDate,
       retailerPhone,
       outletCode,
+      cso,
       toDate,
       billStatus,
       loadSheetExist,
@@ -45,7 +46,7 @@ const paginatedBillList = asyncHandler(async (req, res) => {
     // ----------------------------------
     // Retailer Phone & Outlet Code filter
     // ----------------------------------
-    if (retailerPhone || outletCode) {
+    if (retailerPhone || outletCode || cso) {
       const outletQuery = {};
 
       if (retailerPhone) {
@@ -55,6 +56,15 @@ const paginatedBillList = asyncHandler(async (req, res) => {
 
       if (outletCode) {
         outletQuery.outletCode = outletCode;
+      }
+
+      if (cso) {
+        const csoArr = cso
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean);
+        if (csoArr.length === 1) outletQuery.cso = csoArr[0];
+        else if (csoArr.length > 1) outletQuery.cso = { $in: csoArr };
       }
 
       const matchingOutlets =

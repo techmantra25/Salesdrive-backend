@@ -25,6 +25,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
+      cso,
       fromDate,
       toDate,
       status,
@@ -51,6 +52,12 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
     if (orderType && orderType !== "all") query.orderType = orderType;
     if (orderSource && orderSource !== "all") query.orderSource = orderSource;
     if (paymentMode && paymentMode !== "all") query.paymentMode = paymentMode;
+
+    // CSO is a top-level field on OrderEnquiry itself, so it's a direct $in filter
+    if (cso && cso !== "all") {
+      const filter = toInFilter(cso);
+      if (filter) query.cso = filter;
+    }
 
     if (status && status !== "all") {
       const filter = toInFilter(status);

@@ -49,6 +49,7 @@ const getOutletMinimalByDistributor = asyncHandler(async (req, res) => {
       beatId: 1,
       mobile1: 1,
       sudoName: 1,
+      cso: 1, 
     }).sort({ outletName: 1 });
 
     if (limit) {
@@ -131,6 +132,7 @@ const searchOutletsByDistributor = asyncHandler(async (req, res) => {
         outletUID: 1,
         beatId: 1,
         sudoName: 1,
+        cso: 1, 
       }
     )
       .sort({ outletName: 1 })
