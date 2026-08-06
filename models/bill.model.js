@@ -249,6 +249,10 @@ const BillSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    vehicleNumber: {
+      type: String,
+      default: "",
+    },
     freightCharges: {
       type: Number,
       default: 0,
