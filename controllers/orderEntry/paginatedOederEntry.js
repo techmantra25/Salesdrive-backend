@@ -37,6 +37,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
+      cso,
       fromDate,
       toDate,
       status,
@@ -98,6 +99,10 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     const statusArr = toArray(status);
     if (statusArr.length === 1) query.status = statusArr[0];
     else if (statusArr.length > 1) query.status = { $in: statusArr };
+
+    const csoArr = toArray(cso);
+    if (csoArr.length === 1) query.cso = csoArr[0];
+    else if (csoArr.length > 1) query.cso = { $in: csoArr };
 
     // --------------------------------------------------
     // RETAILER NAME FILTER (multi)
