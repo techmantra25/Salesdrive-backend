@@ -119,12 +119,13 @@ const getLastPageRowBudget = (termConditionsCount) =>
     LAST_PAGE_ROWS_BASE - Math.ceil(termConditionsCount / 2),
   );
 
-// Splits line items into pages using the two capacities above. Unlike the
-// old fixed-size chunking, this only creates a new page once the current
-// one is actually full, and the final page is only as big as the content
-// that remains — no forced blank rows.
+// Every page now repeats the full summary/bank/terms/signature/footer
+// block, so every page — not just the last — needs room for that block.
+// Capacity is therefore the same on every page: whatever fits alongside
+// the full footer content (adjusted for how many terms & conditions
+// there are, same as before).
 const paginateLineItems = (items, termConditionsCount) => {
-  const lastPageRows = getLastPageRowBudget(termConditionsCount);
+  const rowsPerPage = getLastPageRowBudget(termConditionsCount);
 
   if (items.length === 0) {
     return [[]];
@@ -134,22 +135,12 @@ const paginateLineItems = (items, termConditionsCount) => {
   let remaining = items.slice();
 
   while (remaining.length > 0) {
-    if (remaining.length <= lastPageRows) {
-      // Everything left fits on one page alongside the summary block —
-      // make it the last page and stop.
-      pages.push(remaining);
-      remaining = [];
-    } else {
-      // More left than the last page could ever hold, so this is a
-      // regular (non-last) page — fill it up to its larger capacity.
-      pages.push(remaining.slice(0, REGULAR_PAGE_ROWS));
-      remaining = remaining.slice(REGULAR_PAGE_ROWS);
-    }
+    pages.push(remaining.slice(0, rowsPerPage));
+    remaining = remaining.slice(rowsPerPage);
   }
 
   return pages;
 };
-
 // ---------------------------------------------------------------------------
 // Small render helpers — each one returns a chunk of markup. Splitting things
 // up like this is what lets us repeat the exact same header/table-head/etc.
@@ -664,33 +655,26 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
   const pages = paginateLineItems(validLineItems, termConditions.length);
   const totalPages = pages.length;
 
-  const pagesHtml = pages
-    .map((itemsForPage, pageIndex) => {
-      const isLastPage = pageIndex === totalPages - 1;
-      const startIndex = pages
-        .slice(0, pageIndex)
-        .reduce((sum, p) => sum + p.length, 0);
+const pagesHtml = pages
+  .map((itemsForPage, pageIndex) => {
+    const isLastPage = pageIndex === totalPages - 1;
+    const startIndex = pages
+      .slice(0, pageIndex)
+      .reduce((sum, p) => sum + p.length, 0);
 
-      return `
-        <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
-          ${renderCompanyHeader(distributor, options)}
-          ${renderCustomerAndQuotationDetails(distributor, retailer, orderEnquiry)}
-          ${renderItemsTable(itemsForPage, startIndex)}
-          ${isLastPage ? renderSummarySection(
-        orderEnquiry,
-        bankData,
-        upiData,
-
-        grossAmount
-      ) : ""}
-          ${isLastPage ? renderTermsSection(termConditions) : ""}
-          ${isLastPage ? renderNoteAndSignature(distributor) : ""}
-          ${isLastPage ? renderChannelPartnersFooter() : ""}
-          ${renderPageFooter(pageIndex + 1, totalPages, isLastPage)}
-        </div>`;
-    })
-    .join("\n");
-
+    return `
+      <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
+        ${renderCompanyHeader(distributor, options)}
+        ${renderCustomerAndQuotationDetails(distributor, retailer, orderEnquiry)}
+        ${renderItemsTable(itemsForPage, startIndex)}
+        ${renderSummarySection(orderEnquiry, bankData, upiData, grossAmount)}
+        ${renderTermsSection(termConditions)}
+        ${renderNoteAndSignature(distributor)}
+        ${renderChannelPartnersFooter()}
+        ${renderPageFooter(pageIndex + 1, totalPages, isLastPage)}
+      </div>`;
+  })
+  .join("\n");
   return `
     <!DOCTYPE html>
     <html lang="en">
