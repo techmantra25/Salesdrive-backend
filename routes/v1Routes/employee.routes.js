@@ -17,11 +17,13 @@ const {
   updateEmployeePassword,
   sendEmployeeCredentialEmail,
   getEmployeePassword,
+  
 } = require("../../controllers/employee.controller");
 const { protectRoute ,authorizeRoles} = require("../../middlewares/protectRoute.js");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const protectEmployeeRoute = require("../../middlewares/protectEmployeeRoute.js");
 const { loginRateLimiter } = require("../../middlewares/rateLimiter.js");
+const { searchEmployee } = require("../../controllers/employeByID.js");
 
 const employeeRoutes = express.Router();
 
@@ -43,6 +45,7 @@ employeeRoutes.route("/create").post(protectRoute, authorizeRoles(), createEmplo
 employeeRoutes.route("/list").get(protect, allEmployees);
 employeeRoutes.route("/all-list-paginated").get(protect, allEmployeesPaginated);
 employeeRoutes.route("/detail/:id").get(protect, detailEmployee);
+employeeRoutes.route("/search-by-id").get(protect, searchEmployee); 
 employeeRoutes
   .route("/map-beat-id-to-employee-id/:id")
   .patch(protectRoute, authorizeRoles(), mapBeatIdToEmployeeId);
