@@ -61,7 +61,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adviceSlipLink,
     } = req.body;
 
-    console.log("All Data Are", req.body)
+  
 
     const today = new Date();
 
@@ -77,9 +77,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     if (activeBillSeries) {
       newbillNo = await generateNextBillNumber(activeBillSeries._id);
-      console.log(`generating new billno ${newbillNo}`);
+ 
     }
-    console.log(`active bill series ${activeBillSeries}`);
+
 
     // Validate required fields
     if (lineItems.length === 0) {
@@ -101,19 +101,49 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw new Error("Retailer not found");
     }
 
+
+    // ─── Fetch & validate distributor/retailer state BEFORE any further processing ───
+    // ─── Fetch & validate distributor/retailer state BEFORE any further processing ───
+    const distributorStateId = distributor?.stateId
+      ? String(distributor.stateId)
+      : null;
+    const retailerStateId = retailer?.stateId
+      ? String(retailer.stateId)
+      : null;
+
+    if (!distributorStateId) {
+      res.status(400);
+      throw new Error("Distributor state is missing. Cannot determine tax type.");
+    }
+
+    if (!retailerStateId) {
+      res.status(400);
+      throw new Error("Retailer state is missing. Cannot determine tax type.");
+    }
+
+    const isSameState = distributorStateId === retailerStateId;
+
+    const finalCgst = isSameState ? Number(cgst) || 0 : 0;
+    const finalSgst = isSameState ? Number(sgst) || 0 : 0;
+    const finalIgst = isSameState ? 0 : Number(igst) || 0;
+       console.log("=== GST STATE VALIDATION DEBUG ===");
+    console.log("distributorStateId:", distributorStateId);
+    console.log("retailerStateId:", retailerStateId);
+    console.log("isSameState:", isSameState);
+    console.log("raw body -> cgst:", cgst, "sgst:", sgst, "igst:", igst);
+    console.log("finalCgst:", finalCgst, "finalSgst:", finalSgst, "finalIgst:", finalIgst);
+    console.log("===================================");
+    // ──────────────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────────────
     // validate lineItems
     if (lineItems.length > 0) {
       // Validate each line item for product, price, and inventory
       for (const item of lineItems) {
-        console.log({
-          item: item,
-        });
+      
 
         const product = await Product.findById(item?.product);
 
-        console.log({
-          product: product,
-        });
+      
 
         if (!product) {
           return res.status(404).json({
@@ -131,9 +161,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         }
 
         if (item.inventoryId) {
-          console.log({
-            inventoryId: item.inventoryId,
-          });
+         
 
           const inventory = await Inventory.findById(item?.inventoryId);
 
@@ -335,9 +363,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
         schemeDiscount,
         distributorDiscount,
         taxableAmount,
-        cgst,
-        sgst,
-        igst,
+        cgst: finalCgst,
+        sgst: finalSgst,
+        igst: finalIgst,
         invoiceAmount,
         roundOffAmount,
         cashDiscount,
@@ -389,9 +417,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
           grossAmount,
           taxableAmount,
-          cgst,
-          sgst,
-          igst,
+          cgst: finalCgst,
+          sgst: finalSgst,
+          igst: finalIgst,
           invoiceAmount,
           roundOffAmount,
           netAmount,
@@ -529,14 +557,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
             { new: true },
           );
 
-          console.log(
-            `✅ Updated credit note ${creditNote._id} - added billId ${billId} to existing entry at index ${entryIndex}`,
-          );
+        
         } else {
           // This shouldn't happen in normal flow, but handle it
-          console.warn(
-            `⚠️ No matching orderId entry found in credit note ${creditNote._id} - this may indicate an issue`,
-          );
+        
         }
 
         // // OLD LOGIC: This was adding a NEW entry, causing double-adjustment

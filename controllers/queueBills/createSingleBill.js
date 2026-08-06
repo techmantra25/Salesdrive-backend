@@ -82,7 +82,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       newbillNo = await generateNextBillNumber(activeBillSeries._id);
       console.log(`generating new billno ${newbillNo}`);
     }
-    console.log(`active bill series ${activeBillSeries}`);
+    console.log(`active bill seriesfxgvsfgsf ${activeBillSeries}`);
 
     // Validate required fields
     if (lineItems.length === 0) {
