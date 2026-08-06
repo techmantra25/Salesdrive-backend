@@ -260,6 +260,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
     // Create the bill — wrapped in try/catch so we can rollback reserved stock
     let newBill;
     try {
+      console.log("Saving CSO to Bill:", order?.cso);
       newBill = await Bill.create({
         distributorId,
         new_billseriesid: activeBillSeries ? activeBillSeries._id : null,
@@ -268,6 +269,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         orderId,
         orderNo,
         salesmanName,
+        cso: order?.cso,
         freightCharges,
         routeId,
         retailerId,
@@ -543,6 +545,14 @@ const processDirectSingleBill = async ({
   }
 
   const order = await OrderEntry.findById(orderId);
+  const cso = order?.cso;
+
+
+console.log("========== ORDER ==========");
+console.log("Request Order ID:", orderId);
+console.log("Fetched Order ID:", order?._id?.toString());
+console.log("Fetched Order CSO:", order?.cso);
+console.log("===========================");
   if (!order) throw new Error("Order not found");
 
   // Generate billNo atomically — right before the DB write.
@@ -612,6 +622,7 @@ const processDirectSingleBill = async ({
   // Create bill
   let newBill;
   try {
+    console.log("Saving CSO to Bill:", order?.cso);
     newBill = await Bill.create({
       ...(preBillId && { _id: preBillId }),
       distributorId,
@@ -621,6 +632,7 @@ const processDirectSingleBill = async ({
       orderId,
       orderNo,
       salesmanName,
+      cso, 
       routeId,
       retailerId,
       adviceSlipLink,
@@ -650,6 +662,7 @@ const processDirectSingleBill = async ({
       enabledBackDate: isBackdated,
       ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
     });
+    
   } catch (billSaveErr) {
     // Roll back inventory reservations
     for (const r of reservedInventories) {

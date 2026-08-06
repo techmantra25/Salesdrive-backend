@@ -324,6 +324,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         orderId,
         orderNo,
         salesmanName,
+        cso: order?.cso,
         routeId,
         retailerId,
         adviceSlipLink,

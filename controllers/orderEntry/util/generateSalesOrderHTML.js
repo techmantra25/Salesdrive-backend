@@ -91,9 +91,12 @@ const getLastPageRowBudget = (termConditionsCount) =>
     LAST_PAGE_ROWS_BASE - Math.ceil(termConditionsCount / 2),
   );
 
-// Splits line items into pages using the two capacities above.
+// Every page repeats the full summary/bank/terms/signature/footer block,
+// so every page — not just the last — needs room for that block. Capacity
+// is therefore identical on every page: whatever fits alongside the full
+// footer content (adjusted for how many terms & conditions exist).
 const paginateLineItems = (items, termConditionsCount) => {
-  const lastPageRows = getLastPageRowBudget(termConditionsCount);
+  const rowsPerPage = getLastPageRowBudget(termConditionsCount);
 
   if (items.length === 0) {
     return [[]];
@@ -103,13 +106,8 @@ const paginateLineItems = (items, termConditionsCount) => {
   let remaining = items.slice();
 
   while (remaining.length > 0) {
-    if (remaining.length <= lastPageRows) {
-      pages.push(remaining);
-      remaining = [];
-    } else {
-      pages.push(remaining.slice(0, REGULAR_PAGE_ROWS));
-      remaining = remaining.slice(REGULAR_PAGE_ROWS);
-    }
+    pages.push(remaining.slice(0, rowsPerPage));
+    remaining = remaining.slice(rowsPerPage);
   }
 
   return pages;
@@ -132,10 +130,10 @@ const renderCompanyHeader = (distributor, options) => `
            <div style="flex:0 0 105px; height:105px; display:flex; align-items:center; justify-content:center;">
   <img
     src="${escapeHtml(
-      options?.logoBase64 ||
-      options?.logoUrl ||
-      "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
-    )}"
+  options?.logoBase64 ||
+  options?.logoUrl ||
+  "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+)}"
     alt="Company Logo"
     style="width:100%; height:100%; object-fit:contain; display:block;"
     onerror="this.style.display='none'"
@@ -644,21 +642,16 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
         .reduce((sum, p) => sum + p.length, 0);
 
       return `
-        <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
-          ${renderCompanyHeader(distributor, options)}
-          ${renderRetailerAndOrderDetails(retailer, orderEntry, salesman, route, linkedBills)}
-          ${renderItemsTable(itemsForPage, startIndex)}
-          ${isLastPage ? renderSummarySection(
-        orderEntry,
-        bankData,
-        upiData,
-        grossAmount
-      ) : ""}
-          ${isLastPage ? renderTermsSection(termConditions) : ""}
-          ${isLastPage ? renderNoteAndSignature(distributor) : ""}
-          ${isLastPage ? renderChannelPartnersFooter() : ""}
-          ${renderPageFooter(pageIndex + 1, totalPages, isLastPage)}
-        </div>`;
+      <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
+        ${renderCompanyHeader(distributor, options)}
+        ${renderRetailerAndOrderDetails(retailer, orderEntry, salesman, route, linkedBills)}
+        ${renderItemsTable(itemsForPage, startIndex)}
+        ${renderSummarySection(orderEntry, bankData, upiData, grossAmount)}
+        ${renderTermsSection(termConditions)}
+        ${renderNoteAndSignature(distributor)}
+        ${renderChannelPartnersFooter()}
+        ${renderPageFooter(pageIndex + 1, totalPages, isLastPage)}
+      </div>`;
     })
     .join("\n");
 
