@@ -59,10 +59,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedCreditNoteIds,
       creditAmount,
       adjustedReplacementIds,
-      adviceSlipLink,
+      adviceSlipLinks,
     } = req.body;
 
-  
+  console.log("Received request body2222:", req.body);
 
     const today = new Date();
 
@@ -357,7 +357,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         routeId,
         retailerId,
         vehicleNumber,
-        adviceSlipLink,
+        adviceSlipLinks,
         lineItems,
         totalLines,
         totalBasePoints,

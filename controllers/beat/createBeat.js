@@ -4,11 +4,18 @@ const { generateCode } = require("../../utils/codeGenerator");
 
 const createBeat = asyncHandler(async (req, res) => {
   try {
-    const { name, beat_type, regionId, distributorId, beatIds, subDivisionId } =
-      req.body;
+    const {
+      name,
+      beat_type,
+      regionId,
+      distributorId,
+      beatIds,
+      subDivisionId,
+    } = req.body;
 
     let beatExist = await Beat.findOne({
-      $and: [{ name: req.body.name }, { regionId: req.body.regionId }],
+      name,
+      regionId,
     });
 
     if (beatExist) {
@@ -16,15 +23,20 @@ const createBeat = asyncHandler(async (req, res) => {
       throw new Error("Beat already exists");
     }
 
-    // beatIds should be an array, if provided
     if (beatIds && !Array.isArray(beatIds)) {
       res.status(400);
       throw new Error("beatIds should be an array");
     }
 
-    const BeatCode = await generateCode("BEAT");
+    // Keep generating until an unused code is found
+    let BeatCode;
+    let codeExists = true;
 
-    // Ensure distributorId is an array
+    while (codeExists) {
+      BeatCode = await generateCode("BEAT");
+      codeExists = await Beat.exists({ code: BeatCode });
+    }
+
     const distributorIds = Array.isArray(distributorId)
       ? distributorId
       : distributorId

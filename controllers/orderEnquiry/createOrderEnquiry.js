@@ -10,7 +10,6 @@ const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 const createOrderEnquiry = asyncHandler(async (req, res) => {
   try {
     const {
-      salesmanName,
       routeId,
       retailerId,
       orderType,
@@ -52,6 +51,12 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: "Distributor not found" });
     }
 const outlet = await OutletApproved.findById(retailerId);
+
+if (!outlet) {
+  return res.status(404).json({
+    message: "Outlet not found",
+  });
+}
 
 if (!outlet) {
   return res.status(404).json({
@@ -110,7 +115,7 @@ if (!outlet) {
     const savedOrderEnquiry = await OrderEnquiry.create({
       distributorId,
       enquiryNo,
-      salesmanName,
+     salesmanName: outlet?.employeeId || null,
       routeId,
       retailerId,
       cso: outlet?.cso ?? null,

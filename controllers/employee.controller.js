@@ -1270,19 +1270,22 @@ const listByBeat = asyncHandler(async (req, res) => {
 });
 
 // Get Employee by Distributor
+// Get Employee by Distributor
 const getEmployeeByDistributor = asyncHandler(async (req, res) => {
   try {
     const { did } = req.params;
     const { retailerId } = req.query;
 
-    const filter = {
+    let filter = {
       distributorId: did,
       status: true,
     };
 
-    // If a retailer is specified, scope the result to only that retailer's assigned salesman
+    // If a retailer is specified, bypass distributor/status checks entirely
+    // and just fetch that retailer's assigned salesman directly.
     if (retailerId) {
-      const Outlet = require("../models/outletApproved.model.js"); // adjust path/filename to match your actual outlet model
+      const Outlet = require("../models/outletApproved.model.js");
+
       const outlet = await Outlet.findById(retailerId).select("employeeId");
 
       if (!outlet || !outlet.employeeId) {
@@ -1294,27 +1297,16 @@ const getEmployeeByDistributor = asyncHandler(async (req, res) => {
         });
       }
 
-      filter._id = outlet.employeeId;
+      // Only condition now: match this exact employee. No distributorId/status check.
+      filter = { _id: outlet.employeeId };
     }
 
     const employees = await Employee.find(filter)
       .populate([
-        {
-          path: "desgId",
-          select: "",
-        },
-        {
-          path: "zoneId",
-          select: "",
-        },
-        {
-          path: "regionId",
-          select: "",
-        },
-        {
-          path: "brandId",
-          select: "",
-        },
+        { path: "desgId", select: "" },
+        { path: "zoneId", select: "" },
+        { path: "regionId", select: "" },
+        { path: "brandId", select: "" },
         {
           path: "empMappingId",
           select: "",
@@ -1323,76 +1315,31 @@ const getEmployeeByDistributor = asyncHandler(async (req, res) => {
               path: "empId",
               select: "",
               populate: [
-                {
-                  path: "desgId",
-                  select: "",
-                },
-                {
-                  path: "zoneId",
-                  select: "",
-                },
-                {
-                  path: "regionId",
-                  select: "",
-                },
-                {
-                  path: "brandId",
-                  select: "",
-                },
-                {
-                  path: "distributorId",
-                  select: "",
-                },
-                {
-                  path: "beatId",
-                  select: "",
-                },
+                { path: "desgId", select: "" },
+                { path: "zoneId", select: "" },
+                { path: "regionId", select: "" },
+                { path: "brandId", select: "" },
+                { path: "distributorId", select: "" },
+                { path: "beatId", select: "" },
               ],
             },
             {
               path: "rmEmpId",
               select: "",
               populate: [
-                {
-                  path: "desgId",
-                  select: "",
-                },
-                {
-                  path: "zoneId",
-                  select: "",
-                },
-                {
-                  path: "regionId",
-                  select: "",
-                },
-                {
-                  path: "brandId",
-                  select: "",
-                },
-                {
-                  path: "distributorId",
-                  select: "",
-                },
-                {
-                  path: "beatId",
-                  select: "",
-                },
+                { path: "desgId", select: "" },
+                { path: "zoneId", select: "" },
+                { path: "regionId", select: "" },
+                { path: "brandId", select: "" },
+                { path: "distributorId", select: "" },
+                { path: "beatId", select: "" },
               ],
             },
           ],
         },
-        {
-          path: "distributorId",
-          select: "",
-        },
-        {
-          path: "distributorMappingHistory.distributorId",
-          select: "name dbCode",
-        },
-        {
-          path: "beatId",
-          select: "",
-        },
+        { path: "distributorId", select: "" },
+        { path: "distributorMappingHistory.distributorId", select: "name dbCode" },
+        { path: "beatId", select: "" },
       ])
       .sort({ _id: -1 });
 
@@ -1406,7 +1353,6 @@ const getEmployeeByDistributor = asyncHandler(async (req, res) => {
     throw new Error(error?.message || "Something went wrong");
   }
 });
-
 // Get Employee by Designation
 const getEmployeeByDesignation = asyncHandler(async (req, res) => {
   try {

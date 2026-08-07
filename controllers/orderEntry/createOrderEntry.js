@@ -12,6 +12,60 @@ const BillDeliverySetting = require("../../models/billDeliverySetting.model");
 const { getOrderBackdate } = require("../../utils/backdateOrderHelper");
 const OutletApproved = require("../../models/outletApproved.model");
 
+// ─────────────────────────────────────────────────────────────────────────
+// GST helpers — mirrors the logic used in the bulk-import controller so both
+// paths compute tax identically. Kept local to this file to avoid coupling.
+// ─────────────────────────────────────────────────────────────────────────
+
+const safeNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
+
+// Product schema stores cgst/sgst/igst as String — safeNumber() handles the
+// coercion, but note "" or null both fall through to 0 via safeNumber.
+const getStateIdentity = (state) => {
+  if (!state) return "";
+  if (typeof state === "object") {
+    return String(state.code || state.slug || state._id || state).trim();
+  }
+  return String(state).trim();
+};
+
+const getIsIgst = ({ distributor, retailer }) => {
+  const distributorState = getStateIdentity(distributor?.stateId);
+  const retailerState = getStateIdentity(retailer?.stateId);
+  return (
+    distributorState && retailerState && distributorState !== retailerState
+  );
+};
+
+const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
+  let cgst = safeNumber(product?.cgst);
+  let sgst = safeNumber(product?.sgst);
+  let igst = safeNumber(product?.igst);
+
+  // Product has no tax rate configured at all — fall back to standard 18% GST.
+  if (!cgst && !sgst && !igst) {
+    cgst = 9;
+    sgst = 9;
+    igst = 18;
+  }
+
+  const taxablePricePerProduct = qty > 0 ? taxableAmt / qty : 0;
+
+  // Slab bump: low-value-slab rate (2.5/2.5/5) upgrades to standard (9/9/18)
+  // once the per-unit taxable price crosses ₹2500.
+  if (taxablePricePerProduct >= 2500) {
+    if (cgst === 2.5) cgst = 9;
+    if (sgst === 2.5) sgst = 9;
+    if (igst === 5) igst = 18;
+  }
+
+  return { cgst, sgst, igst };
+};
 
 // Create Order Entry
 const createOrderEntry = asyncHandler(async (req, res) => {
@@ -41,9 +95,6 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       deliverySchedule,
       paymentTerms,
       remarks,
-      cgst,
-      sgst,
-      igst,
       invoiceAmount,
       roundOffAmount,
       cashDiscount,
@@ -52,24 +103,38 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       creditAmount,
       isBillCreate,
     } = req.body;
+    // NOTE: cgst/sgst/igst are intentionally NOT destructured/used from
+    // req.body anymore — they are always recomputed server-side below,
+    // both per line item and at the order header level.
 
     console.log("Received createOrderEntry request with data:", req.body);
 
     const distributorId = req.user.id;
 
-    // Validate distributor
-    const distributor = await Distributor.findById(distributorId);
+    // Validate distributor — populate stateId so we can determine
+    // interstate (IGST) vs intrastate (CGST+SGST) for this order.
+    const distributor = await Distributor.findById(distributorId).populate(
+      "stateId",
+    );
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
     }
-    const outlet = await OutletApproved.findById(retailerId);
+    const outlet = await OutletApproved.findById(retailerId).populate(
+      "stateId",
+    );
 
     if (!outlet) {
       return res.status(404).json({
         message: "Outlet not found",
       });
     }
-    // Validate each line item for product, price, and inventory
+
+    const isIgst = getIsIgst({ distributor, retailer: outlet });
+    const recalculatedLineItems = [];
+
+    // Validate each line item for product, price, and inventory, AND
+    // recompute its GST server-side from the product's actual tax rate
+    // instead of trusting whatever CGST/SGST/IGST split the client sent.
     for (const item of lineItems) {
       const product = await Product.findById(item.product);
       if (!product) {
@@ -93,13 +158,84 @@ const createOrderEntry = asyncHandler(async (req, res) => {
           });
         }
       }
+
       // making sure that the oder quantity does not goes negative
-      if (Number(item.oderQty) < 0) {
+      const qty = Number(item.oderQty);
+      if (qty < 0) {
         return res.status(400).json({
           message: `Negative quantity not allowed for product ${item.product}`,
         });
       }
+
+      // taxableAmt is still trusted from the client (it depends on
+      // discount/pricing logic validated upstream) — only the tax SPLIT
+      // and tax AMOUNTS are recomputed server-side here.
+      const taxableAmt = safeNumber(item.taxableAmt);
+      const taxRate = getApplicableTaxRate({ product, taxableAmt, qty });
+
+      const totalCGST = isIgst
+        ? 0
+        : toTwoDecimal(taxableAmt * (taxRate.cgst / 100));
+      const totalSGST = isIgst
+        ? 0
+        : toTwoDecimal(taxableAmt * (taxRate.sgst / 100));
+      const igstRate = taxRate.igst || taxRate.cgst + taxRate.sgst;
+      const totalIGST = isIgst
+        ? toTwoDecimal(taxableAmt * (igstRate / 100))
+        : 0;
+      const netAmt = toTwoDecimal(
+        taxableAmt + totalCGST + totalSGST + totalIGST,
+      );
+
+      recalculatedLineItems.push({
+        ...item,
+        totalCGST,
+        totalSGST,
+        totalIGST,
+        netAmt,
+      });
     }
+
+    // Recompute order-level GST totals from the SERVER-recalculated line
+    // items (not the client's) — this is what previously guarded only
+    // against a stale/racy client-side isIGST flag at the header level;
+    // now both the line items AND the header are server-authoritative.
+    const computedCGST = toTwoDecimal(
+      recalculatedLineItems.reduce(
+        (sum, li) => sum + safeNumber(li.totalCGST),
+        0,
+      ),
+    );
+    const computedSGST = toTwoDecimal(
+      recalculatedLineItems.reduce(
+        (sum, li) => sum + safeNumber(li.totalSGST),
+        0,
+      ),
+    );
+    const computedIGST = toTwoDecimal(
+      recalculatedLineItems.reduce(
+        (sum, li) => sum + safeNumber(li.totalIGST),
+        0,
+      ),
+    );
+
+    // Add tax on freight/delivery/handling charges the same way the client
+    // does, so the recomputed total still matches taxableAmount/netAmount
+    // sent up.
+    const additionalCharges =
+      Number(freightCharges || 0) +
+      Number(deliveryCharges || 0) +
+      Number(handlingCharges || 0);
+
+    const finalCGST = isIgst
+      ? 0
+      : Number((computedCGST + additionalCharges * 0.09).toFixed(2));
+    const finalSGST = isIgst
+      ? 0
+      : Number((computedSGST + additionalCharges * 0.09).toFixed(2));
+    const finalIGST = isIgst
+      ? Number((computedIGST + additionalCharges * 0.18).toFixed(2))
+      : 0;
 
     // Generate order number
     const orderNumber = await orderNumberGenerator("DBO");
@@ -114,7 +250,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
         now.getHours(),
         now.getMinutes(),
         now.getSeconds(),
-        now.getMilliseconds()
+        now.getMilliseconds(),
       );
     }
     // Create the order entry object (not saved yet)
@@ -128,7 +264,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
-      lineItems,
+      lineItems: recalculatedLineItems,
       remark: orderRemark,
       totalLines,
       manualOrderDate: finalManualOrderDate,
@@ -146,9 +282,9 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       schemeDiscount,
       distributorDiscount,
       taxableAmount,
-      cgst,
-      sgst,
-      igst,
+      cgst: finalCGST,
+      sgst: finalSGST,
+      igst: finalIGST,
       invoiceAmount,
       roundOffAmount,
       cashDiscount,
@@ -273,8 +409,6 @@ const createOrderEntry = asyncHandler(async (req, res) => {
     let billData = null;
     let billError = null;
 
-
-
     if (savedOrderEntry && isBillCreate) {
       try {
         // Fetch the order entry details with population
@@ -327,21 +461,22 @@ const createOrderEntry = asyncHandler(async (req, res) => {
             // Ensure createdAt is explicitly available as epoch to avoid
             // JSON serialization turning Date -> string and losing type info
             try {
-              const createdAtDate =
-                orderEntryDetails.manualOrderDate
-                  ? new Date(orderEntryDetails.manualOrderDate)
-                  : orderEntryDetails.createdAt instanceof Date
-                    ? orderEntryDetails.createdAt
-                    : new Date(orderEntryDetails.createdAt);
+              const createdAtDate = orderEntryDetails.manualOrderDate
+                ? new Date(orderEntryDetails.manualOrderDate)
+                : orderEntryDetails.createdAt instanceof Date
+                  ? orderEntryDetails.createdAt
+                  : new Date(orderEntryDetails.createdAt);
               orderEntryDetails.createdAt = createdAtDate;
               orderEntryDetails._createdAtEpoch = createdAtDate.getTime();
 
               // Compute backdate if distributor has backdate enabled
               try {
-                const billDeliverySetting = await BillDeliverySetting.findOne({
-                  distributorId,
-                  isActive: true,
-                });
+                const billDeliverySetting = await BillDeliverySetting.findOne(
+                  {
+                    distributorId,
+                    isActive: true,
+                  },
+                );
 
                 const backdateResult = getOrderBackdate(
                   createdAtDate,
@@ -418,7 +553,9 @@ const createOrderEntry = asyncHandler(async (req, res) => {
                       // Merge the populated billIds back so the response is useful
                       billData = {
                         ...billData,
-                        bills: updatedOrder.billIds.map((id) => ({ _id: id })),
+                        bills: updatedOrder.billIds.map((id) => ({
+                          _id: id,
+                        })),
                         processedCount: updatedOrder.billIds.length,
                       };
                       savedOrderEntry.billIds = updatedOrder.billIds;
@@ -470,7 +607,8 @@ const createOrderEntry = asyncHandler(async (req, res) => {
                 const creditNoteId = adjustedCN.creditNoteId;
 
                 // First, find the credit note to get its current state
-                const creditNote = await CreditNoteModel.findById(creditNoteId);
+                const creditNote =
+                  await CreditNoteModel.findById(creditNoteId);
 
                 if (creditNote) {
                   // Find the index of the entry that matches orderId and has no billId
@@ -511,40 +649,6 @@ const createOrderEntry = asyncHandler(async (req, res) => {
                     );
                   }
                 }
-
-                // Update using array filters (commented out as backup)
-                // const updateResult = await CreditNoteModel.updateOne(
-                //   {
-                //     _id: creditNoteId,
-                //     "adjustedBillIds.orderId": savedOrderEntry._id,
-                //   },
-                //   {
-                //     $set: {
-                //       "adjustedBillIds.$[elem].billId": billId,
-                //     },
-                //   },
-                //   {
-                //     arrayFilters: [
-                //       {
-                //         "elem.orderId": savedOrderEntry._id,
-                //         $or: [
-                //           { "elem.billId": { $exists: false } },
-                //           { "elem.billId": null },
-                //         ],
-                //       },
-                //     ],
-                //   }
-                // );
-
-                // if (updateResult.modifiedCount > 0) {
-                //   console.log(
-                //     `✅ Successfully updated credit note ${creditNoteId} with billId ${billId}`
-                //   );
-                // } else {
-                //   console.warn(
-                //     `⚠️ Failed to update credit note ${creditNoteId} - no matching entry found or already has billId`
-                //   );
-                // }
               }
             }
           }
