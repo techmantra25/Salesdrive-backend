@@ -33,6 +33,9 @@ const {
   paginatedSalesOrderList,
 } = require("../../controllers/orderEntry/paginatedSalesOrderList.js");
 const {
+  paginatedOrderVsBillReportList,
+} = require("../../controllers/orderEntry/paginatedOrderVsBillReportList.js");
+const {
   salesOrderPrintPDF,
 } = require("../../controllers/orderEntry/salesOrderPrintPDF.js");
 const { dayBookReport } = require("../../controllers/orderEntry/dayBookReport.js");
@@ -73,6 +76,10 @@ orderEntryRoutes
 orderEntryRoutes
   .route("/paginated-sales-order-list")
   .get(protect, paginatedSalesOrderList);
+
+orderEntryRoutes
+  .route("/order-vs-bill-report-list")
+  .get(protectDisRoute, paginatedOrderVsBillReportList);
 
 orderEntryRoutes
   .route("/sales-order-print-pdf/:orderEntryId")
