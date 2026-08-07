@@ -26,6 +26,7 @@ const {
 const {
   generateSalesEnquiryReport,
 } = require("../../controllers/orderEnquiry/generateSalesEnquiryReport.js");
+const { paginatedSalesEnquiryList } = require("../../controllers/orderEnquiry/paginatedSalesEnquiryList.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const { closeOrderEnquiry } = require("../../controllers/orderEnquiry/closedOrderEnquiry.js");
@@ -58,6 +59,10 @@ orderEnquiryRoutes
 orderEnquiryRoutes
   .route("/generate-report")
   .get(protect, generateSalesEnquiryReport);
+
+orderEnquiryRoutes
+  .route("/paginated-sales-enquiry-list")
+  .get(protect, paginatedSalesEnquiryList);
 
 orderEnquiryRoutes.patch(
   "/closed-order-enquiry/:id",
