@@ -45,6 +45,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       lineItems,
       freightCharges,
       adviceSlipLink,
+      adviceSlipLinks,
       totalLines,
       totalBasePoints,
       grossAmount,
@@ -64,8 +65,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedReplacementIds,
     } = req.body;
 
-    console.log("Adsvice slip",adviceSlipLink )
-
+console.log("Received request body111111111:", req.body);
     const today = new Date();
 
     const activeBillSeries = await new_billSeries
@@ -274,6 +274,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         routeId,
         retailerId,
         adviceSlipLink,
+  adviceSlipLinks: Array.isArray(adviceSlipLinks) ? adviceSlipLinks : [],
         lineItems,
         totalLines,
         totalBasePoints,
@@ -484,7 +485,7 @@ const processDirectSingleBill = async ({
     igst,
     invoiceAmount,
     roundOffAmount,
-    adviceSlipLink,
+    adviceSlipLinks,
     cashDiscount,
     netAmount,
     billedType,
@@ -548,11 +549,11 @@ const processDirectSingleBill = async ({
   const cso = order?.cso;
 
 
-console.log("========== ORDER ==========");
-console.log("Request Order ID:", orderId);
-console.log("Fetched Order ID:", order?._id?.toString());
-console.log("Fetched Order CSO:", order?.cso);
-console.log("===========================");
+  console.log("========== ORDER ==========");
+  console.log("Request Order ID:", orderId);
+  console.log("Fetched Order ID:", order?._id?.toString());
+  console.log("Fetched Order CSO:", order?.cso);
+  console.log("===========================");
   if (!order) throw new Error("Order not found");
 
   // Generate billNo atomically — right before the DB write.
@@ -632,10 +633,10 @@ console.log("===========================");
       orderId,
       orderNo,
       salesmanName,
-      cso, 
+      cso,
       routeId,
       retailerId,
-      adviceSlipLink,
+      adviceSlipLinks: Array.isArray(adviceSlipLinks) ? adviceSlipLinks : [],
       lineItems,
       totalLines: totalLines ?? 0,
       totalBasePoints: totalBasePoints ?? 0,
@@ -662,7 +663,7 @@ console.log("===========================");
       enabledBackDate: isBackdated,
       ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
     });
-    
+
   } catch (billSaveErr) {
     // Roll back inventory reservations
     for (const r of reservedInventories) {
