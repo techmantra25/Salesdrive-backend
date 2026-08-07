@@ -26,15 +26,18 @@ const { protect } = require("../../middlewares/auth.middleware.js");
 const {
   paginatedOrderEntryReportForCSP,
 } = require("../../controllers/orderEntry/paginatedOrderEntryReportForCSP.js");
-const { protectRoute,authorizeRoles} = require("../../middlewares/protectRoute.js");
+const { protectRoute, authorizeRoles } = require("../../middlewares/protectRoute.js");
 const { paginatedAllDistributorOrders } = require("../../controllers/orderEntry/paginatedAllDistributorOrders.js");
 const { generateSalesOrderReport } = require("../../controllers/orderEntry/generateSalesOrderReport.js");
 const {
+  paginatedSalesOrderList,
+} = require("../../controllers/orderEntry/paginatedSalesOrderList.js");
+const {
   salesOrderPrintPDF,
 } = require("../../controllers/orderEntry/salesOrderPrintPDF.js");
-const {dayBookReport }= require("../../controllers/orderEntry/dayBookReport.js");
-const {editOrderEntry} = require("../../controllers/orderEntry/editOrderEntry.js");
-const {advicePrint} = require("../../controllers/orderEntry/advicePrint.js");
+const { dayBookReport } = require("../../controllers/orderEntry/dayBookReport.js");
+const { editOrderEntry } = require("../../controllers/orderEntry/editOrderEntry.js");
+const { advicePrint } = require("../../controllers/orderEntry/advicePrint.js");
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/advice-print/:orderId").get(protect, advicePrint);
@@ -59,13 +62,17 @@ orderEntryRoutes
   .route("/paginated-report-for-csp")
   .get(protect, paginatedOrderEntryReportForCSP);
 
-  orderEntryRoutes
+orderEntryRoutes
   .route("/all-distributors-order-list")
   .get(protectRoute, authorizeRoles(), paginatedAllDistributorOrders);
 
 orderEntryRoutes
   .route("/generate-report")
   .get(protect, generateSalesOrderReport);
+
+orderEntryRoutes
+  .route("/paginated-sales-order-list")
+  .get(protect, paginatedSalesOrderList);
 
 orderEntryRoutes
   .route("/sales-order-print-pdf/:orderEntryId")
@@ -75,7 +82,7 @@ orderEntryRoutes
   .route("/day-book-report")
   .get(protectDisRoute, dayBookReport);
 
-  orderEntryRoutes
+orderEntryRoutes
   .route("/order-entry-edit/:id")
   .patch(protectDisRoute, editOrderEntry);
 

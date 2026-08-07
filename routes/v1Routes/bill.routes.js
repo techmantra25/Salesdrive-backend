@@ -34,6 +34,9 @@ const { billStatusAndDateUpdate } = require("../../controllers/bill/billStatusan
 const {
   paginatedBillReport,
 } = require("../../controllers/bill/paginatedBillReport");
+const {
+  paginatedBillListReport,
+} = require("../../controllers/bill/paginatedBillListReport");
 const { billPrintPDF } = require("../../controllers/bill/billPrint");
 const {
   paginatedOrderVsBillReport,
@@ -72,6 +75,10 @@ billRoutes
   .patch(protectDisRoute, updateBillSeries);
 
 billRoutes.route("/paginated_bill_report").get(protect, paginatedBillReport);
+billRoutes
+  .route("/paginated-bill-list-report")
+  .get(protect, paginatedBillListReport);
+  
 billRoutes
   .route("/paginated-order-to-bill-report")
   .get(protect, paginatedOrderVsBillReport);
