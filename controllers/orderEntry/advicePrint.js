@@ -142,15 +142,10 @@ const advicePrint = asyncHandler(async (req, res) => {
 
 
   items: order.lineItems.map((item, index) => {
-  const grossAmt = Number(item.grossAmt || 0);
-  const distributorDisc = Number(item.distributorDisc || 0);
-
-  // SO Value = Gross Amt minus the special/distributor discount,
-  // handling both percent-based and flat-amount discount units.
-  const soValue =
-    item.distributorDiscUnit === "amount"
-      ? grossAmt - distributorDisc
-      : grossAmt * (1 - distributorDisc / 100);
+// SAME BASIC AMOUNT LOGIC AS SALES ORDER PDF
+const basicAmt = Number(
+  item?.taxableAmt || item?.netAmt || 0
+);
 
   return {
     slNo: index + 1,
@@ -172,7 +167,7 @@ const advicePrint = asyncHandler(async (req, res) => {
       item.distributorDisc ||
       0
     ),
-    grossAmt: soValue, // now holds SO Value instead of raw Gross Amt
+    grossAmt: basicAmt,// now holds SO Value instead of raw Gross Amt
     boxQty: Number(item.boxOrderQty || 0),
   };
 })
