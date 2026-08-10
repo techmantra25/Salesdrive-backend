@@ -20,26 +20,6 @@ const Replacement = require("../../models/replacement.model");
 const Distributor = require("../../models/distributor.model");
 const new_billSeries = require("../../models/new_billseries.model");
 
-// ─────────────────────────────────────────────────────────────────────────
-// GST — a bill's GST is NEVER trusted from the frontend and NEVER derived
-// from the Product. It always comes from the OrderEntry being converted:
-//   - Per line item: the order line's stored totalCGST / totalSGST /
-//     totalIGST / taxableAmt are SCALED by (billQty / orderQty) and used
-//     as-is — no rate lookup, no product tax config touched.
-//       * If billQty === orderQty (full quantity billed), the ratio is 1
-//         and this is an exact copy of the order line's GST.
-//       * If billQty < orderQty (qty reduced/edited at bill time), GST
-//         shrinks proportionally with it.
-//       * If a product is removed entirely from the bill, it's simply
-//         absent from `lineItems` and never matched/billed — no GST is
-//         added for it, and the order retains it as unbilled.
-//   - Header level: cgst / sgst / igst are the SUM of the scaled line
-//     items above, plus tax on this bill's own freight/delivery/handling
-//     charges (same flat 9/9/18 treatment createOrderEntry uses) — NOT a
-//     blind copy of the order's header, since the order's header reflects
-//     the FULL order quantity, not necessarily what this bill covers.
-// ─────────────────────────────────────────────────────────────────────────
-
 const safeNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
