@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const OrderEntry = require("../../models/orderEntry.model");
+const OutletApproved = require("../../models/outletApproved.model");
 const Beat = require("../../models/beat.model");
 
 // Get Order Entry Details by ID
@@ -63,17 +64,26 @@ if (!orderEntry) {
 const orderData = orderEntry.toObject();
 
 
-if (orderData.salesmanName?._id) {
-const salesmanId = orderData.salesmanName._id;
+if (orderData.salesmanName?._id && orderData.retailerId?._id) {
+  const salesmanId = orderData.salesmanName._id;
+  const retailerId = orderData.retailerId._id;
 
-const salesmanRoute = await Beat.findOne({
-employeeId: salesmanId,
-status: true,
-});
+  const outlet = await OutletApproved.findOne({
+    _id: retailerId,
+    employeeId: salesmanId,
+    status: true,
+  }).select("employeeId beatId");
 
-if (salesmanRoute) {
-orderData.routeId = salesmanRoute;
-}
+  if (outlet?.beatId?.length) {
+    const salesmanRoute = await Beat.findOne({
+      _id: { $in: outlet.beatId },
+      status: true,
+    });
+
+    if (salesmanRoute) {
+      orderData.routeId = salesmanRoute;
+    }
+  }
 }
 
 if (orderData.manualOrderDate) {
