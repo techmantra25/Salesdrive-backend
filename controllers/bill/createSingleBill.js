@@ -20,6 +20,78 @@ const Replacement = require("../../models/replacement.model");
 const Distributor = require("../../models/distributor.model");
 const new_billSeries = require("../../models/new_billseries.model");
 
+// ─────────────────────────────────────────────────────────────────────────
+// GST — a bill's GST is NEVER trusted from the frontend and NEVER derived
+// from the Product. It always comes from the OrderEntry being converted:
+//   - Per line item: the order line's stored totalCGST / totalSGST /
+//     totalIGST / taxableAmt are SCALED by (billQty / orderQty) and used
+//     as-is — no rate lookup, no product tax config touched.
+//       * If billQty === orderQty (full quantity billed), the ratio is 1
+//         and this is an exact copy of the order line's GST.
+//       * If billQty < orderQty (qty reduced/edited at bill time), GST
+//         shrinks proportionally with it.
+//       * If a product is removed entirely from the bill, it's simply
+//         absent from `lineItems` and never matched/billed — no GST is
+//         added for it, and the order retains it as unbilled.
+//   - Header level: cgst / sgst / igst are the SUM of the scaled line
+//     items above, plus tax on this bill's own freight/delivery/handling
+//     charges (same flat 9/9/18 treatment createOrderEntry uses) — NOT a
+//     blind copy of the order's header, since the order's header reflects
+//     the FULL order quantity, not necessarily what this bill covers.
+// ─────────────────────────────────────────────────────────────────────────
+
+const safeNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
+
+// Match a bill line item to the corresponding order line item.
+// Priority:
+//   1. Explicit link field, if the frontend sends one (orderLineItemId).
+//   2. product + inventoryId (handles same product billed from different
+//      inventory batches).
+//   3. product + price (handles same product at different price entries).
+//   4. First not-yet-consumed order line item for that product.
+// `usedOrderLineIds` prevents the same order line from being matched twice
+// when a bill splits one order line into multiple bill lines.
+const matchOrderLineItem = (orderLineItems, billItem, usedOrderLineIds) => {
+  const availableLines = orderLineItems.filter(
+    (ol) => !usedOrderLineIds.has(String(ol._id)),
+  );
+
+  if (billItem.orderLineItemId) {
+    const byId = availableLines.find(
+      (ol) => String(ol._id) === String(billItem.orderLineItemId),
+    );
+    if (byId) return byId;
+  }
+
+  const byProductAndInventory = availableLines.find(
+    (ol) =>
+      String(ol.product) === String(billItem.product) &&
+      billItem.inventoryId &&
+      ol.inventoryId &&
+      String(ol.inventoryId) === String(billItem.inventoryId),
+  );
+  if (byProductAndInventory) return byProductAndInventory;
+
+  const byProductAndPrice = availableLines.find(
+    (ol) =>
+      String(ol.product) === String(billItem.product) &&
+      billItem.price &&
+      ol.price &&
+      String(ol.price) === String(billItem.price),
+  );
+  if (byProductAndPrice) return byProductAndPrice;
+
+  const byProductOnly = availableLines.find(
+    (ol) => String(ol.product) === String(billItem.product),
+  );
+  return byProductOnly || null;
+};
+
 const createSingleBill = asyncHandler(async (req, res) => {
   try {
     const distributorId = req.user._id;
@@ -48,9 +120,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
       schemeDiscount,
       distributorDiscount,
       taxableAmount,
-      cgst,
-      sgst,
-      igst,
       invoiceAmount,
       roundOffAmount,
       cashDiscount,
@@ -61,8 +130,11 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedReplacementIds,
       adviceSlipLinks,
     } = req.body;
+    // NOTE: cgst / sgst / igst are intentionally NOT destructured from
+    // req.body anymore. GST for a bill is always derived from the order
+    // being converted (see helpers above) — never trusted from the client.
 
-  console.log("Received request body2222:", req.body);
+    console.log("Received request body2222:", req.body);
 
     const today = new Date();
 
@@ -78,9 +150,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     if (activeBillSeries) {
       newbillNo = await generateNextBillNumber(activeBillSeries._id);
- 
     }
-
 
     // Validate required fields
     if (lineItems.length === 0) {
@@ -88,7 +158,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw new Error("At least one line item is required");
     }
 
-    // Check if the order exists
+    // Check if the order exists — this is now also our GST source of truth.
     const order = await OrderEntry.findById(orderId);
     if (!order) {
       res.status(404);
@@ -102,8 +172,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw new Error("Retailer not found");
     }
 
-
-    // ─── Fetch & validate distributor/retailer state BEFORE any further processing ───
     // ─── Fetch & validate distributor/retailer state BEFORE any further processing ───
     const distributorStateId = distributor?.stateId
       ? String(distributor.stateId)
@@ -114,7 +182,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     if (!distributorStateId) {
       res.status(400);
-      throw new Error("Distributor state is missing. Cannot determine tax type.");
+      throw new Error(
+        "Distributor state is missing. Cannot determine tax type.",
+      );
     }
 
     if (!retailerStateId) {
@@ -123,28 +193,19 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     const isSameState = distributorStateId === retailerStateId;
+    // ──────────────────────────────────────────────────────────────────────────
 
-    const finalCgst = isSameState ? Number(cgst) || 0 : 0;
-    const finalSgst = isSameState ? Number(sgst) || 0 : 0;
-    const finalIgst = isSameState ? 0 : Number(igst) || 0;
-       console.log("=== GST STATE VALIDATION DEBUG ===");
-    console.log("distributorStateId:", distributorStateId);
-    console.log("retailerStateId:", retailerStateId);
-    console.log("isSameState:", isSameState);
-    console.log("raw body -> cgst:", cgst, "sgst:", sgst, "igst:", igst);
-    console.log("finalCgst:", finalCgst, "finalSgst:", finalSgst, "finalIgst:", finalIgst);
-    console.log("===================================");
-    // ──────────────────────────────────────────────────────────────────────────────────
-    // ──────────────────────────────────────────────────────────────────────────────────
-    // validate lineItems
+    // validate lineItems, and build the recalculated (GST-corrected) line
+    // items in the same pass.
+    const orderLineItems = Array.isArray(order.lineItems)
+      ? order.lineItems
+      : [];
+    const usedOrderLineIds = new Set();
+    const recalculatedLineItems = [];
+
     if (lineItems.length > 0) {
-      // Validate each line item for product, price, and inventory
       for (const item of lineItems) {
-      
-
         const product = await Product.findById(item?.product);
-
-      
 
         if (!product) {
           return res.status(404).json({
@@ -162,13 +223,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         }
 
         if (item.inventoryId) {
-         
-
           const inventory = await Inventory.findById(item?.inventoryId);
-
-          // console.log({
-          //   inventory: inventory,
-          // });
 
           if (!inventory) {
             return res.status(400).json({
@@ -186,8 +241,112 @@ const createSingleBill = asyncHandler(async (req, res) => {
             message: `Inventory not found for product ID ${product?.product_code}. Please ensure inventory is there for the product for distributor with db code ${distributor.dbCode}.`,
           });
         }
+
+        // ── GST: scaled copy from the matching order line item ──
+        // ratio = billQty / orderQty. 1 when billing the full quantity
+        // (exact copy), <1 when qty was reduced/edited at bill time.
+        const matchedOrderLine = matchOrderLineItem(
+          orderLineItems,
+          item,
+          usedOrderLineIds,
+        );
+
+        let totalCGST = 0;
+        let totalSGST = 0;
+        let totalIGST = 0;
+        let taxableAmt = safeNumber(item.taxableAmt);
+        let netAmt = taxableAmt;
+
+        if (matchedOrderLine) {
+          usedOrderLineIds.add(String(matchedOrderLine._id));
+
+          const orderQty = safeNumber(matchedOrderLine.oderQty);
+          const billQty = safeNumber(item.billQty);
+          const qtyRatio = orderQty > 0 ? billQty / orderQty : 0;
+
+          taxableAmt = toTwoDecimal(
+            safeNumber(matchedOrderLine.taxableAmt) * qtyRatio,
+          );
+          totalCGST = toTwoDecimal(
+            safeNumber(matchedOrderLine.totalCGST) * qtyRatio,
+          );
+          totalSGST = toTwoDecimal(
+            safeNumber(matchedOrderLine.totalSGST) * qtyRatio,
+          );
+          totalIGST = toTwoDecimal(
+            safeNumber(matchedOrderLine.totalIGST) * qtyRatio,
+          );
+          netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
+
+          if (billQty > orderQty) {
+            console.warn(
+              `GST_QTY_OVERBILL: billQty (${billQty}) exceeds orderQty (${orderQty}) for product ${item?.product} on order ${orderId}; scaling anyway, please verify.`,
+            );
+          }
+        } else {
+          // No matching order line found — this should not normally happen
+          // since a bill always originates from an order. Logged so it can
+          // be investigated; GST is left at 0 rather than guessed.
+          console.warn(
+            `GST_COPY_MISS: no matching order line found for product ${item?.product} on order ${orderId}; GST left as 0 for this bill line.`,
+          );
+        }
+
+        recalculatedLineItems.push({
+          ...item,
+          taxableAmt,
+          totalCGST,
+          totalSGST,
+          totalIGST,
+          netAmt,
+          totalDiscountAmount: Number(item?.totalDiscountAmount || 0),
+          totalDiscountPercentage: Number(item?.totalDiscountPercentage || 0),
+        });
       }
     }
+
+    // ── Header-level GST: sum of the SCALED line items above, plus tax on
+    // this bill's own freight/delivery/handling charges. NOT a copy of the
+    // order's header — the order's header reflects the full order quantity,
+    // which may not equal what this specific bill is covering.
+    const computedCGST = toTwoDecimal(
+      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalCGST), 0),
+    );
+    const computedSGST = toTwoDecimal(
+      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalSGST), 0),
+    );
+    const computedIGST = toTwoDecimal(
+      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalIGST), 0),
+    );
+
+    // Same flat 9/9/18 treatment on freight/delivery/handling as createOrderEntry,
+    // so a bill's header GST stays consistent with how the order computed it.
+    const additionalCharges =
+      Number(freightCharges || 0) +
+      Number(deliveryCharges || 0) +
+      Number(handlingCharges || 0);
+
+    const finalCgst = isSameState
+      ? Number((computedCGST + additionalCharges * 0.09).toFixed(2))
+      : 0;
+    const finalSgst = isSameState
+      ? Number((computedSGST + additionalCharges * 0.09).toFixed(2))
+      : 0;
+    const finalIgst = isSameState
+      ? 0
+      : Number((computedIGST + additionalCharges * 0.18).toFixed(2));
+
+    console.log("=== GST SCALED FROM ORDER ENTRY (by qty) ===");
+    console.log("orderId:", orderId);
+    console.log(
+      "matched order lines:",
+      usedOrderLineIds.size,
+      "of",
+      orderLineItems.length,
+    );
+    console.log("finalCgst:", finalCgst, "finalSgst:", finalSgst, "finalIgst:", finalIgst);
+    console.log("=============================================");
+    // ──────────────────────────────────────────────────────────────────────────
 
     const billNo = await generateBillNo("INV", distributorId);
 
@@ -200,8 +359,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     // ─── Reserve stock atomically BEFORE bill creation ────────────────────────
     // Mirrors the multipleBillCreate pattern: reserve first, then create the bill,
     // and rollback reservations if the bill save (or any subsequent step) fails.
-    // This closes the window between bill creation and inventory update that the
-    // old post-creation update had.
     const reservedInventories = [];
     try {
       for (const item of lineItems) {
@@ -209,7 +366,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
           const updatedInv = await Inventory.findOneAndUpdate(
             {
               _id: item.inventoryId,
-              availableQty: { $gte: Number(item.billQty) }, // Atomic check ensures sufficient stock
+              availableQty: { $gte: Number(item.billQty) },
             },
             {
               $inc: {
@@ -221,7 +378,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
           );
 
           if (!updatedInv) {
-            // Rollback any reservations already made in this loop before throwing
             for (const r of reservedInventories) {
               await Inventory.findByIdAndUpdate(r.inventoryId, {
                 $inc: { availableQty: r.qty, reservedQty: -r.qty },
@@ -240,12 +396,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
         }
       }
     } catch (reserveErr) {
-      throw reserveErr; // propagate to outer catch
+      throw reserveErr;
     }
     // ─────────────────────────────────────────────────────────────────────────
 
-    //    Previously billDate was set in a separate findByIdAndUpdate AFTER create,
-    //    leaving a window where the document had no billDate.
     const billDeliverySetting = await BillDeliverySetting.findOne({
       distributorId,
       isActive: true,
@@ -255,7 +409,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     let isBackdated = false;
 
     if (billDeliverySetting) {
-      // Prefer any epoch fields passed in the request body (e.g., from createOrderEntry)
       if (req.body && req.body._billDateEpoch) {
         billDate = new Date(Number(req.body._billDateEpoch));
         isBackdated = true;
@@ -303,44 +456,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
       }
     }
 
-    // // Create the bill
-    // const newBill = await Bill.create({
-    //   distributorId,
-    //   new_billseriesid: activeBillSeries ? activeBillSeries._id : null,
-    //   new_billno: newbillNo,
-    //   billNo,
-    //   orderId,
-    //   orderNo,
-    //   salesmanName,
-    //   routeId,
-    //   retailerId,
-    //   lineItems,
-    //   totalLines,
-    //   totalBasePoints,
-    //   grossAmount,
-    //   schemeDiscount,
-    //   distributorDiscount,
-    //   taxableAmount,
-    //   cgst,
-    //   sgst,
-    //   igst,
-    //   invoiceAmount,
-    //   roundOffAmount,
-    //   cashDiscount,
-    //   netAmount,
-    //   billedType: "Single",
-    //   adjustedCreditNoteIds,
-    //   adjustedReplacementIds,
-    //   creditAmount,
-    //   adviceSlipLink,
-    //   cashDiscountApplied: req.body.cashDiscountApplied || false,
-    //   cashDiscountType: req.body.cashDiscountType || "amount",
-    //   cashDiscountValue: req.body.cashDiscountValue || 0,
-    //   billDate,
-    //   enabledBackDate: isBackdated,
-    //   // Backdate createdAt/updatedAt when applicable
-    //   ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
-    // });
     // Create the bill — wrapped in try/catch so we can rollback reserved stock
     // if the save or any subsequent mutation fails.
     let newBill;
@@ -358,7 +473,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         retailerId,
         vehicleNumber,
         adviceSlipLinks,
-        lineItems,
+        lineItems: recalculatedLineItems,
         totalLines,
         totalBasePoints,
         grossAmount,
@@ -384,11 +499,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
         cashDiscountValue: req.body.cashDiscountValue || 0,
         billDate,
         enabledBackDate: isBackdated,
-        // Backdate createdAt/updatedAt when applicable
         ...(isBackdated && { createdAt: billDate, updatedAt: billDate }),
       });
     } catch (billSaveErr) {
-      // Rollback all reserved inventory before propagating the error
       for (const r of reservedInventories) {
         await Inventory.findByIdAndUpdate(r.inventoryId, {
           $inc: { availableQty: r.qty, reservedQty: -r.qty },
@@ -397,8 +510,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
       throw billSaveErr;
     }
 
-    // Ensure createdAt/updatedAt persisted correctly even if mongoose timestamps
-    // interfere; use raw collection update for reliability.
     if (isBackdated) {
       await Bill.collection.updateOne(
         { _id: newBill._id },
@@ -406,7 +517,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
       );
     }
 
-    // update the order with the new bill
+    // update the order with the new bill — GST here is the SAME
+    // order-derived finalCgst/finalSgst/finalIgst used on the bill, never
+    // anything from req.body.
     await OrderEntry.findByIdAndUpdate(
       orderId,
       {
@@ -427,18 +540,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
           netAmount,
           creditAmount,
 
-          lineItems: lineItems.map((item) => ({
-            ...item,
-            totalDiscountAmount: Number(
-              item?.totalDiscountAmount || 0
-            ),
-            totalDiscountPercentage: Number(
-              item?.totalDiscountPercentage || 0
-            ),
-          })),
+          lineItems: recalculatedLineItems,
         },
       },
-      { new: true }
+      { new: true },
     );
 
     const orderEntry = await OrderEntry.findById(orderId).populate([
@@ -452,7 +557,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     const getOrderStatus = getOrderStatusToBe(billList, LineItems);
 
-    // update the Order with the new Order Status
     await OrderEntry.findByIdAndUpdate(
       orderId,
       {
@@ -461,55 +565,11 @@ const createSingleBill = asyncHandler(async (req, res) => {
       { new: true },
     );
 
-    // OLD CODE (commented out) — inventory was updated AFTER bill creation,
-    // creating a race condition window between bill save and stock decrement.
-    // Also had a secondary race condition within the read-modify-write pattern.
-    // for (const item of billLineItems) {
-    //   if (item.inventoryId && item.billQty > 0) {
-    //     // OLD CODE (commented out - had race condition vulnerability)
-    //     // const inventory = await Inventory.findById(item.inventoryId);
-    //     // if (inventory) {
-    //     //   const updatedAvailableQty =
-    //     //     inventory.availableQty - Number(item.billQty);
-    //     //   const reservedQty = inventory.reservedQty + Number(item.billQty);
-    //     //   // Update the inventory
-    //     //   await Inventory.findOneAndUpdate(
-    //     //     { _id: item.inventoryId },
-    //     //     { availableQty: updatedAvailableQty, reservedQty: reservedQty },
-    //     //     { new: true },
-    //     //   );
-    //     // }
-
-    //     // NEW CODE (also commented out — moved to pre-bill reservation above):
-    //     // Atomic update with stock validation to prevent negative availableQty
-    //     // const updatedInventory = await Inventory.findOneAndUpdate(
-    //     //   {
-    //     //     _id: item.inventoryId,
-    //     //     availableQty: { $gte: Number(item.billQty) },
-    //     //   },
-    //     //   {
-    //     //     $inc: {
-    //     //       availableQty: -Number(item.billQty),
-    //     //       reservedQty: Number(item.billQty),
-    //     //     },
-    //     //   },
-    //     //   { new: true, runValidators: true },
-    //     // );
-
-    //     // If update failed, stock was insufficient (concurrent update or stock exhausted)
-    //     // if (!updatedInventory) {
-    //     //   throw new Error(
-    //     //     `Insufficient stock for product. Available stock is less than requested quantity (${item.billQty}).`,
-    //     //   );
-    //     // }
-    //   }
-    // }
     // Inventory was already reserved atomically before bill creation above.
     // No further inventory updates are required here.
 
     const newBillId = newBill?._id;
 
-    // print the bill
     billPrintUtil([newBillId]);
 
     if (adjustedCreditNoteIds.length) {
@@ -517,7 +577,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         (item) => item.creditNoteId,
       );
 
-      // Fetch all relevant credit notes
       const creditNotes = await CreditNoteModel.find({
         _id: { $in: creditNoteIds },
       });
@@ -525,12 +584,11 @@ const createSingleBill = asyncHandler(async (req, res) => {
       for (const creditNote of creditNotes) {
         const billId = newBill._id;
 
-        // Find the corresponding adjusted amount from adjustedCreditNoteIds
         const adjustedEntry = adjustedCreditNoteIds.find(
           (item) => item.creditNoteId == creditNote._id,
         );
 
-        if (!adjustedEntry) continue; // Skip if no matching credit note
+        if (!adjustedEntry) continue;
 
         const adjustedAmount = adjustedEntry.adjustedAmount || 0;
 
@@ -538,7 +596,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
           creditNote._id,
         );
 
-        // Find the index of the entry that matches orderId and has no billId
         const entryIndex = currentCreditNote.adjustedBillIds.findIndex(
           (entry) =>
             String(entry.orderId) === String(orderId) &&
@@ -546,7 +603,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         );
 
         if (entryIndex !== -1) {
-          // UPDATE existing entry with billId
           const updatePath = `adjustedBillIds.${entryIndex}.billId`;
 
           await CreditNoteModel.findByIdAndUpdate(
@@ -558,30 +614,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
             },
             { new: true },
           );
-
-        
-        } else {
-          // This shouldn't happen in normal flow, but handle it
-        
         }
 
-        // // OLD LOGIC: This was adding a NEW entry, causing double-adjustment
-        // await CreditNoteModel.findByIdAndUpdate(
-        //   creditNote._id,
-        //   {
-        //     $push: {
-        //       adjustedBillIds: {
-        //         billId,
-        //         adjustedAmount,
-        //         type: "Order_To_Bill",
-        //         collectionId: null,
-        //       },
-        //     },
-        //   },
-        //   { new: true }
-        // );
-
-        // Check if credit note is completely adjusted
         const updatedCreditNote = await CreditNoteModel.findById(
           creditNote._id,
         );
@@ -606,7 +640,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
         (item) => item.replacementId,
       );
 
-      // Fetch all relevant credit notes
       const replacements = await Replacement.find({
         _id: { $in: replacementIds },
       });
@@ -622,9 +655,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
         const adjustedQty = adjustedEntry.adjustedQty || 0;
 
-        // Update adjustedBillIds array
         await Replacement.findByIdAndUpdate(
-          replacement._id, // Replacement ID
+          replacement._id,
           {
             $push: {
               adjustedBillIds: {
