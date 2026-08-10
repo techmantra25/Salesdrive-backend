@@ -6,6 +6,31 @@ const Invoice = require("../../models/invoice.model");
 const Distributor = require("../../models/distributor.model");
 const getInTransitQty = require("../../utils/getInTransitQty");
 
+// Maps frontend sort keys -> actual field paths in the aggregation pipeline.
+// Paths under "product." only exist after the $unwind stage.
+// "basePointTotal" is a computed field added via $addFields (see below).
+const SORTABLE_FIELDS = {
+  product_code: "product.product_code",
+  size: "product.size",
+  product: "product.name",
+  availableQty: "availableQty",
+  unsalableQty: "unsalableQty",
+  intransitQty: "intransitQty",
+  totalStockamtDlp: "totalStockamtDlp",
+  totalUnsalableamtDlp: "totalUnsalableamtDlp",
+  totalStockamtRlp: "totalStockamtRlp",
+  totalUnsalableStockamtRlp: "totalUnsalableStockamtRlp",
+  reservedQty: "reservedQty",
+  normsQty: "normsQty",
+  basePoint: "basePointTotal",
+};
+
+// closingStockCount is intentionally NOT in SORTABLE_FIELDS: it's derived
+// from a per-item Transaction lookup that runs AFTER pagination/skip/limit,
+// so it can't be sorted across the full result set without querying every
+// matching inventory row's transaction history up front (expensive). It
+// remains page-local only; see handleSort in InventoryTable.jsx.
+
 const inventoryPaginatedList = asyncHandler(async (req, res) => {
   try {
     const {
@@ -20,6 +45,8 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       closingStockDate,
       stockType,
       showZeroStock,
+      sortField,
+      sortOrder,
     } = req.query;
 
     const distributorId = req.user._id;
@@ -42,15 +69,6 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
 
     const showZeroStockBool = showZeroStock === "true" || showZeroStock === true;
 
-    // if (!showZeroStockBool) {
-    //   if (stockType === "salable") {
-    //     matchStage.availableQty = { $gt: 0 };
-    //   } else if (stockType === "unsalable") {
-    //     matchStage.unsalableQty = { $gt: 0 };
-    //   } else if (stockType === "offer") {
-    //     matchStage.offerQty = { $gt: 0 };
-    //   }
-    // }
     if (!showZeroStockBool) {
       if (stockType === "salable") {
         matchStage.$or = [
@@ -62,9 +80,6 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       } else if (stockType === "reserve") {
         matchStage.reservedQty = { $gt: 0 };
       }
-      // else if (stockType === "offer") {
-      //   matchStage.offerQty = { $gt: 0 };
-      // }
     }
 
     if (Object.keys(matchStage).length > 0) {
@@ -74,10 +89,10 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     // Lookup (join) with the Product model to apply product-specific filters
     pipeline.push({
       $lookup: {
-        from: "products", // The "products" collection
-        localField: "productId", // The field in Inventory
-        foreignField: "_id", // The field in Product
-        as: "product", // Alias for the lookup result
+        from: "products",
+        localField: "productId",
+        foreignField: "_id",
+        as: "product",
       },
     });
 
@@ -93,16 +108,16 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       productMatchStage["product._id"] = new mongoose.Types.ObjectId(productId);
     }
 
- if (searchTerm) {
-  const tokens = searchTerm.trim().split(/\s+/).filter(Boolean);
+    if (searchTerm) {
+      const tokens = searchTerm.trim().split(/\s+/).filter(Boolean);
 
-  productMatchStage["$and"] = tokens.map((token) => ({
-    $or: [
-      { "product.product_code": { $regex: token, $options: "i" } },
-      { "product.name": { $regex: token, $options: "i" } },
-    ],
-  }));
-}
+      productMatchStage["$and"] = tokens.map((token) => ({
+        $or: [
+          { "product.product_code": { $regex: token, $options: "i" } },
+          { "product.name": { $regex: token, $options: "i" } },
+        ],
+      }));
+    }
 
     if (brandId) {
       productMatchStage["product.brand"] = new mongoose.Types.ObjectId(brandId);
@@ -127,15 +142,45 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     // Lookup (join) with the Distributor model
     pipeline.push({
       $lookup: {
-        from: "distributors", // The "distributors" collection
-        localField: "distributorId", // The field in Inventory
-        foreignField: "_id", // The field in Distributor
-        as: "distributor", // Alias for the lookup result
+        from: "distributors",
+        localField: "distributorId",
+        foreignField: "_id",
+        as: "distributor",
       },
     });
 
-    // Sort the results by _id (descending)
-    pipeline.push({ $sort: { _id: -1 } });
+    // basePoint isn't a stored field — compute it here so it can be sorted
+    // the same way it's calculated on the frontend:
+    // product.base_point * (availableQty + reservedQty)
+    pipeline.push({
+      $addFields: {
+        basePointTotal: {
+          $multiply: [
+            {
+              $convert: {
+                input: "$product.base_point",
+                to: "double",
+                onError: 0,
+                onNull: 0,
+              },
+            },
+            {
+              $add: [
+                { $convert: { input: "$availableQty", to: "double", onError: 0, onNull: 0 } },
+                { $convert: { input: "$reservedQty", to: "double", onError: 0, onNull: 0 } },
+              ],
+            }
+          ],
+        },
+      },
+    });
+
+    // Sort: whitelist-driven, defaults to product name ascending.
+    // _id is a tiebreaker so pagination stays stable when many rows share
+    // the same sort value.
+    const sortDirection = sortOrder === "desc" ? -1 : 1;
+    const sortKey = SORTABLE_FIELDS[sortField] || "product.name";
+    pipeline.push({ $sort: { [sortKey]: sortDirection, _id: 1 } });
 
     // Pagination: Skip and limit
     const paginatedPipeline = [...pipeline];
@@ -155,6 +200,8 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     ];
 
     // Count total items matching current filters
+    // (sort doesn't affect count, but reuse pipeline up to before $sort is
+    // unnecessary — $sort has no effect on $count either way)
     const filteredCountPipeline = [
       ...pipeline,
       {
@@ -214,19 +261,12 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       );
     }
 
-    // get In-Transit invoices for this distributor (to calculate the in transit for each product)
- // Use the intransitQty stored in the Inventory collection
-const resultInventories = inventories;
+    const resultInventories = inventories;
 
     // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;
 
-    // console.log("Distributor RBP Scheme Mapped:", distributor);
-    // console.log("Stock Type:", stockType);
     if (distributor?.RBPSchemeMapped === "yes" && stockType === "salable") {
-      // console.log("Conditions met for points calculation");
-
-      // Create a separate pipeline specifically for salable stock points calculation
       const pointsCalculationPipeline = [
         {
           $match: {
@@ -247,26 +287,13 @@ const resultInventories = inventories;
         },
       ];
 
-      // Apply the same product filters if they exist
       if (Object.keys(productMatchStage).length > 0) {
         pointsCalculationPipeline.push({ $match: productMatchStage });
       }
 
-      // console.log(
-      //   "Points calculation pipeline:",
-      //   JSON.stringify(pointsCalculationPipeline, null, 2)
-      // );
-
-      // Get all inventories (not paginated) for points calculation
       const allInventoriesForPoints = await Inventory.aggregate(
         pointsCalculationPipeline
       );
-
-      // console.log(
-      //   "All Inventories for Points Calculation count:",
-      //   allInventoriesForPoints.length
-      // );
-      // console.log("Sample inventory item:", allInventoriesForPoints[0]);
 
       currentStockTotalPoints = allInventoriesForPoints.reduce(
         (totalPoints, invItem) => {
@@ -276,17 +303,11 @@ const resultInventories = inventories;
           const totalQty = availableQty + reservedQty;
           const productPoints = basePoint * totalQty;
 
-          // console.log(
-          //   `Product: ${invItem.product?.name}, Base Point: ${basePoint}, Available: ${availableQty}, Reserved: ${reservedQty}, Total Qty: ${totalQty}, Product Points: ${productPoints}`
-          // );
-
           return totalPoints + productPoints;
         },
         0
       );
     }
-
-    // console.log("Current Stock Total Points:", currentStockTotalPoints);
 
     // Build pagination object
     const pagination = {
@@ -297,7 +318,6 @@ const resultInventories = inventories;
       filteredCount: totalFilteredItems,
     };
 
-    // Add currentStockTotalPoints only if distributor is RBP mapped
     if (
       distributor?.RBPSchemeMapped === "yes" &&
       currentStockTotalPoints !== null
@@ -305,13 +325,12 @@ const resultInventories = inventories;
       pagination.currentStockTotalPoints = currentStockTotalPoints;
     }
 
-    // Respond with paginated data
-   return res.status(200).json({
-  status: 200,
-  message: "Inventories fetched successfully",
-  data: inventories,
-  pagination,
-});
+    return res.status(200).json({
+      status: 200,
+      message: "Inventories fetched successfully",
+      data: inventories,
+      pagination,
+    });
   } catch (error) {
     res.status(400).json({
       error: true,
