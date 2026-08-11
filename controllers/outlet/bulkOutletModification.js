@@ -335,36 +335,36 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
         }
       }
 
-      /* -------- BEAT VALIDATION -------- */
+      /* -------- BEAT VALIDATION --------
+         Employee ↔ Beat mapping is NOT required.
+         Only check that the Beat exists and is active.
+      ----------------------------------- */
       if (hasBeat) {
-        if (!employee) {
-          rowErrors.push("Employee Code is required for Beat mapping");
+        const beatCodes = parseCsvList(row["Beat Code"]);
+
+        const beats = await Beat.find({
+          code: { $in: beatCodes },
+          status: true,
+        });
+
+        const foundCodes = beats.map(b => b.code);
+        const missing = beatCodes.filter(
+          code => !foundCodes.includes(code)
+        );
+
+        if (missing.length) {
+          rowErrors.push(
+            `Beat not found: ${missing.join(", ")}`
+          );
         } else {
-          const beatCodes = parseCsvList(row["Beat Code"]);
+          const newBeatIds = beats.map(b => b._id.toString()).sort();
+          const oldBeatIds = (outlet.beatId || [])
+            .map(id => id.toString())
+            .sort();
 
-          const beats = await Beat.find({
-            code: { $in: beatCodes },
-            status: true,
-            employeeId: employee._id,
-          });
-
-          const foundCodes = beats.map(b => b.code);
-          const missing = beatCodes.filter(b => !foundCodes.includes(b));
-
-          if (missing.length) {
-            rowErrors.push(
-              `Beat (${missing.join(", ")}) not mapped with Employee ${employee.empId}`
-            );
-          } else {
-            const newBeatIds = beats.map(b => b._id.toString()).sort();
-            const oldBeatIds = (outlet.beatId || [])
-              .map(id => id.toString())
-              .sort();
-
-            if (JSON.stringify(newBeatIds) !== JSON.stringify(oldBeatIds)) {
-              outlet.beatId = beats.map(b => b._id);
-              isUpdated = true;
-            }
+          if (JSON.stringify(newBeatIds) !== JSON.stringify(oldBeatIds)) {
+            outlet.beatId = beats.map(b => b._id);
+            isUpdated = true;
           }
         }
       }
