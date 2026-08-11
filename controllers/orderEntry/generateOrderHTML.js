@@ -12,10 +12,18 @@ const formatDate = (date) => {
   ).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
 };
 
+
 const getProductFamilyKey = (item) => {
   const description = item.description || "";
-  const firstSegment = description.split("-")[0]?.trim();
-  return firstSegment || item.code || "";
+  const segments = description.split("-");
+
+  // Use the first 3 segments so "SWR-P" and "SWR-F" (pipe vs fitting)
+  // are treated as DIFFERENT groups, not merged into one "SWR" bucket.
+  // e.g. "SWR-P-110MM-M/PLUS-CR-TYP-A-10FT-SS-5413" -> "SWR-P-110MM"
+  //      "COLUMN-P-32MM-10KG/CM2-V4-3M-W/S-4814"     -> "COLUMN-P-32MM"
+  const familyKey = segments.slice(0, 3).join("-").trim();
+
+  return familyKey || item.code || "";
 };
 
 const groupItemsByProduct = (items) => {
@@ -31,7 +39,14 @@ const groupItemsByProduct = (items) => {
     groups.get(key).push(item);
   });
 
-  return groupOrder.flatMap((key) => groups.get(key));
+  // Sort the GROUPS alphabetically (ascending) — this is what puts
+  // "COLUMN-P-32MM" before "SWR-F-75MM" before "SWR-P-110MM" before
+  // "UPVC-F-25MM" before "UPVC-P-25MM".
+  const sortedGroupOrder = [...groupOrder].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+  );
+
+  return sortedGroupOrder.flatMap((key) => groups.get(key));
 };
 
 // Basic Rate = Basic Amt (grossAmt) divided by quantity. Uses delQty as the
