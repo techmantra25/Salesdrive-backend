@@ -1,810 +1,794 @@
 const numberToWords = require("./numberToWords");
-const QRCode = require("qrcode");
 
-async function generateBillHTML(bill, options = {}) {
-  const formatDate = (dateString) => {
-    if (!dateString) return "";
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  };
+// ---------------------------------------------------------------------------
+// This file intentionally mirrors generateSalesOrderHTML.js structure,
+// section-for-section, so a Bill (Tax Invoice) prints with the exact same
+// header, retailer/details block, items table, summary, note/signature and
+// channel-partners footer as a Sales Order — and, on multi-page bills, that
+// entire block repeats on every page the same way it does for orders.
+// ---------------------------------------------------------------------------
 
-  const formatCurrency = (amount) => {
-    if (amount === undefined || amount === null) return "0.00";
-    return parseFloat(amount).toLocaleString("en-IN", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  };
+const escapeHtml = (value) => {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+};
 
-  const distributor = bill.distributorId || {};
-  const bankData = bill.bankData || {};
-  const upiData = bill.upiData || null;
-  const retailer = bill.retailerId || {};
-  const order = bill.orderId || {};
-  const salesman = bill.salesmanName || {};
-  const route = bill.routeId || {};
+const formatDate = (dateString) => {
+  if (!dateString) return "";
 
-  const eInvoice = bill.eInvoice || {};
-  const irn = eInvoice.irn || bill.irn || "";
-  const ackNo = eInvoice.ackNo || bill.ackNo || "";
-  const ackDate = eInvoice.ackDate
-    ? formatDate(eInvoice.ackDate)
-    : bill.ackDate
-      ? formatDate(bill.ackDate)
-      : "";
-  const eWayBillNo = eInvoice.eWayBillNo || bill.eWayBillNo || "";
-
-  const validLineItems = (bill.lineItems || []).filter(
-    (item) => item?.billQty > 0,
-  );
-
-  const generateUpiQR = async (upiId) => {
-    if (!upiId) return "";
-    try {
-      return await QRCode.toDataURL(`upi://pay?pa=${upiId}&pn=Payment`);
-    } catch (error) {
-      console.error("QR Code generation error:", error);
-      return "";
-    }
-  };
-
-  let upiQRCode = "";
-  if (upiData?.upiId) {
-    upiQRCode = await generateUpiQR(upiData.upiId);
+  const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return "";
   }
 
-  let lineItemsHTML = "";
-  validLineItems.forEach((item, index) => {
-    const product = item.product || {};
-    const discPct = formatCurrency(item.totalDiscountPercentage || 0);
-    const amount = formatCurrency(item.netAmt);
-
-    lineItemsHTML += `
-      <tr>
-        <td class="cell center">${index + 1}</td>
-        <td class="cell left">
-          <strong>${(product.name || "").replace(/\b\d{3}\b/g, "<b>$&</b>")} ${product.product_code || ""}</strong>
-        </td>
-        <td class="cell center">${product.product_hsn_code || ""}</td>
-        <td class="cell center"><strong>${item.billQty || 0} Pcs</strong></td>
-        <td class="cell right">${formatCurrency(item.price?.rlp_price || 0)}</td>
-        <td class="cell center">Pcs</td>
-        <td class="cell center">${discPct}%</td>
-        <td class="cell right"><strong>${amount}</strong></td>
-      </tr>
-    `;
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
   });
+};
 
-  const amountInWords = () => {
-    const amount = bill.netAmount || 0;
-    const rupees = Math.floor(amount);
-    const paise = Math.round((amount - rupees) * 100);
-    let result = numberToWords(rupees) + " Rupees";
-    if (paise > 0) result += " and " + numberToWords(paise) + " Paise";
-    return result + " Only";
-  };
+const formatCurrency = (amount) => {
+  const value = Number(amount);
+  return Number.isFinite(value) ? value.toFixed(2) : "0.00";
+};
 
-  const totalQty = validLineItems.reduce((s, i) => s + (i.billQty || 0), 0);
-  const igstVisible = bill?.igst && parseFloat(bill.igst) > 0;
-  const cgstVisible = bill?.cgst && parseFloat(bill.cgst) > 0;
-  const sgstVisible = bill?.sgst && parseFloat(bill.sgst) > 0;
+const formatAmountInWords = (amount) => {
+  const value = Number(amount) || 0;
+  const rupees = Math.floor(value);
+  const paise = Math.round((value - rupees) * 100);
 
-  // Build HSN/SAC tax breakup rows
-  const cgstRate = bill?.cgstRate || 9;
-  const sgstRate = bill?.sgstRate || 9;
-  const hsnMap = {};
-  validLineItems.forEach((item) => {
-    const hsn = item.product?.product_hsn_code || "";
-    const taxableAmt = item.netAmt || 0;
-    if (!hsnMap[hsn]) hsnMap[hsn] = { taxable: 0 };
-    hsnMap[hsn].taxable += taxableAmt;
-  });
-
-  let hsnRowsHTML = "";
-  let grandTaxable = 0,
-    grandCgst = 0,
-    grandSgst = 0;
-  Object.entries(hsnMap).forEach(([hsn, data]) => {
-    const taxable = bill?.netAmount || 0;
-    const cgstAmt = (taxable * cgstRate) / 100;
-    const sgstAmt = (taxable * sgstRate) / 100;
-    grandTaxable += taxable;
-    grandCgst += cgstAmt;
-    grandSgst += sgstAmt;
-    hsnRowsHTML += `<tr>
-      <td class="hcell">${hsn}</td>
-      <td class="hcell right">${formatCurrency(bill?.netAmount)}</td>
-      <td class="hcell center">${cgstRate}%</td>
-      <td class="hcell right">${formatCurrency(cgstAmt)}</td>
-      <td class="hcell center">${sgstRate}%</td>
-      <td class="hcell right">${formatCurrency(sgstAmt)}</td>
-      <td class="hcell right">${formatCurrency(cgstAmt + sgstAmt)}</td>
-    </tr>`;
-  });
-  hsnRowsHTML += `<tr class="hsn-total-row">
-    <td class="hcell right"><strong>Total</strong></td>
-    <td class="hcell right"><strong>${formatCurrency(bill?.netAmount)}</strong></td>
-    <td class="hcell"></td>
-    <td class="hcell right"><strong>${formatCurrency(grandCgst)}</strong></td>
-    <td class="hcell"></td>
-    <td class="hcell right"><strong>${formatCurrency(grandSgst)}</strong></td>
-    <td class="hcell right"><strong>${formatCurrency(grandCgst + grandSgst)}</strong></td>
-  </tr>`;
-
-  const totalTaxAmount = grandCgst + grandSgst + (bill.igst || 0);
-
-  const taxAmountInWords = () => {
-    const rupees = Math.floor(totalTaxAmount);
-    const paise = Math.round((totalTaxAmount - rupees) * 100);
-
-    let result = numberToWords(rupees) + " Rupees";
-
-    if (paise > 0) {
-      result += " and " + numberToWords(paise) + " Paise";
-    }
-
-    return result + " Only";
-  };
-
-  let emptyRowsHTML = "";
-
-  const emptyRowCount = Math.max(0, 18 - validLineItems.length);
-
-  for (let i = 0; i < emptyRowCount; i++) {
-    emptyRowsHTML += `
-    <tr class="empty-row">
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-      <td class="empty-cell"></td>
-    </tr>
-  `;
+  if (!rupees && !paise) {
+    return "Zero Rupees Only";
   }
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${bill.new_billno || bill.billNo ? "Invoice_" + (bill.new_billno || bill.billNo) : "Invoice"}</title>
-  <style>
-    @page { size: A4; margin: 6mm 6mm 6mm 6mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { width: 100%; min-height: 100%; }
-    body {
-      font-family: Arial, sans-serif;
-      font-size: 12px;
-      color: #000;
-      background: #e0e0e0;
-      padding: 20px 0;
-    }
+  let text = `${numberToWords(rupees)} Rupees`;
 
-    .page {
-      width: 210mm;
-      min-height: 297mm;
-      margin: 0 auto;
-      border: 1px solid #000;
-      background: #fff;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.25);
-      display: flex;
-      flex-direction: column;
-    }
-    @media print {
-      body { background: #fff !important; padding: 0 !important; }
-      .page {
-        width: 100% !important;
-        min-height: calc(297mm - 12mm) !important;
-        box-shadow: none !important;
-        margin: 0 !important;
-      }
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    }
-
-    /* TOP HEADER */
-    .top-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      padding: 6px 10px 5px;
-      border-bottom: 1px solid #000;
-    }
-    .top-header-center { text-align: center; flex: 1; }
-    .top-header-center .title-row {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 30px;
-    }
-    .tax-invoice-title { font-size: 20px; font-weight: bold; }
-    .original-label { font-style: italic; font-size: 13px; }
-    .e-invoice-label { font-size: 14px; font-weight: bold; }
-    .irn-block { margin-top: 4px; font-size: 12px; }
-    .irn-block p { margin: 2px 0; }
-    .qr-block { text-align: right; }
-    .qr-block img { width: 90px; height: 90px; border: 1px solid #ccc; }
-    .qr-placeholder {
-      width: 90px; height: 90px; border: 1px solid #ccc;
-      display: inline-flex; align-items: center; justify-content: center;
-      font-size: 12px; color: #aaa;
-    }
-
-    /* SELLER META */
-    .seller-meta { display: flex; border-bottom: 1px solid #000; }
-    .seller-box { width: 45%; border-right: 1px solid #000; padding: 6px 8px; }
-    .seller-box .company-name { font-size: 16px; font-weight: bold; margin-bottom: 3px; }
-    .seller-box p { margin: 2px 0; font-size: 12px; }
-    .meta-box { width: 55%; padding: 0; }
-    .meta-grid { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .meta-grid td {
-      border-bottom: 1px solid #000;
-      border-right: 1px solid #000;
-      padding: 4px 6px;
-      vertical-align: top;
-    }
-    .meta-grid td:last-child { border-right: none; }
-    .meta-grid tr:last-child td { border-bottom: none; }
-    .meta-label { font-size: 11px; color: #444; }
-    .meta-value { font-weight: bold; font-size: 12px; }
-
-    /* PARTIES */
-    .parties-meta-row { display: flex; border-bottom: 1px solid #000; }
-    .parties-stack { width: 45%; border-right: 1px solid #000; display: flex; flex-direction: column; }
-    .party-box { padding: 5px 8px; }
-    .party-box + .party-box { border-top: 1px solid #000; }
-    .party-box .party-title { font-size: 12px; font-weight: bold; text-decoration: underline; margin-bottom: 3px; }
-    .party-box .party-name { font-weight: bold; font-size: 13px; }
-    .party-box p { margin: 2px 0; font-size: 12px; }
-    .meta-box-right { width: 55%; padding: 0; }
-    .meta-grid-right { width: 100%; border-collapse: collapse; font-size: 12px; height: 100%; }
-    .meta-grid-right td {
-      border-bottom: 1px solid #000;
-      border-right: 1px solid #000;
-      padding: 4px 6px;
-      vertical-align: top;
-    }
-    .meta-grid-right td:last-child { border-right: none; }
-    .meta-grid-right tr:last-child td { border-bottom: none; }
-
-    /* ITEMS SECTION */
-    .items-section {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      border-bottom: 1px solid #000;
-      overflow: hidden;
-    }
-    .items-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      table-layout: fixed;
-    }
-    .items-table th {
-      background: #f0f0f0;
-      border: 1px solid #000;
-      padding: 4px 5px;
-      text-align: center;
-      font-size: 12px;
-    }
-    .items-table th.left { text-align: left; }
- .items-table td.cell {
-  border-left: 1px solid #000;
-  border-right: 1px solid #000;
-  border-top: none;
-  border-bottom: none;
-  padding: 4px 5px;
-  vertical-align: top;
-}
-  .empty-cell {
-  height: 22px;
-
-  /* only vertical lines */
-  border-left: 1px solid #000;
-  border-right: 1px solid #000;
-
-  /* no horizontal lines */
-  border-top: none;
-  border-bottom: none;
-
-  padding: 0;
-}
-  .empty-row td {
-  height: 22px;
-}
-    .items-table tbody tr td.cell:first-child { border-left: 1px solid #000; }
-    .items-table tbody tr td.cell:last-child  { border-right: 1px solid #000; }
-    .items-table td.center { text-align: center; }
-    .items-table td.right  { text-align: right; }
-    .items-table td.left   { text-align: left; }
-    .items-table-wrap {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-    .items-table-wrap .items-table { height: 100%; }
-  
-    .subtotal-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      table-layout: fixed;
-      flex-shrink: 0;
-      border-top: 2px solid #000;
-    }
-    .subtotal-table td { padding: 3px 5px; border: none; }
-    .subtotal-table .amount-col {
-      text-align: right;
-      font-weight: bold;
-      border-left: 1px solid #000;
-      border-right: 1px solid #000;
-      border-bottom: 1px solid #ccc;
-    }
-    .subtotal-table .label-col {
-      font-style: italic;
-      font-weight: bold;
-      text-align: right;
-    }
-
-    /* ── AMOUNT IN WORDS ROW ── */
-    .aow-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-top: 2px solid #000;
-      border-bottom: 1px solid #000;
-      padding: 4px 8px;
-      font-size: 12px;
-    }
-    .aow-left { flex: 1; }
-    .aow-words { font-weight: bold; font-size: 13px; margin-top: 2px; }
-    .aow-right { font-style: italic; font-size: 12px; white-space: nowrap; margin-left: 10px; }
-
-    /* ── HSN/SAC TAX TABLE ── */
-    .hsn-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      border-bottom: 1px solid #000;
-    }
-    .hsn-table th {
-      border: 1px solid #000;
-      padding: 3px 5px;
-      text-align: center;
-      background: #f0f0f0;
-      font-size: 12px;
-    }
-    .hsn-table td.hcell {
-      border: 1px solid #000;
-      padding: 3px 6px;
-      font-size: 12px;
-    }
-    .hsn-table td.right { text-align: right; }
-    .hsn-table td.center { text-align: center; }
-    .hsn-total-row td { border-top: 2px solid #000 !important; }
-
-    /* ── TAX AMOUNT IN WORDS ── */
-    .tax-words-section {
-      border-bottom: 1px solid #000;
-      padding: 4px 8px;
-      font-size: 12px;
-    }
-
-    /* ── BOTTOM: DECLARATION + BANK ── */
-    .bottom-section {
-      display: flex;
-      font-size: 12px;
-      border-bottom: 1px solid #000;
-      min-height: 90px;
-    }
-    .bottom-left {
-      width: 45%;
-      border-right: 1px solid #000;
-      padding: 6px 8px;
-    }
-    .declaration-title {
-      font-weight: bold;
-      text-decoration: underline;
-      margin-bottom: 4px;
-      font-size: 12px;
-    }
-    .bottom-right {
-      width: 55%;
-      padding: 6px 8px;
-      display: flex;
-      flex-direction: column;
-    }
-    .bank-title {
-      font-weight: bold;
-      text-decoration: underline;
-      margin-bottom: 4px;
-      font-size: 12px;
-    }
-    .bank-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    .bank-table td { padding: 2px 4px; vertical-align: top; }
-    .bank-table td:first-child { width: 42%; white-space: nowrap; }
-.bottom-right {
-  width: 55%;
-  padding: 6px 8px;
-  display: flex;
-  flex-direction: column;
-}
-
-.company-sign {
-  margin-top: auto;
-  padding-bottom: 30px;   /* pushes block upward */
-  font-weight: bold;
-  font-size: 12px;
-  text-align: right;
-}
-
-.authorised-sign {
-  font-size: 12px;
-  text-align: right;
-}  /* ── FOOTER ── */
-    .page-footer {
-      border-top: 1px solid #000;
-      text-align: center;
-      font-size: 12px;
-      padding: 4px;
-      color: #444;
-    }
-  </style>
-</head>
-<body>
-<div class="page">
-
-  <!-- TOP HEADER -->
-  <div class="top-header">
-    <div class="irn-block">
-      <div style="margin-top:36px;">
-        <p><strong>IRN</strong> : ${irn || ""}</p>
-        <p><strong>Ack No.</strong> : ${ackNo || ""}</p>
-        <p><strong>Ack Date</strong> : ${ackDate || ""}</p>
-      </div>
-    </div>
-    <div class="top-header-center">
-      <div class="title-row">
-        <span class="tax-invoice-title">Tax Invoice</span>
-        <span class="original-label">(ORIGINAL FOR RECIPIENT)</span>
-        <span class="e-invoice-label">e-Invoice</span>
-      </div>
-    </div>
-    <div class="qr-block">
-  ${
-    options?.logoBase64
-      ? `<img
-          src="${options.logoBase64}"
-          alt="Company Logo"
-          style="width:90px;height:90px;object-fit:contain;border:none;"
-        />`
-      : `<div class="qr-placeholder">Logo</div>`
+  if (paise > 0) {
+    text += ` and ${numberToWords(paise)} Paise`;
   }
+
+  return `${text} Only`;
+};
+
+const getStatusLabel = (status) => {
+  if (status === "Completed_Billed") return "Completely Billed";
+  if (status === "Partially_Billed") return "Partially Billed";
+  return status || "";
+};
+
+// Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
+const CHANNEL_PARTNER_LOGOS = [
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782883585753.png?alt=media",
+    alt: "Ultra Max",
+  },
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720406592.png?alt=media",
+    alt: "TMT BAR",
+  },
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720435420.png?alt=media",
+    alt: "SKIPPER PIPES",
+  },
+  {
+    url: "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1782720467231.png?alt=media",
+    alt: "DALMIA CEMENT",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// PAGINATION CAPACITY — identical two-tier approach to the Sales Order file.
+// Every page repeats the summary/bank/note/signature/footer block, so
+// capacity is the same on every page.
+// ---------------------------------------------------------------------------
+const LAST_PAGE_ROWS_BASE = 20;
+const LAST_PAGE_ROWS_MIN = 20;
+const getPageRowBudget = () => LAST_PAGE_ROWS_BASE;
+
+const paginateLineItems = (items) => {
+  const rowsPerPage = Math.max(LAST_PAGE_ROWS_MIN, getPageRowBudget());
+
+  if (items.length === 0) {
+    return [[]];
+  }
+
+  const pages = [];
+  let remaining = items.slice();
+
+  while (remaining.length > 0) {
+    pages.push(remaining.slice(0, rowsPerPage));
+    remaining = remaining.slice(rowsPerPage);
+  }
+
+  return pages;
+};
+
+// ---------------------------------------------------------------------------
+// Small render helpers — each returns a chunk of markup, repeated on every
+// printed page instead of only once at the very top of the document.
+// ---------------------------------------------------------------------------
+
+const renderChannelPartnerImgs = () =>
+  CHANNEL_PARTNER_LOGOS.map(
+    ({ url, alt }) =>
+      `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" title="${escapeHtml(alt)}" style="height:82px; width:110px; object-fit:contain; transform:scale(1.08);" onerror="this.style.display='none'">`,
+  ).join("\n            ");
+
+const renderCompanyHeader = (distributor, options) => `
+          <!-- HEADER: logo left, company info right -->
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:6px 12px; border-bottom:1px solid #000;">
+           <div style="flex:0 0 105px; height:105px; display:flex; align-items:center; justify-content:center;">
+  <img
+    src="${escapeHtml(
+  options?.logoBase64 ||
+  options?.logoUrl ||
+  "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+)}"
+    alt="Company Logo"
+    style="width:100%; height:100%; object-fit:contain; display:block;"
+    onerror="this.style.display='none'"
+  />
 </div>
+            <div style="flex:1; text-align:right; padding-left:8px;">
+  <div style="font-size:20px; font-weight:bold; letter-spacing:0.5px;">
+    ${escapeHtml(distributor?.name || "Company Name")}
   </div>
+              ${distributor?.address1
+    ? `<div style="font-size:9px; margin-top:2px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
+    : ""
+  }
+              <div style="font-size:9px; margin-top:1px;">
+${distributor?.email ? `Email : ${escapeHtml(distributor.email)}` : ""}${distributor?.email && distributor?.phone ? ", " : ""}${distributor?.phone ? `Phone : ${escapeHtml(distributor.phone)}` : ""}              </div>
+              ${distributor?.gst_no || distributor?.stateId?.name
+    ? `<div style="font-size:9px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
+    : ""
+  }
+            </div>
+          </div>
 
-  <!-- SELLER + META -->
-  <div class="seller-meta">
-    <div class="seller-box">
-      <div class="company-name">${distributor.name || "Company Name"}</div>
-      <p>${distributor.address1 || ""}, ${distributor.address2 || ""}</p>
-      <p>GSTIN/UIN: ${distributor.gst_no || ""}</p>
-      <p>State Name: ${distributor?.stateId?.name || ""}${distributor?.stateId?.slug ? ", Code: " + (distributor?.stateId?.code || "") : ""}</p>
-      <p>E-Mail: ${distributor.email || ""}</p>
-      <p>Phone: ${distributor.phone || ""}</p>
-    </div>
-    <div class="meta-box">
-      <table class="meta-grid">
-        <tr>
-          <td style="width:50%">
-            <div class="meta-label"><b>Invoice No.</b></div>
-            <div class="meta-value">${bill.new_billno || bill.billNo || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>e-Way Bill No.</b></div>
-            <div class="meta-value">${eWayBillNo || "-"}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Dated</b></div>
-            <div class="meta-value">${formatDate(bill?.createdAt)}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Order No.</b></div>
-            <div class="meta-value">${order?.orderNo || "-"}</div>
-          </td>
-          <td colspan="2">
-            <div class="meta-label"><b>Mode/Terms of Payment</b></div>
-            <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Sales Man</b></div>
-            <div class="meta-value">${salesman.name || ""} (${salesman?.empId || ""})</div>
-          </td>
-          <td colspan="2">
-            <div class="meta-label"><b>Beat / Route</b></ div>
-            <div class="meta-value">${route.name || ""} (${route?.code || ""})</div>
-          </td>
-        </tr>
-      </table>
-    </div>
-  </div>
+          <!-- TAX INVOICE TITLE -->
+          <div style="text-align:center; padding:3px 0; border-bottom:1px solid #000; background:#fff;">
+            <span style="font-size:10px; font-weight:bold; letter-spacing:2px; text-decoration:underline;">TAX INVOICE</span>
+          </div>`;
 
-  <!-- CONSIGNEE + BUYER -->
-  <div class="parties-meta-row">
-    <div class="parties-stack">
-      <div class="party-box">
-        <div class="party-title">Consignee (Ship to)</div>
-        <div class="party-name">${retailer?.outletName || ""} (${retailer?.outletUID || ""})</div>
-        <p>${retailer.address1 || ""}, ${retailer.city || ""}</p>
-        <p>Pin Code: ${retailer.pin || ""}</p>
-        <p>GSTIN/UIN : ${retailer.gstin || ""}</p>
-        <p>State Name : ${retailer?.stateId?.name || retailer.state || ""}</p>
-      </div>
-      <div class="party-box">
-        <div class="party-title">Buyer (Bill to)</div>
-        <div class="party-name">${retailer?.outletName || ""} (${retailer?.outletUID || ""})</div>
-        <p>${retailer.address1 || ""}, ${retailer.city || ""}</p>
-        <p>Pin Code: ${retailer.pin || ""}</p>
-        <p>GSTIN/UIN : ${retailer.gstin || ""}</p>
-        <p>Phone: ${retailer.mobile1 || ""}</p>
-      </div>
-    </div>
-    <div class="meta-box-right">
-      <table class="meta-grid-right">
-        <tr>
-          <td style="width:50%">
-            <div class="meta-label"><b>Delivery Note</b></div>
-            <div class="meta-value">${bill.deliveryNote || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Mode/Terms of Payment</b></div>
-            <div class="meta-value">${bill.paymentMode || "NEFT/RTGS"}</div>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding-top:6px; padding-bottom:10px;">
-            <div class="meta-label"><b>Reference No. &amp; Date.</b></div>
-            <div class="meta-value">${bill.referenceNo || ""}</div>
-          </td>
-          <td style="padding-top:6px; padding-bottom:10px;">
-            <div class="meta-label"><b>Other References</b></div>
-            <div class="meta-value">${bill.otherReferences || ""}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Buyer's Order No.</b></div>
-            <div class="meta-value">${order?.buyerOrderNo || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Dated</b></div>
-            <div class="meta-value">${order?.buyerOrderDate ? formatDate(order.buyerOrderDate) : ""}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Dispatch Doc No.</b></div>
-            <div class="meta-value">${bill.dispatchDocNo || bill.new_billno || bill.billNo || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Delivery Note Date</b></div>
-            <div class="meta-value">${bill.deliveryNoteDate ? formatDate(bill.deliveryNoteDate) : ""}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Dispatched through</b></div>
-            <div class="meta-value">${bill.dispatchedThrough || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Destination</b></div>
-            <div class="meta-value">${bill.destination || ""}</div>
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div class="meta-label"><b>Bill of Lading/LR-RR No.</b></div>
-            <div class="meta-value">${bill.lrNo || ""}</div>
-          </td>
-          <td>
-            <div class="meta-label"><b>Motor Vehicle No.</b></div>
-            <div class="meta-value">${bill.motorVehicleNo || ""}</div>
-          </td>
-        </tr>
-        <tr>
-          <td colspan="2">
-            <div class="meta-label"><b>Terms of Delivery</b></div>
-            <div class="meta-value">${bill.termsOfDelivery || ""}</div>
-          </td>
-        </tr>
-      </table>
-    </div>
-  </div>
+const renderRetailerAndBillDetails = (
+  retailer,
+  bill,
+  order,
+  salesman,
+  route,
+) => `
+          <!-- RETAILER + BILL DETAILS -->
+          <table class="details-table">
+            <tbody>
+              <tr>
+                <td class="left-section">
+                  <table>
+                    <tbody>
+                      <tr>
+                        <td colspan="2" class="bold" style="font-size:9px;">Retailer Details</td>
+                      </tr>
+                      <tr>
+                        <td style="width: 30%; font-size:9px;">Name</td>
+                        <td style="font-size:9px;">: <strong>${escapeHtml(retailer?.outletName || "")}</strong>${retailer?.outletUID ? ` (${escapeHtml(retailer.outletUID)})` : ""}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Outlet Code</td>
+                        <td style="font-size:9px;">: ${escapeHtml(retailer?.outletCode || "")}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Add/City/Pincode</td>
+                        <td style="font-size:9px;">: ${escapeHtml(retailer?.address1 || "")}${retailer?.city ? ` / ${escapeHtml(retailer.city)}` : ""}${retailer?.pin ? ` / ${escapeHtml(retailer.pin)}` : ""}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Phone No.</td>
+                        <td style="font-size:9px;">: <strong>${escapeHtml(retailer?.mobile1 || "")}</strong></td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Email</td>
+                        <td style="font-size:9px;">: ${escapeHtml(retailer?.email || "")}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">GSTIN No.</td>
+                        <td style="font-size:9px;">: <strong>${escapeHtml(retailer?.gstin || "")}</strong></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
 
-  <!-- ITEMS SECTION -->
-  <div class="items-section">
-    <table class="items-table" style="flex-shrink:0;">
-      <colgroup>
-        <col style="width:3%"><col style="width:35%"><col style="width:8%">
-        <col style="width:10%"><col style="width:9%"><col style="width:5%">
-        <col style="width:8%"><col style="width:12%">
-      </colgroup>
-      <thead>
-        <tr>
-          <th>Sl<br>No.</th>
-          <th class="left">Description of<br>Goods and Services</th>
-          <th>HSN/SAC</th>
-          <th>Quantity</th>
-          <th>Rate</th>
-          <th>Per</th>
-          <th>Disc. %</th>
-          <th>Amount</th>
-        </tr>
-      </thead>
-    </table>
+                <td class="right-section">
+                  <table>
+                    <tbody>
+                    <tr>
+                        <td colspan="2" class="bold" style="font-size:9px;">Bill Details</td>
+                      </tr>
+                      <tr>
+                        <td style="width: 38%; font-size:9px;">Bill No.</td>
+                        <td style="font-size:9px;">: <strong>${escapeHtml(bill?.new_billno || bill?.billNo || "")}</strong></td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Bill Date</td>
+                        <td style="font-size:9px;">: ${escapeHtml(formatDate(bill?.createdAt))}</td>
+                      </tr>
+                      ${order?.orderNo
+    ? `<tr>
+                        <td style="font-size:9px;">Order No.</td>
+                        <td style="font-size:9px;">: ${escapeHtml(order.orderNo)}</td>
+                      </tr>`
+    : ""
+  }
+                      ${order?.createdAt
+    ? `<tr>
+                        <td style="font-size:9px;">Order Date</td>
+                        <td style="font-size:9px;">: ${escapeHtml(formatDate(order.createdAt))}</td>
+                      </tr>`
+    : ""
+  }
+                      ${order?.orderSource
+    ? `<tr>
+                        <td style="font-size:9px;">Order Source</td>
+                        <td style="font-size:9px;">: ${escapeHtml(order.orderSource)}</td>
+                      </tr>`
+    : ""
+  }
+                      <tr>
+                        <td style="font-size:9px;">Payment Mode</td>
+                        <td style="font-size:9px;">: ${escapeHtml(bill?.paymentMode || "")}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Sales Man</td>
+                        <td style="font-size:9px;">: ${escapeHtml(salesman?.name || "")}${salesman?.empId ? ` (${escapeHtml(salesman.empId)})` : ""}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Beat</td>
+                        <td style="font-size:9px;">: ${escapeHtml(route?.name || "")}${route?.code ? ` (${escapeHtml(route.code)})` : ""}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Status</td>
+                        <td style="font-size:9px;">: ${escapeHtml(getStatusLabel(bill?.status))}</td>
+                      </tr>
+                      ${bill?.motorVehicleNo || bill?.loadSheetId?.vehicleId?.vehicle_no
+    ? `<tr>
+                        <td style="font-size:9px;">Vehicle No.</td>
+                        <td style="font-size:9px;">: ${escapeHtml(bill?.motorVehicleNo || bill?.loadSheetId?.vehicleId?.vehicle_no)}</td>
+                      </tr>`
+    : ""
+  }
+                      ${bill?.eWayBillNo || bill?.eInvoice?.eWayBillNo
+    ? `<tr>
+                        <td style="font-size:9px;">E-Way Bill No.</td>
+                        <td style="font-size:9px;">: ${escapeHtml(bill?.eWayBillNo || bill?.eInvoice?.eWayBillNo)}</td>
+                      </tr>`
+    : ""
+  }
+                      <tr>
+                        <td style="font-size:9px;">Remarks</td>
+                        <td style="font-size:9px;">: ${escapeHtml(bill?.remark || "")}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            </tbody>
+          </table>`;
 
-    <div class="items-table-wrap">
-      <table class="items-table" style="height:100%;">
-        <colgroup>
-          <col style="width:3%"><col style="width:35%"><col style="width:8%">
-          <col style="width:10%"><col style="width:9%"><col style="width:5%">
-          <col style="width:8%"><col style="width:12%">
-        </colgroup>
-        <tbody>
-        ${lineItemsHTML}
-        ${emptyRowsHTML}
+// Minimum number of rows the items table should always show on any page,
+// regardless of how many real line items landed on that page. If a page
+// has fewer real items than this, the shortfall is padded out with blank
+// "-" rows so the table never looks sparse/collapsed to just a couple rows.
+const MIN_TABLE_ROWS = 20;
 
-        </tbody>
-      </table>
-    </div>
+const renderBlankItemsRow = () => `
+              <tr>
+                <td class="text-center" style="font-size:9px;">-</td>
+                <td class="text-left" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-center" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+                <td class="text-right" style="font-size:9px;">-</td>
+              </tr>`;
 
-    <table class="subtotal-table">
-      <colgroup>
-        <col style="width:3%"><col style="width:35%"><col style="width:8%">
-        <col style="width:10%"><col style="width:9%"><col style="width:5%">
-        <col style="width:8%"><col style="width:12%">
-      </colgroup>
-      <tbody>
-        <tr>
-          <td colspan="3"></td>
-          <td class="amount-col" style="text-align:center; font-weight:bold;">${totalQty} Pcs</td>
-          <td colspan="3"></td>
-          <td class="amount-col">${formatCurrency(bill?.grossAmount)}</td>
-        </tr>
-     
+const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) => {
+  const blankRowsNeeded = Math.max(0, minRows - itemsForPage.length);
+
+  return `
+          <!-- LINE ITEMS TABLE -->
+          <table class="items-table">
+            <thead>
+              <tr>
+                <th style="width: 3%;">SL</th>
+                <th style="width: 24%; text-align:center;">Item Description</th>
+                <th style="width: 7%; text-align:center;">HSN</th>
+                <th style="width: 5%; text-align:center;">Qty</th>
+                <th style="width: 8%; text-align:center;">MRP</th>
+                <th style="width: 7%;">Disc%</th>
+                <th style="width: 8%; text-align:center;">Basic Price</th>
+                <th style="width: 10%; text-align:center;">Basic Amt</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itemsForPage
+      .map((item, index) => {
+        const product = item?.product || {};
+
+        const discPct = Number(item?.totalDiscountPercentage || 0);
+        const qty = Number(item?.billQty || 0);
+
+        const mrp = Number(
+          item?.price?.mrp_price || item?.price?.rlp_price || 0
+        );
+
+        // Basic Price / Basic Amt now derived the same way as the Sales
+        // Order generator: taxableAmt (falling back to netAmt) is the row
+        // total, and dividing by qty gives the effective per-unit price.
+        const effectiveAmount = Number(item?.taxableAmt || item?.netAmt || 0);
+
+        const effectivePrice = qty > 0 ? effectiveAmount / qty : 0;
+
+        return `
+              <tr>
+                <td class="text-center" style="font-size:9px;">${startIndex + index + 1}</td>
+                <td class="text-left" style="font-size:9px;">${escapeHtml(product?.name || "")}</td>
+                <td class="text-right" style="font-size:9px;">${escapeHtml(product?.product_hsn_code || "")}</td>
+                <td class="text-right" style="font-size:9px;">${qty}</td>
+                <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(mrp))}</td>
+                <td class="text-center" style="font-size:9px;">${discPct > 0 ? discPct.toFixed(2) + "%" : "0.00%"}</td>
+                <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectivePrice))}</td>
+                 <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectiveAmount))}</td>
+              </tr>`;
+      })
+      .join("")}
+              ${Array.from({ length: blankRowsNeeded }, renderBlankItemsRow).join("")}
+            </tbody>
+          </table>`;
+};
+
+const renderSummarySection = (
+  bill,
+  bankData,
+  upiData,
+  grossAmount,
+  taxableAmount,
+  invoiceAmount,
+  roundOffAmount,
+  netAmount,
+) => `
+          <!-- SUMMARY -->
+          <table class="summary-table">
+            <tbody>
+              <tr>
+                <td class="left-section">
+                  <table>
+                    <tbody>
+                      <tr>
+                        <td colspan="3" class="bold" style="font-size:9px;">E &amp; O.E</td>
+                      </tr>
+
+                      <tr>
+                        <td colspan="3" style="padding-top:6px; font-size:9px;">
+                          <strong>Amount In Words:</strong>
+                        </td>
+                      </tr>
+                     <tr>
+  <td colspan="3" class="bold" style="font-size:9px;">
+    ${escapeHtml(formatAmountInWords(netAmount))}
+  </td>
+</tr>
+
 <tr>
-  <td colspan="6" class="label-col">
-    Freight And Delivery (₹ ${formatCurrency(bill?.freightCharges || 0)})
-    + Handling (₹ ${formatCurrency(bill?.handlingCharges || 0)})
+  <td colspan="3" style="padding:6px 0 0 0;">
+    ${bankData?.bankName || upiData?.upiId
+    ? `
+        <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
+          <tbody>
+            <tr>
+              <td style="width:70%; padding:4px 6px; vertical-align:top; border-right:1px solid #000;">
+                <table style="width:100%;">
+                  <tbody>
+                    <tr>
+                      <td colspan="2" class="bold" style="font-size:11px;">Bank Details</td>
+                    </tr>
+
+                    ${bankData?.bankName
+      ? `
+                    <tr>
+                      <td style="width:35%; font-size:9px;">Bank Name</td>
+                      <td style="font-size:9px;">: ${escapeHtml(bankData.bankName)}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:9px;">Branch</td>
+                      <td style="font-size:9px;">: ${escapeHtml(bankData.branchCode || "")}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:9px;">IFSC Code</td>
+                      <td style="font-size:9px;">: ${escapeHtml(bankData.ifscCode || "")}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:9px;">Account Type</td>
+                      <td style="font-size:9px;">: ${escapeHtml(bankData.accountType || "")}</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:9px;">Account Number</td>
+                      <td style="font-size:9px;">: ${escapeHtml(bankData.accountNumber || "")}</td>
+                    </tr>
+                    `
+      : `
+                    <tr>
+                      <td colspan="2" style="font-size:9px;">
+                        Bank details are not available.
+                      </td>
+                    </tr>`
+    }
+
+                  </tbody>
+                </table>
+              </td>
+
+              <td style="width:30%; padding:4px 6px; vertical-align:top;">
+                <table style="width:100%;">
+                  <tbody>
+                    <tr>
+                      <td class="bold" style="font-size:9px;">UPI Details</td>
+                    </tr>
+                    <tr>
+                      <td style="font-size:9px;">
+                        ${upiData?.upiId
+      ? escapeHtml(`UPI ID: ${upiData.upiId}`)
+      : "UPI details are not available."
+    }
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+
+            </tr>
+          </tbody>
+        </table>
+        `
+    : `
+        <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
+          <tbody>
+            <tr>
+              <td style="padding:6px; font-size:9px;">
+                <strong>Bank Details</strong><br><br>
+                <strong>Beneficiary :</strong> Infrawal Projects Private Limited<br>
+                <strong>Bank :</strong> ICICI Bank<br>
+                <strong>Branch :</strong> Liluah Branch<br>
+                <strong>IFSC Code :</strong> ICIC0006948<br>
+                <strong>A/C No :</strong> 694805501076<br>
+                <strong>UPI ID :</strong> infra96577.ibz@icici
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        `
+  }
   </td>
-  <td></td>
-  <td class="amount-col">
-    ${formatCurrency(
-      Number(bill?.freightCharges || 0) +
-        Number(bill?.deliveryCharges || 0) +
-        Number(bill?.handlingCharges || 0),
-    )}
-  </td>
-</tr>     
-      ${
-        cgstVisible
-          ? `
-        <tr>
-          <td colspan="6" class="label-col">CGST @ ${cgstRate}%</td>
-          <td></td>
-          <td class="amount-col">${formatCurrency(bill?.cgst)}</td>
-        </tr>`
-          : ""
-      }
-        ${
-          sgstVisible
-            ? `
-        <tr>
-          <td colspan="6" class="label-col">SGST @ ${sgstRate}%</td>
-          <td></td>
-          <td class="amount-col">${formatCurrency(bill?.sgst)}</td>
-        </tr>`
-            : ""
-        }
-        ${
-          igstVisible
-            ? `
-        <tr>
-          <td colspan="6" class="label-col">IGST @ ${bill?.igstRate || "18"}%</td>
-          <td></td>
-          <td class="amount-col">${formatCurrency(bill?.igst)}</td>
-        </tr>`
-            : ""
-        }
- 
-        
-      </tbody>
-    </table>
-  </div>
+</tr>
+                    </tbody>
+                  </table>
+                </td>
 
-  <!-- AMOUNT CHARGEABLE IN WORDS + AMOUNT + E.&O.E -->
-  <div class="aow-row">
-    <div class="aow-left">
-      <p style="font-size: 11px; margin-bottom:2px;">Amount Chargeable (in words)</p>
-      <p class="aow-words">INR ${amountInWords()}</p>
-    </div>
-    <div class="aow-right">
-      <div style="text-align:right; font-size: 11px; margin-bottom:2px;">E. &amp; O.E</div>
-      <div style="text-align:right; font-weight:bold; font-size: 14px;">&#8377; ${formatCurrency(bill?.netAmount)}</div>
-    </div>
-  </div>
+                <td class="right-section">
+                  <table>
+                    <tbody>
+                      <tr>
+                        <td style="width:60%; font-size:9px;">Gross Amount</td>
+                        <td style="width:10%;" class="text-center" style="font-size:9px;">:</td>
+                        <td style="width:30%;" class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(grossAmount))}</td>
+                      </tr>
 
-  <!-- HSN/SAC TAX BREAKUP TABLE -->
-  <table class="hsn-table">
-    <thead>
-      <tr>
-        <th rowspan="2" style="width:28%; text-align:center;">HSN/SAC</th>
-        <th rowspan="2" style="width:14%;">Taxable<br>Value</th>
-        <th colspan="2" style="border-bottom:1px solid #000;">CGST</th>
-        <th colspan="2" style="border-bottom:1px solid #000;">SGST/UTGST</th>
-        <th rowspan="2" style="width:13%;">Total<br>Tax Amount</th>
-      </tr>
-      <tr>
-        <th style="width:7%">Rate</th>
-        <th style="width:10%">Amount</th>
-        <th style="width:7%">Rate</th>
-        <th style="width:10%">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${hsnRowsHTML}
-    </tbody>
-  </table>
+                      <tr>
+                        <td style="font-size:9px;">Freight &amp; Handling Fee</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency((bill?.freightCharges || 0) + (bill?.handlingCharges || 0)))}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Taxable Amount</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(taxableAmount))}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">CGST</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(bill?.cgst))}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">SGST</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(bill?.sgst))}</td>
+                      </tr>
+                      ${Number(bill?.igst) > 0
+    ? `<tr>
+                        <td style="font-size:9px;">IGST</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(bill?.igst))}</td>
+                      </tr>`
+    : ""
+  }
+                      <tr>
+                        <td style="font-size:9px;">Invoice Amount</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(invoiceAmount))}</td>
+                      </tr>
+                      <tr>
+                        <td style="font-size:9px;">Round Off Amount</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(roundOffAmount))}</td>
+                      </tr>
+                      ${Number(bill?.cashDiscount) > 0 || bill?.cashDiscountApplied
+    ? `<tr>
+                        <td style="font-size:9px;">Cash Discount</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(bill?.cashDiscount))}</td>
+                      </tr>`
+    : ""
+  }
+                      ${Number(bill?.creditAmount) > 0
+    ? `<tr>
+                        <td style="font-size:9px;">Credit Note Adjustment</td>
+                        <td class="text-center" style="font-size:9px;">:</td>
+                        <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(bill?.creditAmount))}</td>
+                      </tr>`
+    : ""
+  }
+                      <tr class="bold border-top-bold" style="font-weight:bold;">
+                        <td style="padding-top:4px; font-size:9px;">Net Amount</td>
+                        <td class="text-center" style="padding-top:4px; font-size:9px;">:</td>
+                        <td class="text-right" style="padding-top:4px; font-size:9px;">&#8377;${escapeHtml(formatCurrency(netAmount))}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </td>
+              </tr>
+            </tbody>
+          </table>`;
 
-  <!-- TAX AMOUNT IN WORDS -->
-  <div class="tax-words-section">
-  <strong>Tax Amount (in words) :</strong>
-  <strong>&nbsp;INR ${taxAmountInWords()}</strong>
-</div>
+const renderNoteAndSignature = (distributor) => `
+          <!-- NOTE & SIGNATURE -->
+          <table style="width:100%; font-size:9px; border-bottom:1px solid #000;">
+            <tbody>
+              <tr>
+                <td style="width:60%; vertical-align:top; padding:4px 6px;">
+                  <strong>Note:</strong>
+                  <ul style="margin:2px 0; padding-left:14px; font-size:9px;">
+                    <li>Kindly incorporate plus/minus 5% variation in quantity at the time of delivery.</li>
+                    <li>Test Certificate may be provided if required.</li>
+                    <li>Inspection of materials if required may be done at our godown with prior information.</li>
+                    <li>Unloading arrangement to be done by buyer.</li>
+                  </ul>
+                </td>
+                <td style="width:40%; vertical-align:bottom; text-align:center; padding:4px 6px;">
+                  <p class="bold" style="margin:2px 0; font-size:9px;">For ${escapeHtml(distributor?.name || "Company Name")}</p>
+                  <div class="signature-line">
+                    <p style="margin:2px 0; font-size:9px;">Authorised Signatory</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>`;
 
-  <!-- BOTTOM: DECLARATION (left) | BANK DETAILS + SIGN (right) -->
-  <div class="bottom-section">
-    <div class="bottom-left">
-      <div class="declaration-title">Declaration</div>
-      <p>We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.</p>
-    </div>
-    <div class="bottom-right">
-      <div class="bank-title">Company's Bank Details</div>
-      <table class="bank-table">
-        <tr><td>A/c Holder's Name</td><td>: <strong>${distributor.name || ""}</strong></td></tr>
-        <tr><td>Bank Name</td><td>: <strong>${bankData?.bankName || ""}</strong></td></tr>
-        <tr><td>A/c No.</td><td>: <strong>${bankData?.accountNumber || ""}</strong></td></tr>
-        <tr><td>Branch &amp; IFS Code</td><td>: <strong>${bankData?.branchCode || ""}${bankData?.ifscCode ? " & " + bankData.ifscCode : ""}</strong></td></tr>
-      </table>
-      <div class="company-sign">for ${distributor.name || ""}</div>
-      <div class="authorised-sign">Authorised Signatory</div>
-    </div>
-  </div>
+const renderChannelPartnersFooter = () => `
+          <!-- CHANNEL PARTNERS FOOTER -->
+          <div style="padding:4px 8px; border-top:1px solid #000;">
+            <span style="font-size:9px; font-weight:bold; color:#555;">Channel Partners for:</span><br/>
+            <div style="display:flex; align-items:center; justify-content:space-evenly; margin-top:3px; flex-wrap:wrap; gap:5px;">
+              ${renderChannelPartnerImgs()}
+            </div>
+          </div>`;
 
-  <!-- FOOTER -->
-  <div class="page-footer">
-    SUBJECT TO ${distributor?.stateId?.name?.toUpperCase() || "KOLKATA"} JURISDICTION ONLY &nbsp;|&nbsp; This is a Computer Generated Invoice
-  </div>
+const renderPageFooter = (pageNumber, totalPages, isLastPage) => `
+          <!-- PAGE NUMBER / CONTINUATION NOTICE AT BOTTOM -->
+          <div style="padding:3px 8px; text-align:center; font-size:9px; color:#555; border-top:1px solid #000;">
+            ${isLastPage
+    ? `Page ${pageNumber} of ${totalPages}`
+    : `Continue to Page No. ${pageNumber + 1}`
+  }
+          </div>`;
 
-</div>
-</body>
-</html>`;
+const generateBillHTML = (bill, options = {}) => {
+  const distributor = bill?.distributorId || {};
+  const retailer = bill?.retailerId || {};
+  const salesman = bill?.salesmanName || {};
+  const route = bill?.routeId || {};
+  const order = bill?.orderId || {};
+  const bankData = bill?.bankData || {};
+  const upiData = bill?.upiData || {};
+
+  const validLineItems = Array.isArray(bill?.lineItems)
+    ? bill.lineItems.filter((item) => (Number(item?.billQty) || 0) > 0)
+    : [];
+
+  // Gross Amount is now derived the same way as the Sales Order generator:
+  // the sum of each line item's taxableAmt (falling back to netAmt), rather
+  // than the bill's standalone grossAmount field.
+  const grossAmount = validLineItems.reduce((total, item) => {
+    return total + (Number(item?.taxableAmt || item?.netAmt) || 0);
+  }, 0);
+
+  // Taxable Amount is now read straight from the bill's taxableAmount
+  // field, the same source the Sales Order generator uses for its
+  // "Taxable Amount" summary row (instead of grossAmount - discount).
+  const taxableAmount = Number(bill?.taxableAmount || 0);
+
+  const invoiceAmount =
+    taxableAmount +
+    (Number(bill?.freightCharges) || 0) +
+    (Number(bill?.handlingCharges) || 0) +
+    (Number(bill?.cgst) || 0) +
+    (Number(bill?.sgst) || 0) +
+    (Number(bill?.igst) || 0);
+
+  const roundOffAmount = Math.round(invoiceAmount);
+  const netAmount = roundOffAmount - (Number(bill?.creditAmount) || 0);
+
+  // ---------------------------------------------------------------------
+  // Split line items into pages dynamically (see paginateLineItems above).
+  // The full header/details/summary/note/signature/footer block repeats on
+  // every page, same as the Sales Order generator.
+  // ---------------------------------------------------------------------
+  const pages = paginateLineItems(validLineItems);
+  const totalPages = pages.length;
+
+  const pagesHtml = pages
+    .map((itemsForPage, pageIndex) => {
+      const isLastPage = pageIndex === totalPages - 1;
+      const startIndex = pages
+        .slice(0, pageIndex)
+        .reduce((sum, p) => sum + p.length, 0);
+
+      return `
+      <div class="document-container" style="${isLastPage ? "" : "page-break-after: always;"}">
+        ${renderCompanyHeader(distributor, options)}
+        ${renderRetailerAndBillDetails(retailer, bill, order, salesman, route)}
+        ${renderItemsTable(itemsForPage, startIndex)}
+        ${renderSummarySection(bill, bankData, upiData, grossAmount, taxableAmount, invoiceAmount, roundOffAmount, netAmount)}
+        ${renderNoteAndSignature(distributor)}
+        ${renderChannelPartnersFooter()}
+        ${renderPageFooter(pageIndex + 1, totalPages, isLastPage)}
+      </div>`;
+    })
+    .join("\n");
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${escapeHtml(bill?.new_billno || bill?.billNo ? "Invoice_" + (bill.new_billno || bill.billNo) : "Invoice")}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 8mm 10mm;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+         body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: #000;
+  background: #fff;
 }
+          .document-container {
+            border: 1px solid #000;
+            width: 100%;
+            max-width: 210mm;
+            margin: 0 auto;
+            background: #fff;
+            position: relative;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          .details-table,
+          .items-table,
+          .summary-table,
+          .bank-table,
+          .signature-table {
+            border-bottom: 1px solid #000;
+          }
+          .details-table td,
+          .summary-table td,
+          .bank-table td,
+          .signature-table td {
+            vertical-align: top;
+            padding: 2px 4px;
+          }
+          .left-section {
+            width: 50%;
+            border-right: 1px solid #000;
+            padding: 4px 6px;
+          }
+          .right-section {
+            width: 50%;
+            padding: 4px 6px;
+          }
+          .items-table th {
+            border-right: 1px solid #000;
+            border-bottom: 1px solid #000;
+            padding: 3px 2px;
+            text-align: center;
+            font-weight: bold;
+            background: #f5f5f5;
+            font-size: 8.5px;
+          }
+          .items-table td {
+            border-right: 1px solid #000;
+            border-bottom: 1px solid #eee;
+            padding: 2px 2px;
+            font-size: 8.5px;
+          }
+          .items-table th:last-child,
+          .items-table td:last-child {
+            border-right: none;
+          }
+          .border-top-bold {
+            border-top: 2px solid #000;
+          }
+          .text-left  { text-align: left; }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .bold { font-weight: bold; }
+          .signature-line {
+            border-top: 1px solid #000;
+            width: 180px;
+            margin: 30px auto 0 auto;
+            padding-top: 4px;
+            text-align: center;
+          }
+
+          /* Prevent awkward page breaks */
+          .items-table tbody tr {
+            page-break-inside: avoid;
+          }
+
+          .items-table tbody tr:last-child {
+            page-break-after: avoid;
+          }
+
+          /* Keep header content together */
+          .document-container > div:first-child {
+            page-break-after: avoid;
+          }
+
+          /* Page break after table header */
+          .items-table thead {
+            page-break-after: avoid;
+          }
+
+          @media print {
+            body {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+
+            /* Hide print buttons */
+            .print-btn, .close-btn {
+              display: none !important;
+            }
+          }
+        </style>
+      </head>
+      <body>
+        ${pagesHtml}
+      </body>
+    </html>
+  `;
+};
 
 module.exports = generateBillHTML;
