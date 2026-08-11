@@ -1,7 +1,35 @@
 const asyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
+
+// FIX: "plant" is no longer required/used for Purchase Order line items.
+// Previously, if a line item had no plant assigned, the frontend sent
+// plant: "" (empty string), and Mongoose threw:
+//   "Cast to embedded failed for value ... plant: '' ... CastError"
+// because it tried (and failed) to cast "" to an ObjectId.
+// This helper strips out any plant value that isn't a valid ObjectId
+// (including "", null, undefined) so Mongoose never attempts that cast,
+// regardless of what the schema says.
+const sanitizeLineItems = (lineItems) => {
+  if (!Array.isArray(lineItems)) return lineItems;
+
+  return lineItems.map((item) => {
+    const cleaned = { ...item };
+
+    if (
+      !cleaned.plant ||
+      !mongoose.Types.ObjectId.isValid(cleaned.plant)
+    ) {
+      // Remove the key entirely instead of setting null, so it doesn't
+      // even get sent to Mongoose for casting.
+      delete cleaned.plant;
+    }
+
+    return cleaned;
+  });
+};
 
 // Update Purchase Order
 const updatePurchaseOrder = asyncHandler(async (req, res) => {
@@ -16,6 +44,12 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     // Add updater info to body
     req.body.updatedByType = "Distributor";
     req.body.updatedBy = req.user?._id || null;
+
+    // FIX: strip out invalid/empty "plant" values from line items so the
+    // update never throws a CastError on that field.
+    if (req.body.lineItems) {
+      req.body.lineItems = sanitizeLineItems(req.body.lineItems);
+    }
 
     let status = req.body.status || purchaseOrder.status;
     let config = {};
