@@ -12,10 +12,18 @@ const formatDate = (date) => {
   ).padStart(2, "0")}.${String(d.getFullYear()).slice(-2)}`;
 };
 
+
 const getProductFamilyKey = (item) => {
   const description = item.description || "";
-  const firstSegment = description.split("-")[0]?.trim();
-  return firstSegment || item.code || "";
+  const segments = description.split("-");
+
+  // Use the first 3 segments (e.g. "CPVC-P-15") instead of just the first
+  // ("CPVC"). This groups all size/SDR/length variants of the SAME pipe
+  // size together (15mm with 15mm, 20mm with 20mm, etc.), instead of
+  // dumping every CPVC item into one undifferentiated group.
+  const familyKey = segments.slice(0, 3).join("-").trim();
+
+  return familyKey || item.code || "";
 };
 
 const groupItemsByProduct = (items) => {
@@ -31,7 +39,14 @@ const groupItemsByProduct = (items) => {
     groups.get(key).push(item);
   });
 
-  return groupOrder.flatMap((key) => groups.get(key));
+  // Sort groups ascending. numeric:true makes "CPVC-P-15" sort before
+  // "CPVC-P-20" before "CPVC-P-25" ... correctly (numeric compare on the
+  // size segment), rather than lexical string sort.
+  const sortedGroupOrder = [...groupOrder].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+  );
+
+  return sortedGroupOrder.flatMap((key) => groups.get(key));
 };
 
 // Basic Rate = Basic Amt (grossAmt) divided by quantity. Uses delQty as the
