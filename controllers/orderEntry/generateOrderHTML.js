@@ -17,10 +17,10 @@ const getProductFamilyKey = (item) => {
   const description = item.description || "";
   const segments = description.split("-");
 
-  // Use the first 3 segments (e.g. "CPVC-P-15") instead of just the first
-  // ("CPVC"). This groups all size/SDR/length variants of the SAME pipe
-  // size together (15mm with 15mm, 20mm with 20mm, etc.), instead of
-  // dumping every CPVC item into one undifferentiated group.
+  // Use the first 3 segments so "SWR-P" and "SWR-F" (pipe vs fitting)
+  // are treated as DIFFERENT groups, not merged into one "SWR" bucket.
+  // e.g. "SWR-P-110MM-M/PLUS-CR-TYP-A-10FT-SS-5413" -> "SWR-P-110MM"
+  //      "COLUMN-P-32MM-10KG/CM2-V4-3M-W/S-4814"     -> "COLUMN-P-32MM"
   const familyKey = segments.slice(0, 3).join("-").trim();
 
   return familyKey || item.code || "";
@@ -39,9 +39,9 @@ const groupItemsByProduct = (items) => {
     groups.get(key).push(item);
   });
 
-  // Sort groups ascending. numeric:true makes "CPVC-P-15" sort before
-  // "CPVC-P-20" before "CPVC-P-25" ... correctly (numeric compare on the
-  // size segment), rather than lexical string sort.
+  // Sort the GROUPS alphabetically (ascending) — this is what puts
+  // "COLUMN-P-32MM" before "SWR-F-75MM" before "SWR-P-110MM" before
+  // "UPVC-F-25MM" before "UPVC-P-25MM".
   const sortedGroupOrder = [...groupOrder].sort((a, b) =>
     a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
   );
