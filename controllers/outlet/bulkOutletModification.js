@@ -105,6 +105,7 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
       ============================== */
       const updatableFields = {
         outletName: "Outlet Name",
+        sudoName: "Sudo Name",
         ownerName: "Owner Name",
         mobile2: "Alternate Number",
         whatsappNumber: "WhatsApp Number",
@@ -116,6 +117,7 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
         panNumber: "PAN Number",
         gstin: "GSTIN",
         retailerClass: "Retailer Class",
+        cso: "CSO",
       };
 
       Object.entries(updatableFields).forEach(([dbKey, csvKey]) => {
