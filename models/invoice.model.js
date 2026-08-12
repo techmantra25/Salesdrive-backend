@@ -96,7 +96,7 @@ const invoiceSchema = new mongoose.Schema(
     },
     purchaseOrderId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "PurchaseOrder",
+     ref: "PurchaseOrderEntry",
       required: true
     },
     soNumber: {
