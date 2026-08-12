@@ -249,10 +249,19 @@ const createEmployee = asyncHandler(async (req, res) => {
       throw new Error("Designation not found");
     }
 
-    if (designation?.parent_desg && !reporting_manager) {
-      res.status(400);
-      throw new Error("Reporting manager required for this designation");
-    }
+    // if (designation?.parent_desg && !reporting_manager) {
+    //   res.status(400);
+    //   throw new Error("Reporting manager required for this designation");
+    // }
+
+    if (designation?.name !== "RSM" && designation?.parent_desg && reporting_manager) {
+  const employeeMapping = await EmployeeMapping.create({
+    empId: employeeData?._id,
+    rmEmpId: reporting_manager,
+  });
+
+  // ...
+}
 
     // Create distributor mapping history for each distributor
 
