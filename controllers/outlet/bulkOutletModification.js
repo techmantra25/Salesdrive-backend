@@ -107,6 +107,7 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
         outletName: "Outlet Name",
         sudoName: "Sudo Name",
         ownerName: "Owner Name",
+        createdBy: "Created By",  
         mobile2: "Alternate Number",
         whatsappNumber: "WhatsApp Number",
         email: "Email",

@@ -554,6 +554,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       outletName: data.outletName.trim(),
       sudoName: data.sudoName?.trim() || null,
       ownerName: data.ownerName.trim(),
+      createBy: data.createdBy?.trim() || null,
 
       pin: data.pin || null,
 
@@ -640,11 +641,11 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       shipToPincode:
         data.shipToPincode || null,
 
-      createdBy: req.user?._id || null,
+      // createdBy: req.user?._id || null,
 
-      createdBy_type: req.user
-        ? "User"
-        : "Employee",
+      // createdBy_type: req.user
+      //   ? "User"
+      //   : "Employee",
     });
 
     return res.status(201).json({

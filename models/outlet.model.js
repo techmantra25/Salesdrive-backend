@@ -23,14 +23,14 @@ const outletSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      refPath: "createdBy_type",
-    },
-    createdBy_type: {
-      type: String,
-      enum: ["Employee", "User"],
-    },
+    // createdBy: {
+    //   type: mongoose.Schema.Types.ObjectId,
+    //   refPath: "createdBy_type",
+    // },
+    // createdBy_type: {
+    //   type: String,
+    //   enum: ["Employee", "User"],
+    // },
     employeeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Employee",
@@ -74,6 +74,9 @@ const outletSchema = new mongoose.Schema(
     ownerName: {
       type: String,
       required: true,
+    },
+    createdBy: {
+      type: String,
     },
     pin: {
       type: String,

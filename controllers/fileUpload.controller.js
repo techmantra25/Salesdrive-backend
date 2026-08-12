@@ -4002,6 +4002,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         sudoName: row["Sudo Name"]?.trim() || null,
                         cso: row["CSO"]?.trim() || null,
                         ownerName: row["Owner Name"].trim(),
+                        createdBy: row["Created By"]?.trim() || null,
                         pin: row["PIN"]?.trim() || null,
                         district: districtId,
                         mobile1: mobile1 || null,
@@ -4038,7 +4039,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         enrolledStatus: enrolledStatus,
                         shipToAddress: row["Ship To Address"]?.trim() || null,
                         shipToPincode: row["Ship To Pincode"]?.trim() || null,
-                        createdBy: req.user?._id || null,
+                        // createdBy: req.user?._id || null,
                         createdBy_type: req.user ? "User" : "Employee",
                       };
 
