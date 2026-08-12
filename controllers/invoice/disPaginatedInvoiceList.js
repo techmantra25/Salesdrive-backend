@@ -368,6 +368,14 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
       .sort({ date: -1 })
       .populate({ path: "distributorId", select: "" })
       .populate({
+        path: "purchaseOrderId",
+        select: "",
+        populate: {
+          path: "supplierId",
+          select: "supplierName supplierCode coCode supplierType",
+        },
+      })
+      .populate({
         path: "lineItems.product",
         select: "",
         populate: { path: "brand", select: "" },

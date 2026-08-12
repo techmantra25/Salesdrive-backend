@@ -5,6 +5,7 @@ const Transaction = require("../../models/transaction.model");
 const Invoice = require("../../models/invoice.model");
 const Distributor = require("../../models/distributor.model");
 const getInTransitQty = require("../../utils/getInTransitQty");
+const orderentry = require("../../models/orderEntry.model");
 
 // Maps frontend sort keys -> actual field paths in the aggregation pipeline.
 // Paths under "product." only exist after the $unwind stage.
@@ -44,7 +45,7 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       godownType,
       closingStockDate,
       stockType,
-      showZeroStock,
+      zeroStockFilter, // "true" (only zero) | "false" (hide zero) | undefined/"all" (no filter)
       sortField,
       sortOrder,
     } = req.query;
@@ -67,9 +68,9 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       matchStage.godownType = godownType;
     }
 
-    const showZeroStockBool = showZeroStock === "true" || showZeroStock === true;
-
-    if (!showZeroStockBool) {
+    if (zeroStockFilter === "false") {
+      // Hide zero-quantity items — only rows with positive qty for the
+      // selected stockType.
       if (stockType === "salable") {
         matchStage.$or = [
           { availableQty: { $gt: 0 } },
@@ -80,7 +81,37 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       } else if (stockType === "reserve") {
         matchStage.reservedQty = { $gt: 0 };
       }
+    } else if (zeroStockFilter === "true") {
+      // Show ONLY zero-quantity items for the selected stockType.
+      if (stockType === "salable") {
+        matchStage.$and = [
+          {
+            $or: [
+              { availableQty: { $lte: 0 } },
+              { availableQty: { $exists: false } },
+            ],
+          },
+          {
+            $or: [
+              { reservedQty: { $lte: 0 } },
+              { reservedQty: { $exists: false } },
+            ],
+          },
+        ];
+      } else if (stockType === "unsalable") {
+        matchStage.$or = [
+          { unsalableQty: { $lte: 0 } },
+          { unsalableQty: { $exists: false } },
+        ];
+      } else if (stockType === "reserve") {
+        matchStage.$or = [
+          { reservedQty: { $lte: 0 } },
+          { reservedQty: { $exists: false } },
+        ];
+      }
     }
+    // zeroStockFilter undefined or "all": no quantity filter applied —
+    // every row for the matched stockType is returned, zero or not.
 
     if (Object.keys(matchStage).length > 0) {
       pipeline.push({ $match: matchStage });
@@ -260,8 +291,62 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         })
       );
     }
+    // ---- Pending order qty enrichment (page-local, like closingStockCount) ----
+    // "Pending" orders (status: 'Pending', billIds: []) represent qty already
+    // requested but not yet billed — still counts as committed against stock.
+    // 'Completed_Billed' orders are excluded: that stock has already left
+    // inventory via the bill, so it's no longer "pending".
+    const PENDING_ORDER_STATUSES = ["Pending"]; // add more statuses here if needed, e.g. "Approved"
+
+    const pageProductIds = inventories.map((inv) => inv.productId);
+
+    if (pageProductIds.length > 0) {
+      const pendingOrderQtyPipeline = [
+        {
+          $match: {
+            distributorId: distributorId,
+            status: { $in: PENDING_ORDER_STATUSES },
+          },
+        },
+        { $unwind: "$lineItems" },
+        {
+          $match: {
+            "lineItems.product": { $in: pageProductIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$lineItems.product",
+            pendingOrderQty: { $sum: "$lineItems.oderQty" },
+          },
+        },
+      ];
+
+      const pendingOrderQtyResult = await orderentry.aggregate(
+        pendingOrderQtyPipeline
+      );
+
+      // Build a quick lookup map: productId (string) -> pendingOrderQty
+      const pendingQtyMap = {};
+      pendingOrderQtyResult.forEach((item) => {
+        pendingQtyMap[item._id.toString()] = item.pendingOrderQty;
+      });
+
+      inventories = inventories.map((invItem) => ({
+        ...invItem,
+        pendingOrderQty: pendingQtyMap[invItem.productId.toString()] || 0,
+      }));
+    } else {
+      inventories = inventories.map((invItem) => ({
+        ...invItem,
+        pendingOrderQty: 0,
+      }));
+    }
+    // ---- end pending order qty enrichment ----
 
     const resultInventories = inventories;
+
+
 
     // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;

@@ -11,6 +11,14 @@ const invoiceDetail = asyncHandler(async (req, res) => {
         select: "",
       })
       .populate({
+        path: "purchaseOrderId",
+        select: "",
+        populate: {
+          path: "supplierId",
+          select: "supplierName supplierCode coCode supplierType",
+        },
+      })
+      .populate({
         path: "lineItems.product",
         select: "",
         populate: {
