@@ -4,6 +4,7 @@ const Beat = require("../../models/beat.model");
 const State = require("../../models/state.model");
 const Employee = require("../../models/employee.model");
 const Region = require("../../models/region.model");
+const moment = require("moment-timezone");
 
 /* =============================
    HELPERS (UNCHANGED)
@@ -30,6 +31,41 @@ const parseSourceIds = (value) => {
     .map(v => v.trim())
     .filter(Boolean);
 };
+
+/* =============================
+   ENUMS (matches OutletApproved schema)
+============================== */
+const VALID_POTENTIAL_SELECTIONS = [
+  "Below 1 Lac",
+  "Upto 3 Lac",
+  "Upto 5 Lac",
+  "Upto 10 Lac",
+  "10 Lac & Above",
+];
+
+const VALID_PAYMENT_CATEGORIES = [
+  "Good",
+  "Normal",
+  "Follow up",
+  "Continuous Red",
+];
+
+const VALID_CATEGORIES_OF_OUTLET = [
+  "Retail",
+  "Wholesale",
+  "Project Consumer",
+  "Others",
+];
+
+const BIRTHDAY_FORMATS = [
+  "DD/MM/YYYY",
+  "MM/DD/YYYY",
+  "YYYY/MM/DD",
+  "YYYY-MM-DD",
+  "DD-MM-YYYY",
+  "MM-DD-YYYY",
+];
+
 /* =============================
    BULK OUTLET MODIFICATION
 ============================== */
@@ -130,6 +166,95 @@ const bulkOutletModification = asyncHandler(async (req, res) => {
           }
         }
       });
+
+      /* =============================
+         POTENTIAL (potentialSelection)
+      ============================== */
+      if (row["Potential"]?.toString().trim()) {
+        const potentialSelection = normalize(row["Potential"]);
+
+        if (!VALID_POTENTIAL_SELECTIONS.includes(potentialSelection)) {
+          rowErrors.push(
+            `Invalid Potential: ${potentialSelection}. Must be one of: ${VALID_POTENTIAL_SELECTIONS.join(
+              ", "
+            )}`
+          );
+        } else if (outlet.potentialSelection !== potentialSelection) {
+          outlet.potentialSelection = potentialSelection;
+          isUpdated = true;
+        }
+      }
+
+      /* =============================
+         PAYMENT CATEGORY
+      ============================== */
+      if (row["Payment Category"]?.toString().trim()) {
+        const paymentCategory = normalize(row["Payment Category"]);
+
+        if (!VALID_PAYMENT_CATEGORIES.includes(paymentCategory)) {
+          rowErrors.push(
+            `Invalid Payment Category: ${paymentCategory}. Must be one of: ${VALID_PAYMENT_CATEGORIES.join(
+              ", "
+            )}`
+          );
+        } else if (outlet.paymentCategory !== paymentCategory) {
+          outlet.paymentCategory = paymentCategory;
+          isUpdated = true;
+        }
+      }
+
+      /* =============================
+         CATEGORY OF OUTLET (multi-value)
+      ============================== */
+      if (row["Category of Outlet"]?.toString().trim()) {
+        const categoryOfOutlet = parseCsvList(row["Category of Outlet"]);
+
+        const invalidCategories = categoryOfOutlet.filter(
+          (cat) => !VALID_CATEGORIES_OF_OUTLET.includes(cat)
+        );
+
+        if (invalidCategories.length) {
+          rowErrors.push(
+            `Invalid Category of Outlet: ${invalidCategories.join(
+              ", "
+            )}. Must be one of: ${VALID_CATEGORIES_OF_OUTLET.join(", ")}`
+          );
+        } else {
+          const newCategories = [...categoryOfOutlet].sort();
+          const oldCategories = (outlet.categoryOfOutlet || [])
+            .slice()
+            .sort();
+
+          if (
+            JSON.stringify(newCategories) !== JSON.stringify(oldCategories)
+          ) {
+            outlet.categoryOfOutlet = categoryOfOutlet;
+            isUpdated = true;
+          }
+        }
+      }
+
+      /* =============================
+         BIRTHDAY
+      ============================== */
+      if (row["Birthday"]?.toString().trim()) {
+        const birthdayRaw = normalize(row["Birthday"]);
+        const parsedBirthday = moment(birthdayRaw, BIRTHDAY_FORMATS, true);
+
+        if (!parsedBirthday.isValid()) {
+          rowErrors.push(`Invalid Birthday format: ${birthdayRaw}`);
+        } else {
+          const newBirthday = parsedBirthday.toDate();
+          const oldBirthday = outlet.birthday
+            ? new Date(outlet.birthday)
+            : null;
+
+          if (!oldBirthday || oldBirthday.getTime() !== newBirthday.getTime()) {
+            outlet.birthday = newBirthday;
+            isUpdated = true;
+          }
+        }
+      }
 
       /* =============================
          SOURCE ID (APPEND ONLY + GLOBAL UNIQUE, MULTI)

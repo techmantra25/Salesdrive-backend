@@ -82,6 +82,127 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       }
     }
 
+    // ---------------- POTENTIAL SELECTION VALIDATION (NEW, OPTIONAL) ----------------
+    const validPotentialSelections = [
+      "Below 1 Lac",
+      "Upto 3 Lac",
+      "Upto 5 Lac",
+      "Upto 10 Lac",
+      "10 Lac & Above",
+    ];
+
+    let potentialSelectionToUpdate;
+
+    if (req.body.potentialSelection !== undefined) {
+      if (req.body.potentialSelection === null || req.body.potentialSelection === "") {
+        potentialSelectionToUpdate = null;
+      } else {
+        const potentialSelection = req.body.potentialSelection.toString().trim();
+
+        if (!validPotentialSelections.includes(potentialSelection)) {
+          res.status(400);
+          throw new Error(
+            `Invalid potential selection. Allowed values: ${validPotentialSelections.join(", ")}`
+          );
+        }
+
+        potentialSelectionToUpdate = potentialSelection;
+      }
+    }
+
+    // ---------------- PAYMENT CATEGORY VALIDATION (NEW, OPTIONAL) ----------------
+    const validPaymentCategories = ["Good", "Normal", "Follow up", "Continuous Red"];
+
+    let paymentCategoryToUpdate;
+
+    if (req.body.paymentCategory !== undefined) {
+      if (req.body.paymentCategory === null || req.body.paymentCategory === "") {
+        paymentCategoryToUpdate = null;
+      } else {
+        const paymentCategory = req.body.paymentCategory.toString().trim();
+
+        if (!validPaymentCategories.includes(paymentCategory)) {
+          res.status(400);
+          throw new Error(
+            `Invalid payment category. Allowed values: ${validPaymentCategories.join(", ")}`
+          );
+        }
+
+        paymentCategoryToUpdate = paymentCategory;
+      }
+    }
+
+    // ---------------- BIRTHDAY VALIDATION (NEW, OPTIONAL) ----------------
+    let birthdayToUpdate;
+
+    if (req.body.birthday !== undefined) {
+      if (req.body.birthday === null || req.body.birthday === "") {
+        birthdayToUpdate = null;
+      } else {
+        const parsedBirthday = new Date(req.body.birthday);
+
+        if (isNaN(parsedBirthday.getTime())) {
+          res.status(400);
+          throw new Error("Invalid birthday. Expected format: YYYY-MM-DD");
+        }
+
+        birthdayToUpdate = parsedBirthday;
+      }
+    }
+
+    // ---------------- CATEGORY OF OUTLET VALIDATION (NEW, matches schema array/enum) ----------------
+    // ---------------- CATEGORY OF OUTLET VALIDATION ----------------
+    // Case-insensitive match against the canonical enum, and silently drop
+    // any legacy/unknown values instead of blocking the whole edit request.
+    // This lets outlets with old dirty data (e.g. "RETAILER" from before the
+    // enum was tightened) get cleaned up automatically on the next save,
+    // rather than becoming permanently un-editable.
+    const validCategoriesOfOutlet = ["Retail", "Wholesale", "Project Consumer", "Others"];
+
+    let categoryOfOutletToUpdate;
+
+    if (req.body.categoryOfOutlet !== undefined) {
+      let categoryOfOutletRaw = [];
+
+      if (Array.isArray(req.body.categoryOfOutlet)) {
+        categoryOfOutletRaw = req.body.categoryOfOutlet
+          .map((item) => item?.toString().trim())
+          .filter(Boolean);
+      } else if (req.body.categoryOfOutlet) {
+        categoryOfOutletRaw = req.body.categoryOfOutlet
+          .toString()
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      const normalizedCategoryOfOutlet = [];
+      const droppedCategories = [];
+
+      categoryOfOutletRaw.forEach((cat) => {
+        const match = validCategoriesOfOutlet.find(
+          (valid) => valid.toLowerCase() === cat.toLowerCase()
+        );
+        if (match) {
+          if (!normalizedCategoryOfOutlet.includes(match)) {
+            normalizedCategoryOfOutlet.push(match);
+          }
+        } else {
+          droppedCategories.push(cat);
+        }
+      });
+
+      if (droppedCategories.length > 0) {
+        console.warn(
+          `Outlet ${outletAppId}: dropped invalid categoryOfOutlet value(s) [${droppedCategories.join(
+            ", "
+          )}] on edit`
+        );
+      }
+
+      categoryOfOutletToUpdate = normalizedCategoryOfOutlet;
+    }
+
     // =========================================================
     // PHONE NUMBER GLOBAL UNIQUENESS CHECK (ACTIVE OUTLETS ONLY)
     // =========================================================
@@ -180,7 +301,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "outletName",
       "sudoName",
       "ownerName",
-      "createdBy", 
+      "createdBy",
       "cso",
       "pin",
       "mobile1",
@@ -197,7 +318,6 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "gstin",
       "location",
       "gpsLocation",
-      "categoryOfOutlet",
       "contactPerson",
       "email",
       "retailerClass",
@@ -222,6 +342,23 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
         }
       }
     });
+
+    // ---------------- NEW FIELDS: potentialSelection, paymentCategory, birthday, categoryOfOutlet ----------------
+    if (potentialSelectionToUpdate !== undefined) {
+      updateFields.potentialSelection = potentialSelectionToUpdate;
+    }
+
+    if (paymentCategoryToUpdate !== undefined) {
+      updateFields.paymentCategory = paymentCategoryToUpdate;
+    }
+
+    if (birthdayToUpdate !== undefined) {
+      updateFields.birthday = birthdayToUpdate;
+    }
+
+    if (categoryOfOutletToUpdate !== undefined) {
+      updateFields.categoryOfOutlet = categoryOfOutletToUpdate;
+    }
 
     // ---------------- OBJECT ID FIELDS (UNCHANGED) ----------------
     const objectIdFields = {
@@ -270,14 +407,6 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       if (Array.isArray(req.body.teleCallingSlot)) {
         updateFields.teleCallingSlot = req.body.teleCallingSlot;
       }
-    }
-
-    if (
-      req.body.categoryOfOutlet &&
-      !["Economy", "Premium", "RETAILER"].includes(req.body.categoryOfOutlet)
-    ) {
-      res.status(400);
-      throw new Error("Invalid category of outlet");
     }
 
     if (
@@ -399,7 +528,3 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 });
 
 module.exports = { outletApprovedEdit };
-
-
-
-

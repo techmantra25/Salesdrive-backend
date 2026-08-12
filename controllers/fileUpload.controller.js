@@ -875,315 +875,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               break;
             }
 
-            // case "Price": {
-            //   console.log("Processing Price CSV");
-
-            //   // 1. Collect unique codes for batch DB queries (trimmed)
-            //   const regionCodes = new Set();
-            //   const productCodes = new Set();
-            //   const distributorCodes = new Set();
-
-            //   for (const row of results) {
-            //     if (row["Region Code"])
-            //       regionCodes.add(row["Region Code"].trim());
-            //     if (row["Product Code"])
-            //       productCodes.add(row["Product Code"].trim());
-            //     if (row["Distributor Code"])
-            //       distributorCodes.add(row["Distributor Code"].trim());
-            //   }
-
-            //   // 2. Fetch all required docs in parallel
-            //   const [regions, products, distributors] = await Promise.all([
-            //     Region.find({ code: { $in: Array.from(regionCodes) } })
-            //       .select("code _id")
-            //       .lean(),
-            //     Product.find({
-            //       product_code: { $in: Array.from(productCodes) },
-            //     })
-            //       .select("product_code _id")
-            //       .lean(),
-            //     Distributor.find({
-            //       dbCode: { $in: Array.from(distributorCodes) },
-            //     })
-            //       .select("dbCode _id")
-            //       .lean(),
-            //   ]);
-
-            //   // 3. Create lookup maps for quick access
-            //   const regionMap = new Map(
-            //     regions.map((r) => [r.code.trim(), r._id])
-            //   );
-            //   const productMap = new Map(
-            //     products.map((p) => [p.product_code.trim(), p._id])
-            //   );
-            //   const distributorMap = new Map(
-            //     distributors.map((d) => [d.dbCode.trim(), d._id])
-            //   );
-
-            //   // 4. Pre-validate rows and collect valid combinations for existing price lookup
-            //   const skippedRowsForPrice = [];
-            //   const preValidatedRows = [];
-            //   const dateToday = new Date();
-            //   const validCombinations = [];
-
-            //   for (const row of results) {
-            //     const regionCode = row["Region Code"]?.trim();
-            //     const productCode = row["Product Code"]?.trim();
-            //     const distributorCode = row["Distributor Code"]?.trim();
-            //     const mrp = row["MRP"]?.trim();
-            //     const effectiveDate = row["Effective Date"]?.trim();
-
-            //     // Basic field validation - for national pricing, region and distributor are not required
-            //     const isNationalPricing = !regionCode && !distributorCode;
-            //     if (!productCode || !mrp || !effectiveDate) {
-            //       skippedRowsForPrice.push({
-            //         ...row,
-            //         reason:
-            //           "Missing required fields (Product Code, MRP, Effective Date)",
-            //       });
-            //       continue;
-            //     }
-
-            //     // Entity existence validation
-            //     const regionId = regionCode ? regionMap.get(regionCode) : null;
-            //     const productId = productMap.get(productCode);
-            //     const distributorId = distributorCode
-            //       ? distributorMap.get(distributorCode)
-            //       : null;
-
-            //     if (!productId) {
-            //       skippedRowsForPrice.push({
-            //         ...row,
-            //         reason: "Product not found",
-            //       });
-            //       continue;
-            //     }
-
-            //     // For regional/distributor pricing, region is required
-            //     if (!isNationalPricing && !regionId) {
-            //       skippedRowsForPrice.push({
-            //         ...row,
-            //         reason:
-            //           "Region not found (required for regional/distributor pricing)",
-            //       });
-            //       continue;
-            //     }
-
-            //     // For distributor pricing, distributor must exist
-            //     if (distributorCode && !distributorId) {
-            //       skippedRowsForPrice.push({
-            //         ...row,
-            //         reason: "Distributor not found",
-            //       });
-            //       continue;
-            //     }
-
-            //     // Date validation
-            //     const parsedDate = moment(effectiveDate, "DD-MM-YYYY");
-            //     if (!parsedDate.isValid()) {
-            //       skippedRowsForPrice.push({
-            //         ...row,
-            //         reason: "Invalid Effective Date",
-            //       });
-            //       continue;
-            //     }
-            //     const effectiveDateParsed = moment
-            //       .tz(
-            //         parsedDate.format("YYYY-MM-DD"),
-            //         "YYYY-MM-DD",
-            //         "Asia/Kolkata"
-            //       )
-            //       .startOf("day")
-            //       .toDate();
-
-            //     // Note: Date validation will be done later after checking existing prices
-            //     // For now, just store the parsed date
-
-            //     // Determine price type based on what's provided
-            //     let priceType;
-            //     if (distributorCode) {
-            //       priceType = "distributor";
-            //     } else if (regionCode) {
-            //       priceType = "regional";
-            //     } else {
-            //       priceType = "national";
-            //     }
-
-            //     // Store pre-validated row
-            //     const validatedRow = {
-            //       ...row,
-            //       regionId,
-            //       productId,
-            //       distributorId,
-            //       priceType: priceType,
-            //       effectiveDate: effectiveDateParsed,
-            //     };
-
-            //     preValidatedRows.push(validatedRow);
-
-            //     // Collect combination for batch existing price lookup
-            //     validCombinations.push({
-            //       productId,
-            //       regionId: regionId || null,
-            //       distributorId,
-            //     });
-            //   }
-            //   console.log(
-            //     `Pre-validation complete: ${preValidatedRows.length} valid, ${skippedRowsForPrice.length} skipped (basic validation)`
-            //   );
-
-            //   // 5. Batch fetch all existing prices for valid combinations
-            //   let existingPricesMap = new Map();
-            //   if (validCombinations.length > 0) {
-            //     const existingPricesQuery = validCombinations.map((combo) => ({
-            //       productId: combo.productId,
-            //       regionId: combo.regionId,
-            //       distributorId: combo.distributorId,
-            //       status: true,
-            //     }));
-
-            //     const existingPrices = await Price.find({
-            //       $or: existingPricesQuery,
-            //     })
-            //       .select("productId regionId distributorId effective_date _id")
-            //       .sort({ effective_date: -1 })
-            //       .lean();
-
-            //     // Group existing prices by combination key
-            //     existingPrices.forEach((price) => {
-            //       const key = `${price.productId}_${price.regionId || "null"}_${price.distributorId || "null"
-            //         }`;
-            //       if (!existingPricesMap.has(key)) {
-            //         existingPricesMap.set(key, []);
-            //       }
-            //       existingPricesMap.get(key).push(price);
-            //     });
-            //   }
-
-            //   console.log(
-            //     `Found ${existingPricesMap.size} existing price combinations`
-            //   ); // 6. Final validation with existing price checks and date validation
-            //   const validRows = [];
-
-            //   for (const row of preValidatedRows) {
-            //     const combinationKey = `${row.productId}_${row.regionId || "null"
-            //       }_${row.distributorId || "null"}`;
-            //     const existingPrices =
-            //       existingPricesMap.get(combinationKey) || [];
-
-            //     // Date validation based on existing prices
-            //     if (existingPrices.length > 0) {
-            //       // If existing prices found, validate against latest price date
-            //       const latestPrice = existingPrices[0]; // Already sorted by effective_date desc
-
-            //       // Validate that new effective date is greater than latest existing price
-            //       if (
-            //         moment(latestPrice.effective_date)
-            //           .tz("Asia/Kolkata")
-            //           .isSameOrAfter(row.effectiveDate) &&
-            //         row.SkipEffectiveDateCheck == "1"
-            //       ) {
-            //         skippedRowsForPrice.push({
-            //           ...row,
-            //           reason:
-            //             "Price effective date should be greater than the latest existing price effective date",
-            //         });
-            //         continue;
-            //       }
-            //     } else {
-            //       // No existing prices found for this combination
-            //       // Allow effective date to be in the past, but still validate it's not too far in the future
-            //       // Only skip if the effective date is more than 1 year in the future (optional business rule)
-            //       const oneYearFromNow = moment(dateToday)
-            //         .add(1, "year")
-            //         .toDate();
-            //       if (row.effectiveDate > oneYearFromNow) {
-            //         skippedRowsForPrice.push({
-            //           ...row,
-            //           reason:
-            //             "Price effective date cannot be more than 1 year in the future",
-            //         });
-            //         continue;
-            //       }
-            //       // For new price combinations, effective date can be in the past or future (within reason)
-            //     }
-
-            //     // Add existing prices for later processing
-            //     validRows.push({
-            //       ...row,
-            //       existingPrices: existingPrices,
-            //     });
-            //   }
-            //   console.log(
-            //     `Final validation complete: ${validRows.length} valid for insertion, ${skippedRowsForPrice.length} total skipped`
-            //   ); // 7. Process valid rows and handle existing price expiration
-            //   let insertedPrices = [];
-            //   if (validRows.length > 0) {
-            //     // Generate all codes in batch for better performance
-            //     const codes = await generateCodesInBatch(
-            //       "PR",
-            //       validRows.length
-            //     );
-
-            //     const priceDocs = validRows.map((row, idx) => ({
-            //       code: codes[idx],
-            //       productId: row.productId,
-            //       price_type: row.priceType,
-            //       regionId: row.regionId,
-            //       mrp_price: row["MRP"],
-            //       dlp_price: row["DLP"] || null,
-            //       rlp_price: row["RLP"] || null,
-            //       effective_date: row.effectiveDate,
-            //       distributorId: row.distributorId || null,
-            //       createdBy: req.user._id,
-            //     }));
-
-            //     // Insert new prices
-            //     insertedPrices = await Price.insertMany(priceDocs);
-            //     console.log(`Inserted ${insertedPrices.length} new prices`);
-
-            //     // Prepare bulk updates for existing prices with expiration dates
-            //     const priceUpdates = [];
-            //     for (const row of validRows) {
-            //       if (row.existingPrices && row.existingPrices.length > 0) {
-            //         const expiresAt = moment(row.effectiveDate)
-            //           .tz("Asia/Kolkata")
-            //           .subtract(1, "day")
-            //           .endOf("day")
-            //           .toDate();
-
-            //         for (const existingPrice of row.existingPrices) {
-            //           priceUpdates.push({
-            //             updateOne: {
-            //               filter: { _id: existingPrice._id },
-            //               update: {
-            //                 $set: {
-            //                   expiresAt: existingPrice.expiresAt ?? expiresAt,
-            //                 },
-            //               },
-            //             },
-            //           });
-            //         }
-            //       }
-            //     }
-
-            //     // Execute bulk update for existing prices
-            //     if (priceUpdates.length > 0) {
-            //       await Price.bulkWrite(priceUpdates);
-            //       console.log(
-            //         `Updated ${priceUpdates.length} existing prices with expiration dates`
-            //       );
-            //     }
-            //   } else {
-            //     console.warn("No valid results to save after filtering");
-            //   }
-
-            //   // 8. Return results
-            //   resp = insertedPrices || [];
-            //   skippedRows = skippedRowsForPrice || [];
-
-            //   break;
-            // }
             case "Price": {
               console.log("Processing Price CSV");
 
@@ -2672,736 +2363,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               break;
             }
 
-            // case "outlet": {
-            //   console.log("Processing Outlet CSV");
-            //   const getMobile1 = (row) =>
-            //     (row["Mobile Number"] || row["Mobile 1"] || "")
-            //       .toString()
-            //       .trim();
-
-            //   const getMobile2 = (row) =>
-            //     (row["Alternate Number"] || row["Mobile 2"] || "")
-            //       .toString()
-            //       .trim();
-
-            //   // Batch processing configuration
-            //   const BATCH_SIZE = 1000;
-            //   let totalProcessed = 0;
-            //   let totalInserted = 0;
-            //   let totalSkipped = 0;
-
-            //   try {
-            //     // Step 1: Extract unique codes for batch DB queries
-            //     console.log("Extracting unique codes from CSV...");
-            //     const uniqueCodes = {
-            //       employees: new Set(),
-            //       beats: new Set(),
-            //       zones: new Set(),
-            //       states: new Set(),
-            //       regions: new Set(),
-            //       districts: new Set(),
-            //       brands: new Set(),
-            //       outlets: new Set(),
-            //       outletUIDs: new Set(),
-            //       mobiles: new Set(),
-            //     };
-
-            //     // Extract all unique codes from results
-            //     console.log(results);
-            //     results.forEach((row) => {
-            //       if (row["Employee Code"]?.trim())
-            //         uniqueCodes.employees.add(row["Employee Code"].trim());
-
-            //       if (row["Beat Code"]?.trim()) {
-            //         row["Beat Code"]
-            //           .split(",")
-            //           .map((code) => code.trim())
-            //           .filter(Boolean)
-            //           .forEach((code) => uniqueCodes.beats.add(code));
-            //       }
-
-            //       if (row["Zone Code"]?.trim())
-            //         uniqueCodes.zones.add(row["Zone Code"].trim());
-            //       if (row["State Code"]?.trim())
-            //         uniqueCodes.states.add(row["State Code"].trim());
-            //       if (row["District Code"]?.trim())
-            //         uniqueCodes.districts.add(row["District Code"].trim());
-            //       if (row["Brand Code"]?.trim())
-            //         uniqueCodes.brands.add(row["Brand Code"].trim());
-            //       if (row["Outlet Code"]?.trim())
-            //         uniqueCodes.outlets.add(row["Outlet Code"].trim());
-            //       if (row["Outlet UID"]?.trim())
-            //         uniqueCodes.outletUIDs.add(row["Outlet UID"].trim());
-
-            //       const mobile1 = getMobile1(row);
-            //       if (mobile1) uniqueCodes.mobiles.add(mobile1);
-            //     });
-
-            //     console.log(
-            //       `Found unique codes - Employees: ${uniqueCodes.employees.size}, Beats: ${uniqueCodes.beats.size}, Zones: ${uniqueCodes.zones.size}, States: ${uniqueCodes.states.size}, Districts: ${uniqueCodes.districts.size}, Brands: ${uniqueCodes.brands.size}, Outlets: ${uniqueCodes.outlets.size}, OutletUIDs: ${uniqueCodes.outletUIDs.size}, Mobiles: ${uniqueCodes.mobiles.size}`,
-            //     );
-
-            //     // Step 2: Batch fetch related entities
-            //     console.log("Fetching related entities from database...");
-            //     const [
-            //       employees,
-            //       beats,
-            //       zones,
-            //       states,
-            //       allRegions,
-            //       districts,
-            //       brands,
-            //       existingOutlets,
-            //       existingOutletsApproved,
-            //       existingOutletsWithMobiles,
-            //     ] = await Promise.all([
-            //       Employee.find({
-            //         empId: { $in: Array.from(uniqueCodes.employees) },
-            //       })
-            //         .select("empId _id")
-            //         .lean(),
-            //       Beat.find({ code: { $in: Array.from(uniqueCodes.beats) } })
-            //         .select("code _id regionId")
-            //         .lean(),
-
-            //       Zone.find({ code: { $in: Array.from(uniqueCodes.zones) } })
-            //         .select("code _id")
-            //         .lean(),
-            //       State.find({ slug: { $in: Array.from(uniqueCodes.states) } })
-            //         .select("slug _id")
-            //         .lean(),
-            //       Region.find().select("_id stateId").lean(),
-            //       District.find({
-            //         code: { $in: Array.from(uniqueCodes.districts) },
-            //       })
-            //         .select("code _id")
-            //         .lean(),
-            //       Brand.find({ code: { $in: Array.from(uniqueCodes.brands) } })
-            //         .select("code _id")
-            //         .lean(),
-            //       Outlet.find({
-            //         $or: [
-            //           { outletCode: { $in: Array.from(uniqueCodes.outlets) } },
-            //           {
-            //             outletUID: { $in: Array.from(uniqueCodes.outletUIDs) },
-            //           },
-            //         ],
-            //       })
-            //         .select("outletCode outletUID")
-            //         .lean(),
-            //       OutletApproved.find({
-            //         $or: [
-            //           { outletCode: { $in: Array.from(uniqueCodes.outlets) } },
-            //           {
-            //             outletUID: { $in: Array.from(uniqueCodes.outletUIDs) },
-            //           },
-            //         ],
-            //       })
-            //         .select("outletCode outletUID")
-            //         .lean(),
-            //       Outlet.find({
-            //         mobile1: {
-            //           $in: Array.from(uniqueCodes.mobiles),
-            //           $nin: [null, ""],
-            //         },
-            //       })
-            //         .select("mobile1")
-            //         .lean(),
-            //     ]);
-
-            //     // Step 3: Create lookup maps
-            //     const lookupMaps = {
-            //       employees: new Map(
-            //         employees.map((emp) => [emp.empId, emp._id]),
-            //       ),
-            //       beats: new Map(beats.map((beat) => [beat.code, beat._id])),
-            //       zones: new Map(zones.map((zone) => [zone.code, zone._id])),
-            //       states: new Map(
-            //         states.map((state) => [state.slug, state._id]),
-            //       ),
-            //       regionsByStateId: new Map(
-            //         allRegions.map((region) => [
-            //           region.stateId.toString(),
-            //           region._id,
-            //         ]),
-            //       ),
-            //       districts: new Map(
-            //         districts.map((district) => [district.code, district._id]),
-            //       ),
-            //       brands: new Map(
-            //         brands.map((brand) => [brand.code, brand._id]),
-            //       ),
-            //       existingOutletCodes: new Set(
-            //         existingOutlets
-            //           .map((outlet) => outlet.outletCode)
-            //           .filter(Boolean),
-            //       ),
-            //       existingOutletUIDs: new Set(
-            //         existingOutlets
-            //           .map((outlet) => outlet.outletUID)
-            //           .filter(Boolean),
-            //       ),
-            //       existingOutletCodesApproved: new Set(
-            //         existingOutletsApproved
-            //           .map((outlet) => outlet.outletCode)
-            //           .filter(Boolean),
-            //       ),
-            //       existingOutletUIDsApproved: new Set(
-            //         existingOutletsApproved
-            //           .map((outlet) => outlet.outletUID)
-            //           .filter(Boolean),
-            //       ),
-            //       existingMobile1s: new Set(
-            //         existingOutletsWithMobiles
-            //           .map((outlet) => outlet.mobile1)
-            //           .filter(Boolean),
-            //       ),
-            //     };
-
-            //     console.log("Lookup maps created successfully", lookupMaps);
-
-            //     // Required fields for outlet
-            //     const requiredFields = [
-            //       "Outlet Name",
-            //       "Owner Name",
-            //       "Beat Code",
-            //       "State Code",
-            //       "WhatsApp Number",
-            //     ];
-
-            //     // Step 4: Process data in batches
-            //     for (
-            //       let batchStart = 0;
-            //       batchStart < results.length;
-            //       batchStart += BATCH_SIZE
-            //     ) {
-            //       const batch = results.slice(
-            //         batchStart,
-            //         batchStart + BATCH_SIZE,
-            //       );
-            //       const outletsToInsert = [];
-
-            //       // Track duplicates within the current batch
-            //       const batchOutletCodes = new Set();
-            //       const batchOutletUIDs = new Set();
-            //       const batchMobile1s = new Set();
-
-            //       console.log(
-            //         `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1}/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1}-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
-            //       );
-
-            //       // Process each row in the batch
-            //       for (let i = 0; i < batch.length; i++) {
-            //         const row = batch[i];
-            //         const globalIndex = batchStart + i;
-            //         row.index = globalIndex + 1;
-            //         totalProcessed++;
-
-            //         // Quick validation for required fields
-            //         const missingFields = requiredFields.filter(
-            //           (field) => !row[field]?.trim(),
-            //         );
-
-            //         if (missingFields.length > 0) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Missing required fields: ${missingFields.join(", ")} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Handle outlet code
-            //         let outletCode = row["Outlet Code"]?.trim();
-            //         if (!outletCode) {
-            //           outletCode = await generateCode("OUT-CODE");
-            //         }
-
-            //         // Handle outlet UID
-            //         let outletUID = row["Outlet UID"]?.trim();
-            //         if (!outletUID) {
-            //           outletUID = await generateCode("OUT");
-            //         }
-
-            //         // Check for existing outlet code in database
-            //         if (lookupMaps.existingOutletCodes.has(outletCode)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Outlet with code ${outletCode} already exists at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Check for existing outlet UID in database
-            //         if (lookupMaps.existingOutletUIDs.has(outletUID)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Outlet with UID ${outletUID} already exists at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Check for existing outlet code in approved outlets
-            //         if (
-            //           lookupMaps.existingOutletCodesApproved.has(outletCode)
-            //         ) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Outlet with code ${outletCode} already exists in approved outlets at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Check for existing outlet UID in approved outlets
-            //         if (lookupMaps.existingOutletUIDsApproved.has(outletUID)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Outlet with UID ${outletUID} already exists in approved outlets at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Check for duplicates within current batch
-            //         if (batchOutletCodes.has(outletCode)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Duplicate outlet code ${outletCode} within current batch at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         if (batchOutletUIDs.has(outletUID)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Duplicate outlet UID ${outletUID} within current batch at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Check for duplicate mobile1
-            //         const mobile1 = getMobile1(row);
-
-            //         if (mobile1) {
-            //           console.log("Mobile NO", mobile1);
-            //           // Validate format
-            //           const mobileRegex = /^[6-9]\d{9}$/;
-            //           if (!mobileRegex.test(mobile1)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Invalid mobile number format: ${mobile1}. Must be a valid 10-digit Indian mobile number starting with 6-9 at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-
-            //           // Check if it already exists in database
-            //           if (lookupMaps.existingMobile1s.has(mobile1)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Outlet with mobile number ${mobile1} already exists in database at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-
-            //           // Check for duplicate within current batch
-            //           if (batchMobile1s.has(mobile1)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Duplicate mobile number ${mobile1} within current batch at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Validate Aadhar number (12 digits)
-            //         const aadharNumber = row["Aadhar Number"]?.trim();
-            //         if (aadharNumber) {
-            //           const aadharRegex = /^\d{12}$/;
-            //           if (!aadharRegex.test(aadharNumber)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Invalid Aadhaar number format: ${aadharNumber}. Must be a 12-digit number at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Validate PAN number (5 letters + 4 digits + 1 letter)
-            //         const panNumber = row["PAN Number"]?.trim();
-            //         if (panNumber) {
-            //           const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
-            //           if (!panRegex.test(panNumber)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Invalid PAN number format: ${panNumber}. Must be in format ABCDE1234F at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Validate GSTIN (15 character format)
-            //         const gstin = row["GSTIN"]?.trim();
-            //         if (gstin) {
-            //           const gstinRegex =
-            //             /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[0-9A-Z]{1}Z[0-9A-Z]{1}$/i;
-            //           if (!gstinRegex.test(gstin)) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Invalid GSTIN format: ${gstin}. Must be in valid 15-character GSTIN format at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Add to batch tracking sets
-            //         batchOutletCodes.add(outletCode);
-            //         batchOutletUIDs.add(outletUID);
-            //         if (mobile1) {
-            //           batchMobile1s.add(mobile1);
-            //           lookupMaps.existingMobile1s.add(mobile1);
-            //         }
-            //         lookupMaps.existingOutletCodes.add(outletCode);
-            //         lookupMaps.existingOutletUIDs.add(outletUID);
-
-            //         // Lookup foreign key references
-            //         const employeeId = lookupMaps.employees.get(
-            //           row["Employee Code"].trim(),
-            //         );
-
-            //         const stateId = lookupMaps.states.get(
-            //           row["State Code"].trim(),
-            //         );
-
-            //         // Optional references
-            //         const zoneId = row["Zone Code"]?.trim()
-            //           ? lookupMaps.zones.get(row["Zone Code"].trim())
-            //           : null;
-
-            //         // Get regionId from stateId lookup
-            //         const regionId = stateId
-            //           ? lookupMaps.regionsByStateId.get(stateId.toString())
-            //           : null;
-
-            //         // Handle distributor lookup
-            //         let distributorId = null;
-            //         if (row["Distributor Code"]?.trim()) {
-            //           const distributor = await Distributor.findOne({
-            //             dbCode: row["Distributor Code"].trim(),
-            //           })
-            //             .select("_id")
-            //             .lean();
-            //           distributorId = distributor?._id || null;
-            //         }
-
-            //         const districtId = row["District Code"]?.trim()
-            //           ? lookupMaps.districts.get(row["District Code"].trim())
-            //           : null;
-
-            //         // Validate required references - Multi beat parsing
-            //         const beatCodeRaw = row["Beat Code"];
-            //         const beatCodes = [
-            //           ...new Set(
-            //             beatCodeRaw
-            //               .split(",")
-            //               .map((code) => code.trim())
-            //               .filter(Boolean),
-            //           ),
-            //         ];
-
-            //         const beatIds = [];
-            //         const invalidBeatCodes = [];
-
-            //         beatCodes.forEach((code) => {
-            //           const beatObjectId = lookupMaps.beats.get(code);
-            //           if (!beatObjectId) {
-            //             invalidBeatCodes.push(code);
-            //           } else {
-            //             beatIds.push(beatObjectId);
-            //           }
-            //         });
-
-            //         if (invalidBeatCodes.length > 0) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Invalid Beat Code(s): ${invalidBeatCodes.join(", ")} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         if (!stateId) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `State not found for slug ${row["State Code"]} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Parse selling brands
-            //         let sellingBrands = [];
-            //         if (row["Brand Code"]?.trim()) {
-            //           const brandCodes = row["Brand Code"]
-            //             .split(",")
-            //             .map((code) => code.trim())
-            //             .filter((code) => code.length > 0);
-
-            //           sellingBrands = brandCodes
-            //             .map((code) => lookupMaps.brands.get(code))
-            //             .filter((id) => id !== undefined);
-
-            //           if (brandCodes.length > 0 && sellingBrands.length === 0) {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `No valid brands found for codes ${row["Brand Code"]} at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Validate category of outlet
-            //         const validCategories = ["ECONOMY", "PREMIUM", "RETAILER"];
-
-            //         const categoryOfOutlet =
-            //           row["Category Of Outlet"]?.trim()?.toUpperCase() ||
-            //           "RETAILER";
-
-            //         if (!validCategories.includes(categoryOfOutlet)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Invalid category of outlet: ${categoryOfOutlet}. Must be one of: ${validCategories.join(", ")}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Validate existing retailer
-            //         let existingRetailerBool = false;
-            //         const existingRetailer = row["Existing Retailer"]
-            //           ?.trim()
-            //           ?.toUpperCase();
-            //         if (existingRetailer) {
-            //           if (["TRUE", "YES", "1"].includes(existingRetailer)) {
-            //             existingRetailerBool = true;
-            //           } else if (
-            //             ["FALSE", "NO", "0"].includes(existingRetailer)
-            //           ) {
-            //             existingRetailerBool = false;
-            //           } else {
-            //             skippedRows.push({
-            //               ...row,
-            //               reason: `Invalid existing retailer value: ${existingRetailer}. Must be TRUE/FALSE, YES/NO, or 1/0 at row ${row.index}`,
-            //             });
-            //             totalSkipped++;
-            //             continue;
-            //           }
-            //         }
-
-            //         // Validate retailer class
-            //         const validRetailerClasses = ["A", "B", "C", "D"];
-            //         const retailerClass = row["Retailer Class"]
-            //           ?.trim()
-            //           ?.toUpperCase();
-            //         if (
-            //           retailerClass &&
-            //           !validRetailerClasses.includes(retailerClass)
-            //         ) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Invalid retailer class: ${retailerClass}. Must be one of: ${validRetailerClasses.join(", ")} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         // Validate enrolled status
-            //         const validEnrolledStatuses = ["ENROLLED", "NOT ENROLLED"];
-            //         const enrolledStatus =
-            //           row["Enrolled Status"]?.trim()?.toUpperCase() ||
-            //           "NOT ENROLLED";
-            //         if (!validEnrolledStatuses.includes(enrolledStatus)) {
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Invalid enrolled status: ${enrolledStatus}. Must be one of: ${validEnrolledStatuses.join(", ")} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //           continue;
-            //         }
-
-            //         try {
-            //           // Generate lead ID
-            //           const leadId = await generateCode("LD");
-            //           const mobile2 = getMobile2(row);
-
-            //           // Create outlet document
-            //           const outletDoc = {
-            //             leadId: leadId,
-            //             employeeId: employeeId,
-            //             zoneId: zoneId,
-            //             stateId: stateId,
-            //             regionId: regionId,
-            //             distributorId: distributorId,
-            //             outletCode: outletCode,
-            //             outletUID: outletUID,
-            //             outletName: row["Outlet Name"].trim(),
-            //             ownerName: row["Owner Name"].trim(),
-            //             pin: row["PIN"]?.trim() || null,
-            //             district: districtId,
-            //             mobile1: mobile1 || null,
-            //             mobile2: mobile2 || null,
-            //             whatsappNumber: row["WhatsApp Number"]?.trim() || null,
-            //             preferredLanguage:
-            //               row["Preferred Language"]?.trim() || null,
-            //             teleCallDay: row["Tele Call Day"]?.trim() || null,
-            //             beatId: beatIds,
-            //             address1: row["Address 1"]?.trim() || null,
-            //             address2: row["Address 2"]?.trim() || null,
-            //             marketCenter: row["Market Center"]?.trim() || null,
-            //             city: row["City"]?.trim() || null,
-            //             aadharNumber: row["Aadhar Number"]?.trim() || null,
-            //             panNumber: row["PAN Number"]?.trim() || null,
-            //             gstin: row["GSTIN"]?.trim() || null,
-            //             location: row["Location"]?.trim() || null,
-            //             gpsLocation: row["GPS Location"]?.trim() || null,
-            //             categoryOfOutlet: categoryOfOutlet,
-            //             sellingBrands: sellingBrands,
-            //             competitorBrands: row["Competitor Brands"]
-            //               ? row["Competitor Brands"]
-            //                 .split(",")
-            //                 .map((brand) => brand.trim())
-            //                 .filter((brand) => brand.length > 0)
-            //               : [],
-            //             existingRetailer: existingRetailerBool,
-            //             outletStatus: "Approved",
-            //             outletSource: "Admin",
-            //             remarks: row["Remarks"]?.trim() || null,
-            //             contactPerson: row["Contact Person"]?.trim() || null,
-            //             email: row["Email"]?.trim() || null,
-            //             retailerClass: retailerClass || null,
-            //             enrolledStatus: enrolledStatus,
-            //             shipToAddress: row["Ship To Address"]?.trim() || null,
-            //             shipToPincode: row["Ship To Pincode"]?.trim() || null,
-            //             createdBy: req.user?._id || null,
-            //             createdBy_type: req.user ? "User" : "Employee",
-            //           };
-
-            //           outletsToInsert.push(outletDoc);
-            //         } catch (error) {
-            //           console.error(
-            //             `Error processing row ${row.index}:`,
-            //             error.message,
-            //           );
-            //           skippedRows.push({
-            //             ...row,
-            //             reason: `Processing error: ${error.message} at row ${row.index}`,
-            //           });
-            //           totalSkipped++;
-            //         }
-            //       }
-
-            //       console.log(" OUTlet To IOnsert ", outletsToInsert);
-            //       console.log(" OUTlet To IOnsert ", outletsToInsert.length);
-
-            //       // Step 5: Bulk insert outlets
-            //       if (outletsToInsert.length > 0) {
-            //         try {
-            //           const insertResult = await OutletApproved.insertMany(
-            //             outletsToInsert,
-            //             {
-            //               ordered: false,
-            //               writeConcern: { w: 1, j: false },
-            //             },
-            //           );
-            //           console.log("Insert Result:", insertResult);
-
-            //           totalInserted += insertResult.length;
-            //           if (!resp) resp = [];
-            //           resp.push(...insertResult);
-
-            //           console.log(
-            //             `Batch inserted: ${insertResult.length} outlets (Total: ${totalInserted})`,
-            //           );
-            //         } catch (error) {
-            //           console.error(`Batch insert error:`, error.message);
-
-            //           if (error.writeErrors) {
-            //             const successCount =
-            //               outletsToInsert.length - error.writeErrors.length;
-            //             totalInserted += successCount;
-
-            //             // Add failed records to skipped
-            //             error.writeErrors.forEach((writeError) => {
-            //               const failedOutlet =
-            //                 outletsToInsert[writeError.index];
-            //               skippedRows.push({
-            //                 ...failedOutlet,
-            //                 reason: `Insert error: ${writeError.errmsg}`,
-            //                 index: writeError.index + 1,
-            //               });
-            //               totalSkipped++;
-            //             });
-            //           } else {
-            //             // Complete failure
-            //             outletsToInsert.forEach((outlet, index) => {
-            //               skippedRows.push({
-            //                 ...outlet,
-            //                 reason: `Insert error: ${error.message}`,
-            //                 index: index + 1,
-            //               });
-            //               totalSkipped++;
-            //             });
-            //           }
-            //         }
-            //       }
-
-            //       // Progress logging
-            //       const progress = (
-            //         ((batchStart + batch.length) / results.length) *
-            //         100
-            //       ).toFixed(1);
-            //       console.log(
-            //         `Batch completed. Progress: ${progress}% (${totalProcessed}/${results.length} processed, ${totalInserted} inserted, ${totalSkipped} skipped)`,
-            //       );
-
-            //       // Optional delay
-            //       if (batchStart + BATCH_SIZE < results.length) {
-            //         await new Promise((resolve) => setTimeout(resolve, 100));
-            //       }
-            //     }
-
-            //     console.log("\n=== OUTLET BULK UPLOAD SUMMARY ===");
-            //     console.log(`Total Processed: ${totalProcessed}`);
-            //     console.log(`Successfully Inserted: ${totalInserted}`);
-            //     console.log(`Skipped/Failed: ${totalSkipped}`);
-            //     console.log(
-            //       `Success Rate: ${((totalInserted / totalProcessed) * 100).toFixed(2)}%`,
-            //     );
-
-            //     // Set resp if nothing was inserted
-            //     if (!resp) resp = [];
-            //   } catch (error) {
-            //     console.error(
-            //       "Critical error during outlet processing:",
-            //       error,
-            //     );
-            //     throw error;
-            //   }
-
-            //   break;
-            // }
-
             case "outlet": {
               console.log("Processing Outlet CSV");
               const getMobile1 = (row) =>
@@ -3717,7 +2678,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     // Check for duplicate mobile1
                     const mobile1 = getMobile1(row);
 
-                    // CHANGED: Mobile 1 is now optional. Only validate if present.
+                    // Mobile 1 is optional. Only validate if present.
                     if (mobile1) {
                       console.log("Mobile NO", mobile1);
                       // Validate format
@@ -3914,17 +2875,140 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       }
                     }
 
-                    // Validate category of outlet
-                    const validCategories = ["ECONOMY", "PREMIUM", "RETAILER"];
+                    // ==============================================
+                    // Validate Category Of Outlet (now multi-value)
+                    // Matches the OutletApproved schema enum:
+                    // ["Retail", "Wholesale", "Project Consumer", "Others"]
+                    // Comma separated values are supported, e.g.
+                    // "Retail,Wholesale"
+                    // ==============================================
+                    const validCategories = [
+                      "Retail",
+                      "Wholesale",
+                      "Project Consumer",
+                      "Others",
+                    ];
 
-                    const categoryOfOutlet =
-                      row["Category Of Outlet"]?.trim()?.toUpperCase() ||
-                      "RETAILER";
+                    const categoryOfOutlet = row["Category of Outlet"]?.trim()
+                      ? row["Category of Outlet"]
+                        .split(",")
+                        .map((cat) => cat.trim())
+                        .filter(Boolean)
+                      : [];
 
-                    if (!validCategories.includes(categoryOfOutlet)) {
+                    const invalidCategories = categoryOfOutlet.filter(
+                      (cat) => !validCategories.includes(cat),
+                    );
+
+                    if (invalidCategories.length > 0) {
                       skippedRows.push({
                         ...row,
-                        reason: `Invalid category of outlet: ${categoryOfOutlet}. Must be one of: ${validCategories.join(", ")}`,
+                        reason: `Invalid category of outlet: ${invalidCategories.join(
+                          ", ",
+                        )}. Must be one of: ${validCategories.join(", ")} at row ${row.index}`,
+                      });
+                      totalSkipped++;
+                      continue;
+                    }
+
+                    // ==============================================
+                    // Validate Potential Selection (optional)
+                    // ==============================================
+                    const validPotentialSelections = [
+                      "Below 1 Lac",
+                      "Upto 3 Lac",
+                      "Upto 5 Lac",
+                      "Upto 10 Lac",
+                      "10 Lac & Above",
+                    ];
+
+                    const potentialSelection =
+                      row["Potential"]?.trim() || null;
+
+                    if (
+                      potentialSelection &&
+                      !validPotentialSelections.includes(potentialSelection)
+                    ) {
+                      skippedRows.push({
+                        ...row,
+                        reason: `Invalid potential selection: ${potentialSelection}. Must be one of: ${validPotentialSelections.join(
+                          ", ",
+                        )} at row ${row.index}`,
+                      });
+                      totalSkipped++;
+                      continue;
+                    }
+
+                    // ==============================================
+                    // Validate Payment Category (optional)
+                    // ==============================================
+                    const validPaymentCategories = [
+                      "Good",
+                      "Normal",
+                      "Follow up",
+                      "Continuous Red",
+                    ];
+
+                    const paymentCategory =
+                      row["Payment Category"]?.trim() || null;
+
+                    if (
+                      paymentCategory &&
+                      !validPaymentCategories.includes(paymentCategory)
+                    ) {
+                      skippedRows.push({
+                        ...row,
+                        reason: `Invalid payment category: ${paymentCategory}. Must be one of: ${validPaymentCategories.join(
+                          ", ",
+                        )} at row ${row.index}`,
+                      });
+                      totalSkipped++;
+                      continue;
+                    }
+
+                    // ==============================================
+                    // Parse Birthday (optional)
+                    // Accepts DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD,
+                    // DD-MM-YYYY formats
+                    // ==============================================
+                    let birthday = null;
+                    const birthdayRaw = row["Birthday"]?.trim();
+
+                    if (birthdayRaw) {
+                      const parsedBirthday = moment(
+                        birthdayRaw,
+                        [
+                          "DD/MM/YYYY",
+                          "MM/DD/YYYY",
+                          "YYYY/MM/DD",
+                          "YYYY-MM-DD",
+                          "DD-MM-YYYY",
+                          "MM-DD-YYYY",
+                        ],
+                        true,
+                      );
+
+                      if (!parsedBirthday.isValid()) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid Birthday format: ${birthdayRaw} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
+
+                      birthday = parsedBirthday.toDate();
+                    }
+
+                    // Validate category of outlet
+                    const validEnrolledStatuses = ["ENROLLED", "NOT ENROLLED"];
+                    const enrolledStatus =
+                      row["Enrolled Status"]?.trim()?.toUpperCase() ||
+                      "NOT ENROLLED";
+                    if (!validEnrolledStatuses.includes(enrolledStatus)) {
+                      skippedRows.push({
+                        ...row,
+                        reason: `Invalid enrolled status: ${enrolledStatus}. Must be one of: ${validEnrolledStatuses.join(", ")} at row ${row.index}`,
                       });
                       totalSkipped++;
                       continue;
@@ -3963,21 +3047,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     ) {
                       skippedRows.push({
                         ...row,
-                        reason: `Invalid retailer class: ${retailerClass}. Must be one of: ${validRetailerClasses.join(", ")}`,
-                      });
-                      totalSkipped++;
-                      continue;
-                    }
-
-                    // Validate enrolled status
-                    const validEnrolledStatuses = ["ENROLLED", "NOT ENROLLED"];
-                    const enrolledStatus =
-                      row["Enrolled Status"]?.trim()?.toUpperCase() ||
-                      "NOT ENROLLED";
-                    if (!validEnrolledStatuses.includes(enrolledStatus)) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid enrolled status: ${enrolledStatus}. Must be one of: ${validEnrolledStatuses.join(", ")}`,
+                        reason: `Invalid retailer class: ${retailerClass}. Must be one of: ${validRetailerClasses.join(", ")} at row ${row.index}`,
                       });
                       totalSkipped++;
                       continue;
@@ -4022,6 +3092,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         location: row["Location"]?.trim() || null,
                         gpsLocation: row["GPS Location"]?.trim() || null,
                         categoryOfOutlet: categoryOfOutlet,
+                        // NEW FIELDS
+                        potentialSelection: potentialSelection,
+                        birthday: birthday,
+                        paymentCategory: paymentCategory,
                         sellingBrands: sellingBrands,
                         competitorBrands: row["Competitor Brands"]
                           ? row["Competitor Brands"]

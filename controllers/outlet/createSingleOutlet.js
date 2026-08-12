@@ -370,26 +370,32 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       sellingBrands = brands.map((brand) => brand._id);
     }
 
-    // =========================
-    // CATEGORY VALIDATION
-    // =========================
 
     const validCategories = [
-      "ECONOMY",
-      "PREMIUM",
-      "RETAILER",
+      "Retail",
+      "Wholesale",
+      "Project Consumer",
+      "Others",
     ];
 
-    const categoryOfOutlet =
-      data.categoryOfOutlet?.trim()?.toUpperCase() ||
-      "RETAILER";
+    const categoryOfOutlet = data.categoryOfOutlet
+      ? data.categoryOfOutlet
+          .toString()
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
 
-    if (!validCategories.includes(categoryOfOutlet)) {
+    const invalidCategories = categoryOfOutlet.filter(
+      (cat) => !validCategories.includes(cat)
+    );
+
+    if (invalidCategories.length > 0) {
       return res.status(400).json({
         status: false,
-        message: `Invalid category. Allowed values: ${validCategories.join(
+        message: `Invalid category of outlet: ${invalidCategories.join(
           ", "
-        )}`,
+        )}. Allowed values: ${validCategories.join(", ")}`,
       });
     }
 
@@ -464,6 +470,76 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
           ", "
         )}`,
       });
+    }
+
+    // =========================
+    // POTENTIAL SELECTION VALIDATION (NEW, OPTIONAL)
+    // =========================
+
+    const validPotentialSelections = [
+      "Below 1 Lac",
+      "Upto 3 Lac",
+      "Upto 5 Lac",
+      "Upto 10 Lac",
+      "10 Lac & Above",
+    ];
+
+    const potentialSelection = data.potentialSelection?.trim() || null;
+
+    if (
+      potentialSelection &&
+      !validPotentialSelections.includes(potentialSelection)
+    ) {
+      return res.status(400).json({
+        status: false,
+        message: `Invalid potential selection. Allowed values: ${validPotentialSelections.join(
+          ", "
+        )}`,
+      });
+    }
+
+    // =========================
+    // PAYMENT CATEGORY VALIDATION (NEW, OPTIONAL)
+    // =========================
+
+    const validPaymentCategories = [
+      "Good",
+      "Normal",
+      "Follow up",
+      "Continuous Red",
+    ];
+
+    const paymentCategory = data.paymentCategory?.trim() || null;
+
+    if (
+      paymentCategory &&
+      !validPaymentCategories.includes(paymentCategory)
+    ) {
+      return res.status(400).json({
+        status: false,
+        message: `Invalid payment category. Allowed values: ${validPaymentCategories.join(
+          ", "
+        )}`,
+      });
+    }
+
+    // =========================
+    // BIRTHDAY (NEW, OPTIONAL)
+    // =========================
+
+    let birthday = null;
+
+    if (data.birthday) {
+      const parsedBirthday = new Date(data.birthday);
+
+      if (isNaN(parsedBirthday.getTime())) {
+        return res.status(400).json({
+          status: false,
+          message: "Invalid birthday. Expected format: YYYY-MM-DD",
+        });
+      }
+
+      birthday = parsedBirthday;
     }
 
     // =========================
@@ -554,7 +630,13 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       outletName: data.outletName.trim(),
       sudoName: data.sudoName?.trim() || null,
       ownerName: data.ownerName.trim(),
-      createBy: data.createdBy?.trim() || null,
+
+      createdBy: data.createdBy?.trim() || null,
+
+      // NEW FIELDS
+      potentialSelection,
+      birthday,
+      paymentCategory,
 
       pin: data.pin || null,
 
@@ -605,6 +687,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       gpsLocation:
         data.gpsLocation || null,
 
+      // CHANGED: now stores an array of values (see validation above)
       categoryOfOutlet,
 
       sellingBrands,
@@ -640,12 +723,6 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
 
       shipToPincode:
         data.shipToPincode || null,
-
-      // createdBy: req.user?._id || null,
-
-      // createdBy_type: req.user
-      //   ? "User"
-      //   : "Employee",
     });
 
     return res.status(201).json({

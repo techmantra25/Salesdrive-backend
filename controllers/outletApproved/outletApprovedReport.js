@@ -165,6 +165,10 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
       "Merged Points",
       "Wallet Balance",
       "Owner Name",
+      "Potential Selection",
+      "Birthday",
+      "Category of Outlet",
+      "Payment Category",
       "Mobile Number",
       "Alternate Number",
       "WhatsApp Number",
@@ -191,7 +195,7 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
       "Created Date",
       "Updated Date",
       "Status",
-      
+
     ];
 
     const csvStream = format({
@@ -236,6 +240,12 @@ const outletApprovedReport = asyncHandler(async (req, res) => {
         "Merged Points": outlet.mergedPoints || "",
         "Wallet Balance": outlet.currentPointBalance || 0,
         "Owner Name": outlet.ownerName || "",
+        "Potential Selection": outlet.potentialSelection || "",
+        "Birthday": formatDate(outlet.birthday),
+        "Category of Outlet": Array.isArray(outlet.categoryOfOutlet)
+          ? outlet.categoryOfOutlet.join(", ")
+          : outlet.categoryOfOutlet || "",
+        "Payment Category": outlet.paymentCategory || "",
         "Mobile Number": outlet.mobile1 || "",
         "Alternate Number": outlet.mobile2 || "",
         "WhatsApp Number": outlet.whatsappNumber || "",

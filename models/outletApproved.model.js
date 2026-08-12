@@ -170,8 +170,32 @@ const outletApprovedSchema = new mongoose.Schema(
       type: String,
     },
     categoryOfOutlet: {
+      type: [String],
+      enum: ["Retail", "Wholesale", "Project Consumer", "Others"],
+      default: [],
+    },
+    // NEW: potential business value bracket for the outlet
+    potentialSelection: {
       type: String,
-      enum: ["Economy", "Premium", "RETAILER"],
+      enum: [
+        "Below 1 Lac",
+        "Upto 3 Lac",
+        "Upto 5 Lac",
+        "Upto 10 Lac",
+        "10 Lac & Above",
+      ],
+      default: null,
+    },
+    // NEW: outlet owner's birthday
+    birthday: {
+      type: Date,
+      default: null,
+    },
+    // NEW: payment behaviour category
+    paymentCategory: {
+      type: String,
+      enum: ["Good", "Normal", "Follow up", "Continuous Red"],
+      default: null,
     },
     sellingBrands: {
       type: [mongoose.Schema.Types.ObjectId],
