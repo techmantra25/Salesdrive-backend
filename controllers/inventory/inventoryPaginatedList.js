@@ -5,6 +5,7 @@ const Transaction = require("../../models/transaction.model");
 const Invoice = require("../../models/invoice.model");
 const Distributor = require("../../models/distributor.model");
 const getInTransitQty = require("../../utils/getInTransitQty");
+const orderentry = require("../../models/orderEntry.model");
 
 // Maps frontend sort keys -> actual field paths in the aggregation pipeline.
 // Paths under "product." only exist after the $unwind stage.
@@ -290,8 +291,62 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         })
       );
     }
+    // ---- Pending order qty enrichment (page-local, like closingStockCount) ----
+    // "Pending" orders (status: 'Pending', billIds: []) represent qty already
+    // requested but not yet billed — still counts as committed against stock.
+    // 'Completed_Billed' orders are excluded: that stock has already left
+    // inventory via the bill, so it's no longer "pending".
+    const PENDING_ORDER_STATUSES = ["Pending"]; // add more statuses here if needed, e.g. "Approved"
+
+    const pageProductIds = inventories.map((inv) => inv.productId);
+
+    if (pageProductIds.length > 0) {
+      const pendingOrderQtyPipeline = [
+        {
+          $match: {
+            distributorId: distributorId,
+            status: { $in: PENDING_ORDER_STATUSES },
+          },
+        },
+        { $unwind: "$lineItems" },
+        {
+          $match: {
+            "lineItems.product": { $in: pageProductIds },
+          },
+        },
+        {
+          $group: {
+            _id: "$lineItems.product",
+            pendingOrderQty: { $sum: "$lineItems.oderQty" },
+          },
+        },
+      ];
+
+      const pendingOrderQtyResult = await orderentry.aggregate(
+        pendingOrderQtyPipeline
+      );
+
+      // Build a quick lookup map: productId (string) -> pendingOrderQty
+      const pendingQtyMap = {};
+      pendingOrderQtyResult.forEach((item) => {
+        pendingQtyMap[item._id.toString()] = item.pendingOrderQty;
+      });
+
+      inventories = inventories.map((invItem) => ({
+        ...invItem,
+        pendingOrderQty: pendingQtyMap[invItem.productId.toString()] || 0,
+      }));
+    } else {
+      inventories = inventories.map((invItem) => ({
+        ...invItem,
+        pendingOrderQty: 0,
+      }));
+    }
+    // ---- end pending order qty enrichment ----
 
     const resultInventories = inventories;
+
+
 
     // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;
