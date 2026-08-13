@@ -12,7 +12,7 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       fromDate,
       toDate,
       distributorId,
-      invoiceStatus, // renamed from approvedStatus -> now filters on invoicestatus
+      invoiceStatus, // "Pending" | "Partially-Invoiced" | "Complete-Invoiced"
       purchaseOrderId, // array
       purchaseOrderNo,
     } = req.query;
@@ -22,7 +22,7 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
     // Filter by status
     if (status) query.status = status;
 
-    // Filter by invoice status (all / Pending / Partially-Invoiced / Complete-Invoiced)
+    // Filter by invoice status (maps to the `invoicestatus` field on the document)
     if (invoiceStatus) {
       query.invoicestatus = invoiceStatus;
     }
@@ -91,9 +91,8 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         { path: "supplierId", select: "supplierName supplierCode" },
         {
           path: "lineItems.product",
-          // Added "uom" so the product's own base UOM (e.g. "bndl") is
-          // available to the report, separate from lineItemUOM (the UOM
-          // the order quantity was actually placed in, e.g. "box").
+          // "uom" is the product's own base UOM (e.g. "bndl"), separate
+          // from lineItemUOM (the UOM the order qty was placed in, e.g. "box").
           select:
             "name cat_id collection_id brand subBrand product_code no_of_pieces_in_a_box uom",
           populate: [
@@ -117,6 +116,9 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
           strictPopulate: false,
         },
       ])
+      // NOTE: lineItems.grnQty / lineItems.grnBoxQty are plain (non-ref)
+      // fields on the schema, so no populate() entry is needed for them —
+      // they come back automatically with the rest of each lineItem.
       .sort({ _id: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
