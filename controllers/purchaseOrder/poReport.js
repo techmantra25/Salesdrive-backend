@@ -53,6 +53,9 @@ const poReport = asyncHandler(async (req, res) => {
       filter.createdAt = { $lte: endOfDay };
     }
 
+    // Fixed: was `orderQty / piecesPerBox` called with lineItem?.oderQty
+    // (typo, that field doesn't exist on the schema — it's `orderQty`),
+    // so boxQty was always NaN and the fallback silently produced "NaN".
     const ConvertToBox = (orderQty, product, uom) => {
       const piecesPerBox = Number(product?.no_of_pieces_in_a_box) || 1;
       const boxQty = orderQty / piecesPerBox;
@@ -84,8 +87,11 @@ const poReport = asyncHandler(async (req, res) => {
       },
       {
         path: "lineItems.product",
+        // Added "uom" so the product's own base UOM (e.g. "bndl") is
+        // available for the report, separate from lineItemUOM (the UOM
+        // the order quantity was actually placed in, e.g. "box").
         select:
-          "name product_code cat_id collection_id brand no_of_pieces_in_a_box",
+          "name product_code cat_id collection_id brand no_of_pieces_in_a_box uom",
         populate: [
           { path: "cat_id", select: "name" },
           { path: "collection_id", select: "name" },
@@ -131,6 +137,8 @@ const poReport = asyncHandler(async (req, res) => {
       "UOM",
       "Order Qty (BOX)",
       "Order Qty (PCS)",
+      "GRN Qty (BOX)",
+      "GRN Qty (PCS)",
       "Stock Qty",
       "In-Transit Qty",
       "MRP",
@@ -181,6 +189,8 @@ const poReport = asyncHandler(async (req, res) => {
           UOM: "",
           "Order Qty (BOX)": "",
           "Order Qty (PCS)": "",
+          "GRN Qty (BOX)": "",
+          "GRN Qty (PCS)": "",
           "Stock Qty": "",
           "In-Transit Qty": "",
           MRP: "",
@@ -216,15 +226,21 @@ const poReport = asyncHandler(async (req, res) => {
             // Plant: lineItem?.plant?.plantName || "",
             "Product Code": lineItem?.product?.product_code || "",
             "Product Name": lineItem?.product?.name || "",
-            UOM: lineItem?.lineItemUOM || "",
+            // Fixed: now reads the product's own base UOM (e.g. "bndl")
+            // instead of lineItemUOM (the order-placement UOM, e.g. "box").
+            UOM: lineItem?.product?.uom || "",
             "Order Qty (BOX)":
               lineItem?.boxOrderQty ||
               ConvertToBox(
-                lineItem?.oderQty,
+                lineItem?.orderQty,
                 lineItem?.product,
                 lineItem?.lineItemUOM,
               ),
-            "Order Qty (PCS)": lineItem?.oderQty || "",
+            // Fixed typo: was lineItem?.oderQty (field doesn't exist on the
+            // schema), which meant this column was always blank.
+            "Order Qty (PCS)": lineItem?.orderQty || "",
+            "GRN Qty (BOX)": lineItem?.grnBoxQty || 0,
+            "GRN Qty (PCS)": lineItem?.grnQty || 0,
             "Stock Qty": lineItem?.inventoryId?.availableQty || "",
             "In-Transit Qty": lineItem?.inventoryId?.intransitQty || "",
             MRP: lineItem?.price?.mrp_price || "",

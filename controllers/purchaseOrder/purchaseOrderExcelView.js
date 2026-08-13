@@ -12,7 +12,7 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       fromDate,
       toDate,
       distributorId,
-      approvedStatus,
+      invoiceStatus, // renamed from approvedStatus -> now filters on invoicestatus
       purchaseOrderId, // array
       purchaseOrderNo,
     } = req.query;
@@ -22,8 +22,9 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
     // Filter by status
     if (status) query.status = status;
 
-    if (approvedStatus) {
-      query.approvedStatus = approvedStatus;
+    // Filter by invoice status (all / Pending / Partially-Invoiced / Complete-Invoiced)
+    if (invoiceStatus) {
+      query.invoicestatus = invoiceStatus;
     }
 
     if (purchaseOrderNo) {
@@ -61,8 +62,6 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         ),
       ];
 
-      console.log("Parsed Purchase Order IDs:", ids);
-
       if (ids.length > 0) {
         query._id = { $in: ids };
       } else {
@@ -92,8 +91,11 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         { path: "supplierId", select: "supplierName supplierCode" },
         {
           path: "lineItems.product",
+          // Added "uom" so the product's own base UOM (e.g. "bndl") is
+          // available to the report, separate from lineItemUOM (the UOM
+          // the order quantity was actually placed in, e.g. "box").
           select:
-            "name cat_id collection_id brand subBrand product_code no_of_pieces_in_a_box",
+            "name cat_id collection_id brand subBrand product_code no_of_pieces_in_a_box uom",
           populate: [
             { path: "cat_id", select: "name" },
             { path: "collection_id", select: "name" },
