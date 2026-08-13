@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Distributor = require("../../models/distributor.model");
+const Supplier = require("../../models/supplier.model"); // adjust path/name to your actual Supplier model
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
@@ -20,9 +21,6 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       totalLines,
       grossAmount,
       taxableAmount,
-      cgst,
-      sgst,
-      igst,
       netAmount,
       totalGSTAmount,
       remarks,
@@ -38,6 +36,29 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
     }
+
+    const supplier = await Supplier.findById(supplierId);
+    if (!supplier) {
+      return res.status(404).json({ message: "Supplier not found" });
+    }
+
+    // ✅ AUTHORITATIVE STATE COMPARISON — backend decides IGST vs CGST/SGST,
+    // never trusts frontend and never infers it from a product's static igst field.
+    const distributorStateId = distributor.stateId
+      ? distributor.stateId.toString()
+      : null;
+    const supplierStateId = supplier.stateId
+      ? supplier.stateId.toString()
+      : null;
+
+    if (!distributorStateId || !supplierStateId) {
+      return res.status(400).json({
+        message:
+          "Cannot determine GST type: distributor or supplier is missing a stateId",
+      });
+    }
+
+    const isInterState = distributorStateId !== supplierStateId;
 
     let config = {};
     try {
@@ -104,21 +125,19 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
         item.plant = null;
       }
 
-      // ✅ GST FROM PRODUCT
-      // 🔥 Convert product GST
-      let cgst = Number(product.cgst || 0);
-      let sgst = Number(product.sgst || 0);
-      let igst = Number(product.igst || 0);
+      // ✅ GST RATES come from the product's stored slabs,
+      // but WHICH slab applies (IGST vs CGST+SGST) is decided by state comparison, not by
+      // whether product.igst happens to be non-zero.
+      let productCgst = Number(product.cgst || 0);
+      let productSgst = Number(product.sgst || 0);
+      let productIgst = Number(product.igst || 0);
 
-      // 🔥 DEFAULT GST LOGIC
-      if (cgst === 0 && sgst === 0 && igst === 0) {
-        cgst = 9;
-        sgst = 9;
-        igst = 0;
+      // Fallback default slab if the product has no GST configured at all
+      if (productCgst === 0 && productSgst === 0 && productIgst === 0) {
+        productCgst = 9;
+        productSgst = 9;
+        productIgst = 18;
       }
-      item.cgst = cgst;
-      item.sgst = sgst;
-      item.igst = igst;
 
       item.l1Basic = Number(item.l1Basic || 0);
       item.orderQty = Number(item.orderQty || 0);
@@ -128,13 +147,21 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
 
       item.taxableAmt = soValue;
 
-      if (igst > 0) {
-        item.totalIGST = (soValue * igst) / 100;
+      if (isInterState) {
+        item.cgst = 0;
+        item.sgst = 0;
+        item.igst = productIgst;
+
         item.totalCGST = 0;
         item.totalSGST = 0;
+        item.totalIGST = (soValue * productIgst) / 100;
       } else {
-        item.totalCGST = (soValue * cgst) / 100;
-        item.totalSGST = (soValue * sgst) / 100;
+        item.cgst = productCgst;
+        item.sgst = productSgst;
+        item.igst = 0;
+
+        item.totalCGST = (soValue * productCgst) / 100;
+        item.totalSGST = (soValue * productSgst) / 100;
         item.totalIGST = 0;
       }
 
@@ -149,7 +176,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       item.netAmt = item.lineTotal;
     }
 
-    // 🔥 TOTAL CALCULATION (ADDED FIX)
+    // 🔥 TOTAL CALCULATION
     let totalCGST = 0;
     let totalSGST = 0;
     let totalIGST = 0;
@@ -169,7 +196,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     // Generate order number
     const orderNumber = await purchaseOrderNumberGenerator("PO");
 
-    // 🔥 SAVE (FIXED)
+    // 🔥 SAVE
     const newPurchaseOrder = new PurchaseOrder({
       distributorId,
       selectedBrand,
@@ -204,46 +231,22 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     const purchaseOrderId = savedPurchaseOrder._id;
 
     // Update Inventory In-Transit Qty
-for (const item of lineItems) {
-  await Inventory.findOneAndUpdate(
-    {
-      distributorId,
-      productId: item.product,
-    },
-    {
-      $inc: {
-        intransitQty: Number(item.orderQty || 0),
-      },
-    },
-    {
-      new: true,
+    for (const item of lineItems) {
+      await Inventory.findOneAndUpdate(
+        {
+          distributorId,
+          productId: item.product,
+        },
+        {
+          $inc: {
+            intransitQty: Number(item.orderQty || 0),
+          },
+        },
+        {
+          new: true,
+        }
+      );
     }
-  );
-}
-    // try {
-    //   await axios.get(
-    //     `${SERVER_URL}/api/v1/purchase-order/send-quotation/${purchaseOrderId}`
-    //   );
-    // } catch (error) {
-    //   await PurchaseOrder.findByIdAndUpdate(
-    //     purchaseOrderId,
-    //     {
-    //       $set: {
-    //         approvedStatus: "Not Approved",
-    //         approved_by: null,
-    //         approvedByType: null,
-    //         quotationSuccess: false,
-    //       },
-    //     },
-    //     { new: true }
-    //   );
-
-    //   res.status(400);
-    //   throw new Error(
-    //     `Error sending quotation: ${error?.response?.data?.message || error.message
-    //     }`
-    //   );
-    // }
 
     res.status(200).json({
       status: 200,
