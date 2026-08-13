@@ -10,6 +10,7 @@ const reasonSchema = new mongoose.Schema(
       type: String,
       enum: [
         "Order-To-Bill",
+        "Enquiry-Cancellation",
         "Order-Cancellation",
         "Bill-Cancellation",
         "Sales-Return",
