@@ -12,7 +12,7 @@ const orderentry = require("../../models/orderEntry.model");
 // "basePointTotal" is a computed field added via $addFields (see below).
 const SORTABLE_FIELDS = {
   product_code: "product.product_code",
-  size: "product.size",
+  product_type: "product.product_type",
   product: "product.name",
   availableQty: "availableQty",
   unsalableQty: "unsalableQty",
