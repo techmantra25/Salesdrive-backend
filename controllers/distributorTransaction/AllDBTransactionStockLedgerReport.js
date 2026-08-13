@@ -5,6 +5,7 @@ const StockLedger = require("../../models/stockLedger.model");
 const Distributor = require("../../models/distributor.model");
 const Brand = require("../../models/brand.model");
 const Product = require("../../models/product.model");
+const Price = require("../../models/price.model");
 
 const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
   try {
@@ -41,28 +42,6 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
 
     let distributorQuery = {};
 
-    // if (brandIds) {
-    //   if (brandIds === "all") {
-    //     const brandAll = await Brand.find({});
-    //     distributorQuery.brandId = {
-    //       $in: brandAll.map((b) => b._id.toString()),
-    //     };
-    //   } else {
-    //     const brandIdArray = brandIds.split(",").map((id) => id.trim());
-    //     distributorQuery.brandId = { $in: brandIdArray };
-    //   }
-    // }if (brandIds) {
-    //   if (brandIds === "all") {
-    //     const brandAll = await Brand.find({});
-    //     distributorQuery.brandId = {
-    //       $in: brandAll.map((b) => b._id.toString()),
-    //     };
-    //   } else {
-    //     const brandIdArray = brandIds.split(",").map((id) => id.trim());
-    //     distributorQuery.brandId = { $in: brandIdArray };
-    //   }
-    // }
-
     if (distributorIds && distributorIds !== "all") {
       distributorQuery._id = { $in: distributorIds.split(",") };
     }
@@ -89,21 +68,26 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
       "Date",
       "Distributor Code",
       "Distributor Name",
+      "State",
       "Item Code",
       "Item Desc",
+      "Product Type",
+      "Category",
+      "Segment",
       "Brand",
-      "State",
       "Opening Stock Balance",
-      "Opening Point Balance",
       "DB Opening Stock (+)",
+      "Opening Stock Price (Basic)",
       "Primary Purchase Stock (+)",
+      "Primary Purchase Price (Basic)",
       "Stock Adjustment (+-)",
       "Secondary Sales Stock (-)",
+      "Secondary Sales Price (Basic)",
       "Secondary Sales Return (+)",
+      "Secondary Sales Return Price (Basic)",
       "Primary Purchase Return (-)",
-      "Points",
+      "Primary Purchase Return Price (Basic)",
       "Closing Stock",
-      "Closing Point",
     ];
 
     const fileName = `stock-ledger-${moment()
@@ -125,13 +109,11 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
 
       /* ---------- FIND ALL PRODUCTS WITH LEDGER ENTRIES --------- */
 
-      // Get products that have transactions in date range
       const productsInRange = await StockLedger.distinct("productId", {
         distributorId: distributorIdObj,
         date: { $gte: startOfDay, $lte: endOfDay },
       });
 
-      // Get products that have opening stock (last transaction before startDate > 0)
       const productsWithOpeningStock = await StockLedger.aggregate([
         {
           $match: {
@@ -154,32 +136,38 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
 
       const productIdsWithStock = productsWithOpeningStock.map((p) => p._id);
 
-      // Combine both sets
       const allProductIds = [
         ...new Set([...productsInRange, ...productIdsWithStock]),
       ];
 
       if (!allProductIds.length) continue;
 
-      // Fetch product details
-      //old code
-      // const products = await Product.find({
-      //   _id: { $in: allProductIds },
-      // }).select("name product_code base_point").populate("brand","name");
-
+      // Fetch product details (now including cat_id and subBrand for Category/Segment)
       const products = await Product.find({
         _id: { $in: allProductIds },
         ...(brandIds && brandIds !== "all"
           ? { brand: { $in: brandIds.split(",").map((id) => id.trim()) } }
           : {}),
       })
-        .select("name product_code base_point brand")
-        .populate("brand", "name");
+        .select("name product_code base_point brand cat_id subBrand product_type")
+        .populate("brand", "name")
+        .populate("cat_id", "name")
+        .populate("subBrand", "name");
 
       /* ---------- PROCESS EACH PRODUCT -------------------------- */
 
       for (const product of products) {
         const productIdObj = product._id;
+
+        // Fetch the latest active price for this product ("Basic" = rlp_price)
+        const priceDoc = await Price.findOne({
+          productId: productIdObj,
+          status: true,
+        }).sort({ effective_date: -1, createdAt: -1 });
+
+        const basicPrice = priceDoc?.rlp_price
+          ? parseFloat(priceDoc.rlp_price) || 0
+          : 0;
 
         // Fetch all ledger entries for this product in date range
         const ledgerEntries = await StockLedger.find({
@@ -208,9 +196,6 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
 
         const initialOpeningStock = openingAgg[0]?.totalQty || 0;
         const initialOpeningPoints = openingAgg[0]?.totalPoints || 0;
-
-        // const initialOpeningStock = openingEntry?.closingStock || 0;
-        // const initialOpeningPoints = openingEntry?.closingPoints || 0;
 
         // Skip if no opening stock and no transactions in range
         if (initialOpeningStock === 0 && !ledgerEntries.length) {
@@ -286,41 +271,63 @@ const dbTransactionStockLedgerReport = asyncHandler(async (req, res) => {
             }
           });
 
-          // Get closing balances from last entry of the day
+          // Get closing balances
           let closingStock =
             runningOpeningStock +
             dbOpeningStock +
             primaryPurchaseStock +
             stockAdjustment +
-            secondarySalesStock + // already negative for deliveries
+            secondarySalesStock +
             secondarySalesReturn +
-            primaryPurchaseReturn; // already negative for purchase returns
+            primaryPurchaseReturn;
 
           let closingPoints = runningOpeningPoints + totalPointsForDay;
+
+          // "Basic" price columns = qty for that bucket * latest active rlp_price
+          const openingStockPriceBasic = Number(
+            (dbOpeningStock * basicPrice).toFixed(2),
+          );
+          const primaryPurchasePriceBasic = Number(
+            (primaryPurchaseStock * basicPrice).toFixed(2),
+          );
+          const secondarySalesPriceBasic = Number(
+            (secondarySalesStock * basicPrice).toFixed(2),
+          );
+          const secondarySalesReturnPriceBasic = Number(
+            (secondarySalesReturn * basicPrice).toFixed(2),
+          );
+          const primaryPurchaseReturnPriceBasic = Number(
+            (primaryPurchaseReturn * basicPrice).toFixed(2),
+          );
 
           // Write CSV row
           csvStream.write({
             Date: currentDate.format("DD-MM-YYYY"),
             "Distributor Code": distributor.dbCode || "",
             "Distributor Name": distributor.name || "",
+            State: distributor.stateId?.name || "",
             "Item Code": product.product_code || "",
             "Item Desc": product.name || "",
+            "Product Type": product.product_type || "",
+            Category: product.cat_id?.name || "",
+            Segment: product.subBrand?.name || "",
             Brand: product.brand?.name || "",
-            State: distributor.stateId?.name || "",
             "Opening Stock Balance": runningOpeningStock,
-            "Opening Point Balance": runningOpeningPoints,
             "DB Opening Stock (+)": dbOpeningStock,
+            "Opening Stock Price (Basic)": openingStockPriceBasic,
             "Primary Purchase Stock (+)": primaryPurchaseStock,
+            "Primary Purchase Price (Basic)": primaryPurchasePriceBasic,
             "Stock Adjustment (+-)": stockAdjustment,
             "Secondary Sales Stock (-)": secondarySalesStock,
+            "Secondary Sales Price (Basic)": secondarySalesPriceBasic,
             "Secondary Sales Return (+)": secondarySalesReturn,
+            "Secondary Sales Return Price (Basic)": secondarySalesReturnPriceBasic,
             "Primary Purchase Return (-)": primaryPurchaseReturn,
-            Points: totalPointsForDay,
+            "Primary Purchase Return Price (Basic)": primaryPurchaseReturnPriceBasic,
             "Closing Stock": closingStock,
-            "Closing Point": closingPoints,
           });
 
-          // Update running balances for next day
+          // Update running balances for next day (still tracked internally for calc, just not in CSV)
           runningOpeningStock = closingStock;
           runningOpeningPoints = closingPoints;
 
