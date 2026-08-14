@@ -663,8 +663,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const productsToInsert = [];
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
-                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
+                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${
+                      batchStart + 1
                     }-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
                   );
 
@@ -954,7 +956,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const distributorCode = null;
                 const mrp = row["MRP"];
                 const hasCsvMrp =
-                  mrp !== undefined && mrp !== null && String(mrp).trim() !== "";
+                  mrp !== undefined &&
+                  mrp !== null &&
+                  String(mrp).trim() !== "";
                 const L1DiscountPercentage = row["L1(%)"];
                 const L2DiscountPercentage = row["L2(%)"];
                 const effectiveDate = row["Effective Date"]
@@ -1132,9 +1136,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 existingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"
-                    }_${price.distributorId || "null"
-                    }`;
+                  const key = `${price.productId}_${price.price_type}_${
+                    price.regionId || "null"
+                  }_${price.distributorId || "null"}`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1148,8 +1152,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
-                  }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1455,11 +1460,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Date validation
                 let effectiveDateParsed = todayStart;
                 if (effectiveDate) {
-                  const parsedDate = moment(
-                    effectiveDate,
-                    "DD-MM-YYYY",
-                    true,
-                  );
+                  const parsedDate = moment(effectiveDate, "DD-MM-YYYY", true);
                   if (!parsedDate.isValid()) {
                     skippedRowsForPrice.push({
                       ...row,
@@ -1571,8 +1572,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 activeExistingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${price.distributorId || "null"
-                    }`;
+                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${
+                    price.distributorId || "null"
+                  }`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1586,8 +1588,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
-                  }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1734,6 +1737,348 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               break;
             }
+            // case "price-collection": {
+            //   console.log("Processing Collection Price CSV");
+
+            //   const collectionCodes = new Set();
+            //   const skippedRowsForCollectionPrice = [];
+
+            //   for (const row of results) {
+            //     if (row["Collection Code"]) {
+            //       collectionCodes.add(String(row["Collection Code"]).trim());
+            //     }
+            //   }
+
+            //   const collections = await Collection.find({
+            //     code: { $in: Array.from(collectionCodes) },
+            //   })
+            //     .select("code _id")
+            //     .lean();
+
+            //   const collectionMap = new Map(
+            //     collections.map((collection) => [
+            //       String(collection.code).trim(),
+            //       collection._id,
+            //     ]),
+            //   );
+
+            //   const products = await Product.find({
+            //     collection_id: { $in: collections.map((item) => item._id) },
+            //   })
+            //     .select("collection_id product_code _id")
+            //     .lean();
+
+            //   const productsByCollectionId = new Map();
+            //   products.forEach((product) => {
+            //     const collectionIdKey = String(product.collection_id);
+            //     if (!productsByCollectionId.has(collectionIdKey)) {
+            //       productsByCollectionId.set(collectionIdKey, []);
+            //     }
+            //     productsByCollectionId.get(collectionIdKey).push(product);
+            //   });
+
+            //   const priceUpdates = [];
+            //   const updatedPriceIds = new Set();
+            //   const newPriceDocs = [];
+            //   let totalProductsMatched = 0;
+            //   let totalPricesMatched = 0;
+            //   const now = new Date();
+
+            //   for (const row of results) {
+            //     const collectionCode = row["Collection Code"]
+            //       ? String(row["Collection Code"]).trim()
+            //       : "";
+            //     const L1DiscountPercentage = row["L1(%)"];
+            //     const L2DiscountPercentage = row["L2(%)"];
+            //     const L1DiscountPercentageNumber = Number(
+            //       L1DiscountPercentage || 0,
+            //     );
+            //     const L2DiscountPercentageNumber = Number(
+            //       L2DiscountPercentage || 0,
+            //     );
+
+            //     if (!collectionCode) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Missing required fields (Collection Code)",
+            //       });
+            //       continue;
+            //     }
+
+            //     if (
+            //       !Number.isFinite(L1DiscountPercentageNumber) ||
+            //       L1DiscountPercentageNumber < 0 ||
+            //       L1DiscountPercentageNumber > 100
+            //     ) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Invalid L1 Discount Percentage",
+            //       });
+            //       continue;
+            //     }
+
+            //     if (
+            //       !Number.isFinite(L2DiscountPercentageNumber) ||
+            //       L2DiscountPercentageNumber < 0 ||
+            //       L2DiscountPercentageNumber > 100
+            //     ) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Invalid L2 Discount Percentage",
+            //       });
+            //       continue;
+            //     }
+
+            //     const collectionId = collectionMap.get(collectionCode);
+            //     if (!collectionId) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Collection not found",
+            //       });
+            //       continue;
+            //     }
+
+            //     const effectiveDate = row["Effective Date"]
+            //       ? String(row["Effective Date"]).trim()
+            //       : "";
+            //     if (!effectiveDate) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Missing required fields (Effective Date)",
+            //       });
+            //       continue;
+            //     }
+
+            //     const parsedEff = moment(effectiveDate, "DD-MM-YYYY");
+            //     if (!parsedEff.isValid()) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "Invalid Effective Date",
+            //       });
+            //       continue;
+            //     }
+
+            //     const effectiveDateParsed = moment
+            //       .tz(parsedEff.format("YYYY-MM-DD"), "YYYY-MM-DD", "Asia/Kolkata")
+            //       .startOf("day")
+            //       .toDate();
+            //     const todayStart = moment(now)
+            //       .tz("Asia/Kolkata")
+            //       .startOf("day")
+            //       .toDate();
+
+            //     const matchedProducts =
+            //       productsByCollectionId.get(String(collectionId)) || [];
+
+            //     if (matchedProducts.length === 0) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason: "No products found for collection",
+            //       });
+            //       continue;
+            //     }
+
+            //     totalProductsMatched += matchedProducts.length;
+            //     const productIds = matchedProducts.map((product) => product._id);
+            //     const activePrices = await Price.find({
+            //       productId: { $in: productIds },
+            //       price_type: "national",
+            //       regionId: null,
+            //       distributorId: null,
+            //       status: true,
+            //       $or: [
+            //         { expiresAt: { $exists: false } },
+            //         { expiresAt: null },
+            //         { expiresAt: { $gte: now } },
+            //       ],
+            //     })
+            //       .select("_id mrp_price effective_date expiresAt productId status")
+            //       .lean();
+
+            //     if (activePrices.length === 0) {
+            //       skippedRowsForCollectionPrice.push({
+            //         ...row,
+            //         reason:
+            //           "No active national prices found for collection products",
+            //       });
+            //       continue;
+            //     }
+
+            //     const pricesByProduct = new Map();
+            //     activePrices.forEach((price) => {
+            //       const key = String(price.productId);
+            //       if (!pricesByProduct.has(key)) {
+            //         pricesByProduct.set(key, []);
+            //       }
+            //       pricesByProduct.get(key).push(price);
+            //     });
+
+            //     for (const product of matchedProducts) {
+            //       const productKey = String(product._id);
+            //       const productPrices = pricesByProduct.get(productKey) || [];
+            //       if (productPrices.length === 0) {
+            //         skippedRowsForCollectionPrice.push({
+            //           ...row,
+            //           reason: `No active national price found for product ${String(
+            //             product.product_code || product._id,
+            //           )}`,
+            //         });
+            //         continue;
+            //       }
+
+            //       const sortedPrices = productPrices.sort(
+            //         (a, b) => new Date(b.effective_date) - new Date(a.effective_date),
+            //       );
+            //       const latestPrice = sortedPrices[0];
+            //       const mrpNumber = Number(latestPrice.mrp_price);
+
+            //       if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
+            //         skippedRowsForCollectionPrice.push({
+            //           ...row,
+            //           reason: "Invalid MRP price on existing national price",
+            //         });
+            //         continue;
+            //       }
+
+            //       const sameEffectivePrices = productPrices.filter((price) =>
+            //         moment(price.effective_date)
+            //           .tz("Asia/Kolkata")
+            //           .isSame(effectiveDateParsed, "day"),
+            //       );
+
+            //       const dlpPrice = Number(
+            //         (
+            //           mrpNumber -
+            //           (mrpNumber * L1DiscountPercentageNumber) / 100
+            //         ).toFixed(2),
+            //       );
+            //       const rlpPrice = Number(
+            //         (
+            //           mrpNumber -
+            //           (mrpNumber * L2DiscountPercentageNumber) / 100
+            //         ).toFixed(2),
+            //       );
+
+            //       if (sameEffectivePrices.length > 0) {
+            //         sameEffectivePrices.forEach((price) => {
+            //           priceUpdates.push({
+            //             updateOne: {
+            //               filter: { _id: price._id },
+            //               update: {
+            //                 $set: {
+            //                   dlp_price: dlpPrice,
+            //                   rlp_price: rlpPrice,
+            //                   L1DiscountPercentage: L1DiscountPercentageNumber,
+            //                   L2DiscountPercentage: L2DiscountPercentageNumber,
+            //                   effective_date: effectiveDateParsed,
+            //                 },
+            //               },
+            //             },
+            //           });
+            //           updatedPriceIds.add(String(price._id));
+            //           totalPricesMatched += 1;
+            //         });
+            //         continue;
+            //       }
+
+            //       if (effectiveDateParsed <= todayStart) {
+            //         skippedRowsForCollectionPrice.push({
+            //           ...row,
+            //           reason:
+            //             "Price effective date should be greater than the current date",
+            //         });
+            //         continue;
+            //       }
+
+            //       if (
+            //         moment(latestPrice.effective_date)
+            //           .tz("Asia/Kolkata")
+            //           .isSameOrAfter(effectiveDateParsed)
+            //       ) {
+            //         skippedRowsForCollectionPrice.push({
+            //           ...row,
+            //           reason:
+            //             "Price effective date should be greater than the latest existing price effective date",
+            //         });
+            //         continue;
+            //       }
+
+            //       const expiresAt = moment(effectiveDateParsed)
+            //         .tz("Asia/Kolkata")
+            //         .subtract(1, "day")
+            //         .endOf("day")
+            //         .toDate();
+
+            //       productPrices.forEach((price) => {
+            //         const finalExpiresAt = price.expiresAt ?? expiresAt;
+            //         const isExpiredPrice = moment(finalExpiresAt)
+            //           .tz("Asia/Kolkata")
+            //           .isSameOrBefore(now);
+
+            //         priceUpdates.push({
+            //           updateOne: {
+            //             filter: { _id: price._id },
+            //             update: {
+            //               $set: {
+            //                 expiresAt: finalExpiresAt,
+            //                 status: isExpiredPrice ? false : price.status,
+            //               },
+            //             },
+            //           },
+            //         });
+            //         updatedPriceIds.add(String(price._id));
+            //       });
+
+            //       newPriceDocs.push({
+            //         code: null,
+            //         productId: product._id,
+            //         price_type: "national",
+            //         regionId: null,
+            //         mrp_price: latestPrice.mrp_price,
+            //         dlp_price: dlpPrice,
+            //         rlp_price: rlpPrice,
+            //         L1DiscountPercentage: L1DiscountPercentageNumber,
+            //         L2DiscountPercentage: L2DiscountPercentageNumber,
+            //         effective_date: effectiveDateParsed,
+            //         distributorId: null,
+            //         createdBy: req.user._id,
+            //       });
+            //       totalPricesMatched += 1;
+            //     }
+            //   }
+
+            //   let updatedPrices = [];
+            //   let insertedPrices = [];
+
+            //   if (priceUpdates.length > 0) {
+            //     await Price.bulkWrite(priceUpdates);
+            //     updatedPrices = await Price.find({
+            //       _id: { $in: Array.from(updatedPriceIds) },
+            //     }).lean();
+            //   }
+
+            //   if (newPriceDocs.length > 0) {
+            //     const codes = await generateCodesInBatch(
+            //       "PR",
+            //       newPriceDocs.length,
+            //     );
+            //     newPriceDocs.forEach((doc, idx) => {
+            //       doc.code = codes[idx];
+            //     });
+            //     insertedPrices = await Price.insertMany(newPriceDocs);
+            //   }
+
+            //   const resultPrices = [...insertedPrices, ...updatedPrices];
+
+            //   console.log(
+            //     `Collection price update complete: ${resultPrices.length} updated/created prices, ${totalProductsMatched} matched products, ${totalPricesMatched} matched prices, ${skippedRowsForCollectionPrice.length} skipped`,
+            //   );
+
+            //   resp = resultPrices;
+            //   skippedRows = skippedRowsForCollectionPrice || [];
+
+            //   break;
+            // }
             case "price-collection": {
               console.log("Processing Collection Price CSV");
 
@@ -1856,7 +2201,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 const effectiveDateParsed = moment
-                  .tz(parsedEff.format("YYYY-MM-DD"), "YYYY-MM-DD", "Asia/Kolkata")
+                  .tz(
+                    parsedEff.format("YYYY-MM-DD"),
+                    "YYYY-MM-DD",
+                    "Asia/Kolkata",
+                  )
                   .startOf("day")
                   .toDate();
                 const todayStart = moment(now)
@@ -1876,20 +2225,44 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 totalProductsMatched += matchedProducts.length;
-                const productIds = matchedProducts.map((product) => product._id);
+                const productIds = matchedProducts.map(
+                  (product) => product._id,
+                );
                 const activePrices = await Price.find({
                   productId: { $in: productIds },
-                  price_type: "national",
-                  regionId: null,
                   distributorId: null,
                   status: true,
                   $or: [
-                    { expiresAt: { $exists: false } },
-                    { expiresAt: null },
-                    { expiresAt: { $gte: now } },
+                    {
+                      $and: [
+                        { price_type: "national" },
+                        { regionId: null },
+                        {
+                          $or: [
+                            { expiresAt: { $exists: false } },
+                            { expiresAt: null },
+                            { expiresAt: { $gte: now } },
+                          ],
+                        },
+                      ],
+                    },
+                    {
+                      $and: [
+                        { price_type: "regional" },
+                        {
+                          $or: [
+                            { expiresAt: { $exists: false } },
+                            { expiresAt: null },
+                            { expiresAt: { $gte: now } },
+                          ],
+                        },
+                      ],
+                    },
                   ],
                 })
-                  .select("_id mrp_price effective_date expiresAt productId status")
+                  .select(
+                    "_id mrp_price effective_date expiresAt productId status price_type regionId",
+                  )
                   .lean();
 
                 if (activePrices.length === 0) {
@@ -1924,7 +2297,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   }
 
                   const sortedPrices = productPrices.sort(
-                    (a, b) => new Date(b.effective_date) - new Date(a.effective_date),
+                    (a, b) =>
+                      new Date(b.effective_date) - new Date(a.effective_date),
                   );
                   const latestPrice = sortedPrices[0];
                   const mrpNumber = Number(latestPrice.mrp_price);
@@ -2002,18 +2376,36 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                   productPrices.forEach((price) => {
                     const finalExpiresAt = price.expiresAt ?? expiresAt;
-                    const isExpiredPrice = moment(finalExpiresAt)
-                      .tz("Asia/Kolkata")
-                      .isSameOrBefore(now);
+                    const isExpiredRegionalPrice =
+                      price.price_type === "regional" &&
+                      finalExpiresAt &&
+                      moment(finalExpiresAt)
+                        .tz("Asia/Kolkata")
+                        .isSameOrBefore(now);
+                    const isPastNationalPrice =
+                      price.price_type === "national" &&
+                      moment(price.effective_date)
+                        .tz("Asia/Kolkata")
+                        .isBefore(todayStart, "day");
+                    const isOlderThanReplacement =
+                      moment(price.effective_date)
+                        .tz("Asia/Kolkata")
+                        .isBefore(effectiveDateParsed, "day");
+                    const shouldDeactivate =
+                      (price.price_type === "regional" &&
+                        (isExpiredRegionalPrice || isOlderThanReplacement)) ||
+                      (price.price_type === "national" &&
+                        (isPastNationalPrice || isOlderThanReplacement));
+                    const updateFields = {
+                      expiresAt: finalExpiresAt,
+                      status: shouldDeactivate ? false : price.status,
+                    };
 
                     priceUpdates.push({
                       updateOne: {
                         filter: { _id: price._id },
                         update: {
-                          $set: {
-                            expiresAt: finalExpiresAt,
-                            status: isExpiredPrice ? false : price.status,
-                          },
+                          $set: updateFields,
                         },
                       },
                     });
@@ -2296,7 +2688,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 for (let i = 0; i < finalValidRows.length; i += BATCH_SIZE) {
                   const batch = finalValidRows.slice(i, i + BATCH_SIZE);
                   console.log(
-                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${batch.length
+                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${
+                      batch.length
                     }`,
                   );
 
@@ -2760,9 +3153,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     lookupMaps.existingOutletCodes.add(outletCode);
                     lookupMaps.existingOutletUIDs.add(outletUID);
 
-
-
-             // Lookup and validate Employee Code (Salesman Code)
+                    // Lookup and validate Employee Code (Salesman Code)
                     const employeeCode = row["Employee Code"]?.trim();
                     let employeeId = null;
 
@@ -2885,9 +3276,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     const categoryOfOutlet = row["Category of Outlet"]?.trim()
                       ? row["Category of Outlet"]
-                        .split(",")
-                        .map((cat) => cat.trim())
-                        .filter(Boolean)
+                          .split(",")
+                          .map((cat) => cat.trim())
+                          .filter(Boolean)
                       : [];
 
                     const invalidCategories = categoryOfOutlet.filter(
@@ -2916,8 +3307,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       "10 Lac & Above",
                     ];
 
-                    const potentialSelection =
-                      row["Potential"]?.trim() || null;
+                    const potentialSelection = row["Potential"]?.trim() || null;
 
                     if (
                       potentialSelection &&
@@ -3093,9 +3483,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         sellingBrands: sellingBrands,
                         competitorBrands: row["Competitor Brands"]
                           ? row["Competitor Brands"]
-                            .split(",")
-                            .map((brand) => brand.trim())
-                            .filter((brand) => brand.length > 0)
+                              .split(",")
+                              .map((brand) => brand.trim())
+                              .filter((brand) => brand.length > 0)
                           : [],
                         existingRetailer: existingRetailerBool,
                         outletStatus: "Approved",
@@ -3243,21 +3633,21 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               }); // Step 2: Batch fetch sub divisions, distributors, and existing beats
               const [subDivisions, distributors, existingBeats] =
                 await Promise.all([
-                SubDivision.find({
-                  code: { $in: Array.from(subDivisionCodesForBeat) },
-                })
-                  .populate({
-                    path: "districtId",
-                    select: "stateId",
+                  SubDivision.find({
+                    code: { $in: Array.from(subDivisionCodesForBeat) },
                   })
-                  .lean(),
-                Distributor.find({
-                  dbCode: { $in: Array.from(distributorCodes) },
-                }).lean(),
-                Beat.find({ name: { $in: Array.from(beatNames) } })
-                  .select("name regionId distributorId")
-                  .lean(),
-              ]); // Step 3: Create lookup maps
+                    .populate({
+                      path: "districtId",
+                      select: "stateId",
+                    })
+                    .lean(),
+                  Distributor.find({
+                    dbCode: { $in: Array.from(distributorCodes) },
+                  }).lean(),
+                  Beat.find({ name: { $in: Array.from(beatNames) } })
+                    .select("name regionId distributorId")
+                    .lean(),
+                ]); // Step 3: Create lookup maps
 
               const stateIdsForRegions = [
                 ...new Set(
@@ -3779,7 +4169,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const batch = results.slice(batchStart, batchEnd);
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
                     }: rows ${batchStart + 1}-${batchEnd}`,
                   );
 
