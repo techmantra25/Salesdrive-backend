@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
+const Invoice = require("../../models/invoice.model");
 const mongoose = require("mongoose");
 
 // Paginated Purchase Order Entry Report with Filters
@@ -116,9 +117,9 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
           strictPopulate: false,
         },
       ])
-      // NOTE: lineItems.grnQty / lineItems.grnBoxQty are plain (non-ref)
-      // fields on the schema, so no populate() entry is needed for them —
-      // they come back automatically with the rest of each lineItem.
+      // NOTE: lineItems.grnQty / lineItems.grnBoxQty are NOT stored on the
+      // PurchaseOrder document — they're derived below from Invoice
+      // lineItems, the same way getGrnPrimeryOrder computes them.
       .sort({ _id: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
@@ -137,13 +138,55 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       },
     ]);
 
+    // ---- Compute grnQty / grnBoxQty per line item -------------------------
+    // Batch-fetch every invoice tied to any PO on this page in a single
+    // query (rather than one query per PO/line item like getGrnPrimeryOrder
+    // does), then aggregate received qty per PO+product.
+    const poIds = populatedOrders.map((po) => po._id);
+
+    const invoices = poIds.length
+      ? await Invoice.find({ purchaseOrderId: { $in: poIds } })
+      : [];
+
+    // receivedMap: "<purchaseOrderId>_<productId>" -> total qty received
+    const receivedMap = {};
+    for (const inv of invoices) {
+      const poKey = String(inv.purchaseOrderId);
+      for (const li of inv.lineItems || []) {
+        const productKey = String(li.product);
+        const mapKey = `${poKey}_${productKey}`;
+        receivedMap[mapKey] = (receivedMap[mapKey] || 0) + Number(li.qty || 0);
+      }
+    }
+
+    const ordersWithGrn = populatedOrders.map((po) => {
+      const poObj = po.toObject ? po.toObject() : po;
+      const poKey = String(poObj._id);
+
+      const lineItems = (poObj.lineItems || []).map((item) => {
+        const productId = item?.product?._id;
+        const mapKey = `${poKey}_${String(productId)}`;
+        const alreadyReceived = receivedMap[mapKey] || 0;
+        const piecesPerBox = Number(item?.product?.no_of_pieces_in_a_box || 1);
+
+        return {
+          ...item,
+          grnQty: alreadyReceived,
+          grnBoxQty: Math.floor(alreadyReceived / piecesPerBox),
+        };
+      });
+
+      return { ...poObj, lineItems };
+    });
+    // ------------------------------------------------------------------------
+
     const filteredCount = await PurchaseOrder.countDocuments(query);
     const totalCount = await PurchaseOrder.countDocuments({});
 
     res.status(200).json({
       status: 200,
       message: "Purchase orders list",
-      data: populatedOrders,
+      data: ordersWithGrn,
       pagination: {
         currentPage: Number(page),
         limit: Number(limit),
