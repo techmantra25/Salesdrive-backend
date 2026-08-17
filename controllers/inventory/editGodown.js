@@ -6,6 +6,7 @@ const editGodown = asyncHandler(async (req, res) => {
     const { godownId } = req.params;
 
     const {
+      godownCode,
       godownName,
       godownType,
       location,
@@ -13,6 +14,7 @@ const editGodown = asyncHandler(async (req, res) => {
       isActive,
       remarks,
     } = req.body;
+
     // Find godown
     const godown = await Godown.findById(godownId);
 
@@ -60,6 +62,13 @@ const editGodown = asyncHandler(async (req, res) => {
     // VALIDATION
     // ==========================================
 
+    if (!godownCode || !godownCode.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Godown code is required",
+      });
+    }
+
     if (!godownName || !godownName.trim()) {
       return res.status(400).json({
         success: false,
@@ -68,31 +77,100 @@ const editGodown = asyncHandler(async (req, res) => {
     }
 
     // ==========================================
-    // UPDATE GODOWN
+    // CHECK DUPLICATE GODOWN CODE
     // ==========================================
-    // Note: godownCode is never updated here — it's fixed at creation time.
 
-    godown.godownName = godownName.trim();
+    const duplicateGodown = await Godown.findOne({
+      _id: { $ne: godownId },
+      distributorId: godown.distributorId,
+      godownCode: godownCode.trim(),
+    });
 
-    if (godownType !== undefined) {
+    if (duplicateGodown) {
+      return res.status(400).json({
+        success: false,
+        message: "Godown code already exists for this distributor",
+      });
+    }
+
+    // ==========================================
+    // UPDATE ONLY CHANGED DATA
+    // ==========================================
+
+    let isChanged = false;
+
+    // Godown Code
+    if (godown.godownCode !== godownCode.trim()) {
+      godown.godownCode = godownCode.trim();
+      isChanged = true;
+    }
+
+    // Godown Name
+    if (godown.godownName !== godownName.trim()) {
+      godown.godownName = godownName.trim();
+      isChanged = true;
+    }
+
+    // Godown Type
+    if (
+      godownType !== undefined &&
+      godown.godownType !== godownType
+    ) {
       godown.godownType = godownType;
+      isChanged = true;
     }
 
-    if (location !== undefined) {
+    // Location
+    if (
+      location !== undefined &&
+      godown.location !== location
+    ) {
       godown.location = location;
+      isChanged = true;
     }
 
-    if (contactPerson !== undefined) {
+    // Contact Person
+    if (
+      contactPerson !== undefined &&
+      godown.contactPerson !== contactPerson
+    ) {
       godown.contactPerson = contactPerson;
+      isChanged = true;
     }
 
-    if (isActive !== undefined) {
+    // Active Status
+    if (
+      isActive !== undefined &&
+      godown.isActive !== isActive
+    ) {
       godown.isActive = isActive;
+      isChanged = true;
     }
 
-    if (remarks !== undefined) {
+    // Remarks
+    if (
+      remarks !== undefined &&
+      godown.remarks !== remarks
+    ) {
       godown.remarks = remarks;
+      isChanged = true;
     }
+
+    // ==========================================
+    // NO CHANGES
+    // ==========================================
+
+    if (!isChanged) {
+      return res.status(200).json({
+        success: true,
+        message: "No changes found",
+        data: godown,
+      });
+    }
+
+    // ==========================================
+    // SAVE ONLY IF DATA CHANGED
+    // ==========================================
 
     await godown.save();
 
@@ -110,6 +188,7 @@ const editGodown = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error("Edit Godown Error:", error);
 
+    // MongoDB duplicate key error
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
