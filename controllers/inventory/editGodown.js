@@ -6,7 +6,6 @@ const editGodown = asyncHandler(async (req, res) => {
     const { godownId } = req.params;
 
     const {
-      godownCode,
       godownName,
       godownType,
       location,
@@ -14,7 +13,6 @@ const editGodown = asyncHandler(async (req, res) => {
       isActive,
       remarks,
     } = req.body;
-
     // Find godown
     const godown = await Godown.findById(godownId);
 
@@ -62,13 +60,6 @@ const editGodown = asyncHandler(async (req, res) => {
     // VALIDATION
     // ==========================================
 
-    if (!godownCode || !godownCode.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: "Godown code is required",
-      });
-    }
-
     if (!godownName || !godownName.trim()) {
       return res.status(400).json({
         success: false,
@@ -77,27 +68,10 @@ const editGodown = asyncHandler(async (req, res) => {
     }
 
     // ==========================================
-    // CHECK DUPLICATE GODOWN CODE
-    // ==========================================
-
-    const duplicateGodown = await Godown.findOne({
-      _id: { $ne: godownId },
-      distributorId: godown.distributorId,
-      godownCode: godownCode.trim(),
-    });
-
-    if (duplicateGodown) {
-      return res.status(400).json({
-        success: false,
-        message: "Godown code already exists for this distributor",
-      });
-    }
-
-    // ==========================================
     // UPDATE GODOWN
     // ==========================================
+    // Note: godownCode is never updated here — it's fixed at creation time.
 
-    godown.godownCode = godownCode.trim();
     godown.godownName = godownName.trim();
 
     if (godownType !== undefined) {
@@ -136,7 +110,6 @@ const editGodown = asyncHandler(async (req, res) => {
   } catch (error) {
     console.error("Edit Godown Error:", error);
 
-    // MongoDB duplicate key error
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
