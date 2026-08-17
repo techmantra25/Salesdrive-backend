@@ -94,31 +94,83 @@ const editGodown = asyncHandler(async (req, res) => {
     }
 
     // ==========================================
-    // UPDATE GODOWN
+    // UPDATE ONLY CHANGED DATA
     // ==========================================
 
-    godown.godownCode = godownCode.trim();
-    godown.godownName = godownName.trim();
+    let isChanged = false;
 
-    if (godownType !== undefined) {
+    // Godown Code
+    if (godown.godownCode !== godownCode.trim()) {
+      godown.godownCode = godownCode.trim();
+      isChanged = true;
+    }
+
+    // Godown Name
+    if (godown.godownName !== godownName.trim()) {
+      godown.godownName = godownName.trim();
+      isChanged = true;
+    }
+
+    // Godown Type
+    if (
+      godownType !== undefined &&
+      godown.godownType !== godownType
+    ) {
       godown.godownType = godownType;
+      isChanged = true;
     }
 
-    if (location !== undefined) {
+    // Location
+    if (
+      location !== undefined &&
+      godown.location !== location
+    ) {
       godown.location = location;
+      isChanged = true;
     }
 
-    if (contactPerson !== undefined) {
+    // Contact Person
+    if (
+      contactPerson !== undefined &&
+      godown.contactPerson !== contactPerson
+    ) {
       godown.contactPerson = contactPerson;
+      isChanged = true;
     }
 
-    if (isActive !== undefined) {
+    // Active Status
+    if (
+      isActive !== undefined &&
+      godown.isActive !== isActive
+    ) {
       godown.isActive = isActive;
+      isChanged = true;
     }
 
-    if (remarks !== undefined) {
+    // Remarks
+    if (
+      remarks !== undefined &&
+      godown.remarks !== remarks
+    ) {
       godown.remarks = remarks;
+      isChanged = true;
     }
+
+    // ==========================================
+    // NO CHANGES
+    // ==========================================
+
+    if (!isChanged) {
+      return res.status(200).json({
+        success: true,
+        message: "No changes found",
+        data: godown,
+      });
+    }
+
+    // ==========================================
+    // SAVE ONLY IF DATA CHANGED
+    // ==========================================
 
     await godown.save();
 
