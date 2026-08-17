@@ -52,15 +52,24 @@ const {
   viewGodown,
 } = require("../../controllers/inventory/viewGodwn.js");
 
+const {
+  editGodown,
+} = require("../../controllers/inventory/editGodown.js");
+
 const inventoryRoutes = express.Router();
 
 inventoryRoutes.route("/create").post(protect, createInventory);
+
+
+inventoryRoutes
+  .route("/edit-godown/:godownId")
+  .put(protect, editGodown);
 
 inventoryRoutes
   .route("/add-godown")
   .post(protect, addGodown);
 
-  
+
   inventoryRoutes
   .route("/view-godown")
   .get(protect, viewGodown);
