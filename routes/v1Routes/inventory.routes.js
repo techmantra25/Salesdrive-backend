@@ -45,10 +45,17 @@ const {
 const {
   allInventoriesPaginatedListReport,
 } = require("../../controllers/inventory/allInventoriesPaginatedListReport");
+const {
+  addGodown,
+} = require("../../controllers/inventory/addGodwn.js");
 
 const inventoryRoutes = express.Router();
 
 inventoryRoutes.route("/create").post(protect, createInventory);
+
+inventoryRoutes
+  .route("/add-godown")
+  .post(protect, addGodown);
 
 inventoryRoutes
   .route("/all-paginatedList")
