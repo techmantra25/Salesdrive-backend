@@ -48,6 +48,9 @@ const {
 const {
   addGodown,
 } = require("../../controllers/inventory/addGodwn.js");
+const {
+  viewGodown,
+} = require("../../controllers/inventory/viewGodwn.js");
 
 const inventoryRoutes = express.Router();
 
@@ -56,6 +59,11 @@ inventoryRoutes.route("/create").post(protect, createInventory);
 inventoryRoutes
   .route("/add-godown")
   .post(protect, addGodown);
+
+  
+  inventoryRoutes
+  .route("/view-godown")
+  .get(protect, viewGodown);
 
 inventoryRoutes
   .route("/all-paginatedList")
