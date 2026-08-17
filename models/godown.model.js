@@ -24,7 +24,7 @@ const godownSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      enum: ["MAIN", "BRANCH", "TRANSIT"],
+      enum: ["MAIN", "SUB", "TRANSIT", "OTHER"],
       default: "MAIN",
     },
 
