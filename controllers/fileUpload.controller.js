@@ -42,6 +42,50 @@ const generateCodesInBatch = async (prefix, count) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Business-field enum helpers
+//
+// These mirror the enums defined on the OutletApproved schema
+// (models/outletApproved.model.js). Keeping them centralized here means a
+// schema change only needs to be mirrored in one place in this controller.
+//
+// categoryOfOutlet:   ["Retail", "Wholesale", "Project", "Consumer", "Survey"]
+// potentialSelection: ["Below 1 Lac", "Upto 3 Lac", "Upto 5 Lac", "Upto 10 Lac", "10 Lac & Above", "Survey"]
+// paymentCategory:    ["Good", "Normal", "Follow Up", "RED", "Survey"]
+// retailerClass:      ["A", "B", "C", "D", "Survey"]
+// ---------------------------------------------------------------------------
+const OUTLET_CATEGORY_VALUES = [
+  "Retail",
+  "Wholesale",
+  "Project",
+  "Consumer",
+  "Survey",
+];
+const OUTLET_POTENTIAL_VALUES = [
+  "Below 1 Lac",
+  "Upto 3 Lac",
+  "Upto 5 Lac",
+  "Upto 10 Lac",
+  "10 Lac & Above",
+  "Survey",
+];
+const OUTLET_PAYMENT_CATEGORY_VALUES = ["Good", "Normal", "Follow Up", "RED", "Survey"];
+const OUTLET_RETAILER_CLASS_VALUES = ["A", "B", "C", "D", "Survey"];
+
+// Case-insensitively matches `raw` against `validValues` and returns the
+// canonically-cased value from the schema enum (or null if there's no match
+// / no input). This avoids issues like Array.prototype.toUpperCase() turning
+// "Survey" into "SURVEY", which would no longer match the schema enum.
+const matchEnumValue = (raw, validValues) => {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const match = validValues.find(
+    (value) => value.toLowerCase() === trimmed.toLowerCase(),
+  );
+  return match || undefined; // undefined signals "provided but invalid"
+};
+
 const saveCsvToDB = asyncHandler(async (req, res) => {
   try {
     const results = [];
@@ -1737,348 +1781,6 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
               break;
             }
-            // case "price-collection": {
-            //   console.log("Processing Collection Price CSV");
-
-            //   const collectionCodes = new Set();
-            //   const skippedRowsForCollectionPrice = [];
-
-            //   for (const row of results) {
-            //     if (row["Collection Code"]) {
-            //       collectionCodes.add(String(row["Collection Code"]).trim());
-            //     }
-            //   }
-
-            //   const collections = await Collection.find({
-            //     code: { $in: Array.from(collectionCodes) },
-            //   })
-            //     .select("code _id")
-            //     .lean();
-
-            //   const collectionMap = new Map(
-            //     collections.map((collection) => [
-            //       String(collection.code).trim(),
-            //       collection._id,
-            //     ]),
-            //   );
-
-            //   const products = await Product.find({
-            //     collection_id: { $in: collections.map((item) => item._id) },
-            //   })
-            //     .select("collection_id product_code _id")
-            //     .lean();
-
-            //   const productsByCollectionId = new Map();
-            //   products.forEach((product) => {
-            //     const collectionIdKey = String(product.collection_id);
-            //     if (!productsByCollectionId.has(collectionIdKey)) {
-            //       productsByCollectionId.set(collectionIdKey, []);
-            //     }
-            //     productsByCollectionId.get(collectionIdKey).push(product);
-            //   });
-
-            //   const priceUpdates = [];
-            //   const updatedPriceIds = new Set();
-            //   const newPriceDocs = [];
-            //   let totalProductsMatched = 0;
-            //   let totalPricesMatched = 0;
-            //   const now = new Date();
-
-            //   for (const row of results) {
-            //     const collectionCode = row["Collection Code"]
-            //       ? String(row["Collection Code"]).trim()
-            //       : "";
-            //     const L1DiscountPercentage = row["L1(%)"];
-            //     const L2DiscountPercentage = row["L2(%)"];
-            //     const L1DiscountPercentageNumber = Number(
-            //       L1DiscountPercentage || 0,
-            //     );
-            //     const L2DiscountPercentageNumber = Number(
-            //       L2DiscountPercentage || 0,
-            //     );
-
-            //     if (!collectionCode) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Missing required fields (Collection Code)",
-            //       });
-            //       continue;
-            //     }
-
-            //     if (
-            //       !Number.isFinite(L1DiscountPercentageNumber) ||
-            //       L1DiscountPercentageNumber < 0 ||
-            //       L1DiscountPercentageNumber > 100
-            //     ) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Invalid L1 Discount Percentage",
-            //       });
-            //       continue;
-            //     }
-
-            //     if (
-            //       !Number.isFinite(L2DiscountPercentageNumber) ||
-            //       L2DiscountPercentageNumber < 0 ||
-            //       L2DiscountPercentageNumber > 100
-            //     ) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Invalid L2 Discount Percentage",
-            //       });
-            //       continue;
-            //     }
-
-            //     const collectionId = collectionMap.get(collectionCode);
-            //     if (!collectionId) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Collection not found",
-            //       });
-            //       continue;
-            //     }
-
-            //     const effectiveDate = row["Effective Date"]
-            //       ? String(row["Effective Date"]).trim()
-            //       : "";
-            //     if (!effectiveDate) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Missing required fields (Effective Date)",
-            //       });
-            //       continue;
-            //     }
-
-            //     const parsedEff = moment(effectiveDate, "DD-MM-YYYY");
-            //     if (!parsedEff.isValid()) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "Invalid Effective Date",
-            //       });
-            //       continue;
-            //     }
-
-            //     const effectiveDateParsed = moment
-            //       .tz(parsedEff.format("YYYY-MM-DD"), "YYYY-MM-DD", "Asia/Kolkata")
-            //       .startOf("day")
-            //       .toDate();
-            //     const todayStart = moment(now)
-            //       .tz("Asia/Kolkata")
-            //       .startOf("day")
-            //       .toDate();
-
-            //     const matchedProducts =
-            //       productsByCollectionId.get(String(collectionId)) || [];
-
-            //     if (matchedProducts.length === 0) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason: "No products found for collection",
-            //       });
-            //       continue;
-            //     }
-
-            //     totalProductsMatched += matchedProducts.length;
-            //     const productIds = matchedProducts.map((product) => product._id);
-            //     const activePrices = await Price.find({
-            //       productId: { $in: productIds },
-            //       price_type: "national",
-            //       regionId: null,
-            //       distributorId: null,
-            //       status: true,
-            //       $or: [
-            //         { expiresAt: { $exists: false } },
-            //         { expiresAt: null },
-            //         { expiresAt: { $gte: now } },
-            //       ],
-            //     })
-            //       .select("_id mrp_price effective_date expiresAt productId status")
-            //       .lean();
-
-            //     if (activePrices.length === 0) {
-            //       skippedRowsForCollectionPrice.push({
-            //         ...row,
-            //         reason:
-            //           "No active national prices found for collection products",
-            //       });
-            //       continue;
-            //     }
-
-            //     const pricesByProduct = new Map();
-            //     activePrices.forEach((price) => {
-            //       const key = String(price.productId);
-            //       if (!pricesByProduct.has(key)) {
-            //         pricesByProduct.set(key, []);
-            //       }
-            //       pricesByProduct.get(key).push(price);
-            //     });
-
-            //     for (const product of matchedProducts) {
-            //       const productKey = String(product._id);
-            //       const productPrices = pricesByProduct.get(productKey) || [];
-            //       if (productPrices.length === 0) {
-            //         skippedRowsForCollectionPrice.push({
-            //           ...row,
-            //           reason: `No active national price found for product ${String(
-            //             product.product_code || product._id,
-            //           )}`,
-            //         });
-            //         continue;
-            //       }
-
-            //       const sortedPrices = productPrices.sort(
-            //         (a, b) => new Date(b.effective_date) - new Date(a.effective_date),
-            //       );
-            //       const latestPrice = sortedPrices[0];
-            //       const mrpNumber = Number(latestPrice.mrp_price);
-
-            //       if (!Number.isFinite(mrpNumber) || mrpNumber <= 0) {
-            //         skippedRowsForCollectionPrice.push({
-            //           ...row,
-            //           reason: "Invalid MRP price on existing national price",
-            //         });
-            //         continue;
-            //       }
-
-            //       const sameEffectivePrices = productPrices.filter((price) =>
-            //         moment(price.effective_date)
-            //           .tz("Asia/Kolkata")
-            //           .isSame(effectiveDateParsed, "day"),
-            //       );
-
-            //       const dlpPrice = Number(
-            //         (
-            //           mrpNumber -
-            //           (mrpNumber * L1DiscountPercentageNumber) / 100
-            //         ).toFixed(2),
-            //       );
-            //       const rlpPrice = Number(
-            //         (
-            //           mrpNumber -
-            //           (mrpNumber * L2DiscountPercentageNumber) / 100
-            //         ).toFixed(2),
-            //       );
-
-            //       if (sameEffectivePrices.length > 0) {
-            //         sameEffectivePrices.forEach((price) => {
-            //           priceUpdates.push({
-            //             updateOne: {
-            //               filter: { _id: price._id },
-            //               update: {
-            //                 $set: {
-            //                   dlp_price: dlpPrice,
-            //                   rlp_price: rlpPrice,
-            //                   L1DiscountPercentage: L1DiscountPercentageNumber,
-            //                   L2DiscountPercentage: L2DiscountPercentageNumber,
-            //                   effective_date: effectiveDateParsed,
-            //                 },
-            //               },
-            //             },
-            //           });
-            //           updatedPriceIds.add(String(price._id));
-            //           totalPricesMatched += 1;
-            //         });
-            //         continue;
-            //       }
-
-            //       if (effectiveDateParsed <= todayStart) {
-            //         skippedRowsForCollectionPrice.push({
-            //           ...row,
-            //           reason:
-            //             "Price effective date should be greater than the current date",
-            //         });
-            //         continue;
-            //       }
-
-            //       if (
-            //         moment(latestPrice.effective_date)
-            //           .tz("Asia/Kolkata")
-            //           .isSameOrAfter(effectiveDateParsed)
-            //       ) {
-            //         skippedRowsForCollectionPrice.push({
-            //           ...row,
-            //           reason:
-            //             "Price effective date should be greater than the latest existing price effective date",
-            //         });
-            //         continue;
-            //       }
-
-            //       const expiresAt = moment(effectiveDateParsed)
-            //         .tz("Asia/Kolkata")
-            //         .subtract(1, "day")
-            //         .endOf("day")
-            //         .toDate();
-
-            //       productPrices.forEach((price) => {
-            //         const finalExpiresAt = price.expiresAt ?? expiresAt;
-            //         const isExpiredPrice = moment(finalExpiresAt)
-            //           .tz("Asia/Kolkata")
-            //           .isSameOrBefore(now);
-
-            //         priceUpdates.push({
-            //           updateOne: {
-            //             filter: { _id: price._id },
-            //             update: {
-            //               $set: {
-            //                 expiresAt: finalExpiresAt,
-            //                 status: isExpiredPrice ? false : price.status,
-            //               },
-            //             },
-            //           },
-            //         });
-            //         updatedPriceIds.add(String(price._id));
-            //       });
-
-            //       newPriceDocs.push({
-            //         code: null,
-            //         productId: product._id,
-            //         price_type: "national",
-            //         regionId: null,
-            //         mrp_price: latestPrice.mrp_price,
-            //         dlp_price: dlpPrice,
-            //         rlp_price: rlpPrice,
-            //         L1DiscountPercentage: L1DiscountPercentageNumber,
-            //         L2DiscountPercentage: L2DiscountPercentageNumber,
-            //         effective_date: effectiveDateParsed,
-            //         distributorId: null,
-            //         createdBy: req.user._id,
-            //       });
-            //       totalPricesMatched += 1;
-            //     }
-            //   }
-
-            //   let updatedPrices = [];
-            //   let insertedPrices = [];
-
-            //   if (priceUpdates.length > 0) {
-            //     await Price.bulkWrite(priceUpdates);
-            //     updatedPrices = await Price.find({
-            //       _id: { $in: Array.from(updatedPriceIds) },
-            //     }).lean();
-            //   }
-
-            //   if (newPriceDocs.length > 0) {
-            //     const codes = await generateCodesInBatch(
-            //       "PR",
-            //       newPriceDocs.length,
-            //     );
-            //     newPriceDocs.forEach((doc, idx) => {
-            //       doc.code = codes[idx];
-            //     });
-            //     insertedPrices = await Price.insertMany(newPriceDocs);
-            //   }
-
-            //   const resultPrices = [...insertedPrices, ...updatedPrices];
-
-            //   console.log(
-            //     `Collection price update complete: ${resultPrices.length} updated/created prices, ${totalProductsMatched} matched products, ${totalPricesMatched} matched prices, ${skippedRowsForCollectionPrice.length} skipped`,
-            //   );
-
-            //   resp = resultPrices;
-            //   skippedRows = skippedRowsForCollectionPrice || [];
-
-            //   break;
-            // }
             case "price-collection": {
               console.log("Processing Collection Price CSV");
 
@@ -3267,36 +2969,44 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     }
 
                     // ==============================================
-                    // Validate Category Of Outlet (now multi-value)
-                    // Matches the OutletApproved schema enum:
-                    // ["Retail", "Wholesale", "Project Consumer", "Others"]
-                    // Comma separated values are supported, e.g.
-                    // "Retail,Wholesale"
+                    // Validate Category Of Outlet (multi-value, comma
+                    // separated, e.g. "Retail,Wholesale").
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Retail", "Wholesale", "Project", "Consumer", "Survey"]
+                    //
+                    // Values are matched case-insensitively and stored
+                    // using the schema's canonical casing.
                     // ==============================================
-                    const validCategories = [
-                      "Retail",
-                      "Wholesale",
-                      "Project Consumer",
-                      "Others",
-                    ];
-
-                    const categoryOfOutlet = row["Category of Outlet"]?.trim()
+                    const categoryOfOutletRaw = row["Category of Outlet"]
+                      ?.trim()
                       ? row["Category of Outlet"]
                           .split(",")
                           .map((cat) => cat.trim())
                           .filter(Boolean)
                       : [];
 
-                    const invalidCategories = categoryOfOutlet.filter(
-                      (cat) => !validCategories.includes(cat),
-                    );
+                    const categoryOfOutlet = [];
+                    const invalidCategories = [];
+
+                    categoryOfOutletRaw.forEach((cat) => {
+                      const matched = matchEnumValue(
+                        cat,
+                        OUTLET_CATEGORY_VALUES,
+                      );
+                      if (!matched) {
+                        invalidCategories.push(cat);
+                      } else {
+                        categoryOfOutlet.push(matched);
+                      }
+                    });
 
                     if (invalidCategories.length > 0) {
                       skippedRows.push({
                         ...row,
                         reason: `Invalid category of outlet: ${invalidCategories.join(
                           ", ",
-                        )}. Must be one of: ${validCategories.join(", ")} at row ${row.index}`,
+                        )}. Must be one of: ${OUTLET_CATEGORY_VALUES.join(", ")} at row ${row.index}`,
                       });
                       totalSkipped++;
                       continue;
@@ -3304,56 +3014,57 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     // ==============================================
                     // Validate Potential Selection (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Below 1 Lac", "Upto 3 Lac", "Upto 5 Lac",
+                    //  "Upto 10 Lac", "10 Lac & Above", "Survey"]
                     // ==============================================
-                    const validPotentialSelections = [
-                      "Below 1 Lac",
-                      "Upto 3 Lac",
-                      "Upto 5 Lac",
-                      "Upto 10 Lac",
-                      "10 Lac & Above",
-                    ];
+                    const potentialSelectionRaw = row["Potential"]?.trim();
+                    let potentialSelection = null;
 
-                    const potentialSelection = row["Potential"]?.trim() || null;
+                    if (potentialSelectionRaw) {
+                      potentialSelection = matchEnumValue(
+                        potentialSelectionRaw,
+                        OUTLET_POTENTIAL_VALUES,
+                      );
 
-                    if (
-                      potentialSelection &&
-                      !validPotentialSelections.includes(potentialSelection)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid potential selection: ${potentialSelection}. Must be one of: ${validPotentialSelections.join(
-                          ", ",
-                        )} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                      if (!potentialSelection) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid potential selection: ${potentialSelectionRaw}. Must be one of: ${OUTLET_POTENTIAL_VALUES.join(
+                            ", ",
+                          )} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     // ==============================================
                     // Validate Payment Category (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Good", "Normal", "Follow Up", "RED", "Survey"]
                     // ==============================================
-                    const validPaymentCategories = [
-                      "Good",
-                      "Normal",
-                      "Follow up",
-                      "Continuous Red",
-                    ];
+                    const paymentCategoryRaw = row["Payment Category"]?.trim();
+                    let paymentCategory = null;
 
-                    const paymentCategory =
-                      row["Payment Category"]?.trim() || null;
+                    if (paymentCategoryRaw) {
+                      paymentCategory = matchEnumValue(
+                        paymentCategoryRaw,
+                        OUTLET_PAYMENT_CATEGORY_VALUES,
+                      );
 
-                    if (
-                      paymentCategory &&
-                      !validPaymentCategories.includes(paymentCategory)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid payment category: ${paymentCategory}. Must be one of: ${validPaymentCategories.join(
-                          ", ",
-                        )} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                      if (!paymentCategory) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid payment category: ${paymentCategoryRaw}. Must be one of: ${OUTLET_PAYMENT_CATEGORY_VALUES.join(
+                            ", ",
+                          )} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     // ==============================================
@@ -3390,7 +3101,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       birthday = parsedBirthday.toDate();
                     }
 
-                    // Validate category of outlet
+                    // Validate enrolled status
                     const validEnrolledStatuses = ["ENROLLED", "NOT ENROLLED"];
                     const enrolledStatus =
                       row["Enrolled Status"]?.trim()?.toUpperCase() ||
@@ -3426,21 +3137,33 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       }
                     }
 
-                    // Validate retailer class
-                    const validRetailerClasses = ["A", "B", "C", "D"];
-                    const retailerClass = row["Retailer Class"]
-                      ?.trim()
-                      ?.toUpperCase();
-                    if (
-                      retailerClass &&
-                      !validRetailerClasses.includes(retailerClass)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid retailer class: ${retailerClass}. Must be one of: ${validRetailerClasses.join(", ")} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                    // ==============================================
+                    // Validate Retailer Class (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["A", "B", "C", "D", "Survey"]
+                    //
+                    // Matched case-insensitively so both "a" and "A"
+                    // resolve to "A", and "survey" resolves to "Survey"
+                    // instead of being force-uppercased to "SURVEY".
+                    // ==============================================
+                    const retailerClassRaw = row["Retailer Class"]?.trim();
+                    let retailerClass = null;
+
+                    if (retailerClassRaw) {
+                      retailerClass = matchEnumValue(
+                        retailerClassRaw,
+                        OUTLET_RETAILER_CLASS_VALUES,
+                      );
+
+                      if (!retailerClass) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid retailer class: ${retailerClassRaw}. Must be one of: ${OUTLET_RETAILER_CLASS_VALUES.join(", ")} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     try {
@@ -3482,7 +3205,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         location: row["Location"]?.trim() || null,
                         gpsLocation: row["GPS Location"]?.trim() || null,
                         categoryOfOutlet: categoryOfOutlet,
-                        // NEW FIELDS
+                        // Business fields aligned with OutletApproved schema
                         potentialSelection: potentialSelection,
                         birthday: birthday,
                         paymentCategory: paymentCategory,
@@ -3505,6 +3228,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         shipToPincode: row["Ship To Pincode"]?.trim() || null,
                         // createdBy: req.user?._id || null,
                         createdBy_type: req.user ? "User" : "Employee",
+                        googleMapLink: row["Google Map Link"]?.trim() || null,
                       };
 
                       outletsToInsert.push(outletDoc);
@@ -4112,7 +3836,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   existingEmpIds: new Set(
-                    existingEmployees.map(() => emp.empId),
+                    existingEmployees.map((emp) => emp.empId),
                   ),
                   designations: new Map(
                     designations.map((desg) => [desg.code, desg]),
