@@ -41,20 +41,23 @@ const VALID_POTENTIAL_SELECTIONS = [
   "Upto 5 Lac",
   "Upto 10 Lac",
   "10 Lac & Above",
+  "Survey",
 ];
 
 const VALID_PAYMENT_CATEGORIES = [
   "Good",
   "Normal",
-  "Follow up",
-  "Continuous Red",
+  "Follow Up",
+  "RED",
+  "Survey",
 ];
 
 const VALID_CATEGORIES_OF_OUTLET = [
   "Retail",
   "Wholesale",
-  "Project Consumer",
-  "Others",
+  "Project",
+  "Consumer",
+  "Survey",
 ];
 
 const BIRTHDAY_FORMATS = [
