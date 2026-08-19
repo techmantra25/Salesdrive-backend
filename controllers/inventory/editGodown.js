@@ -8,9 +8,9 @@ const editGodown = asyncHandler(async (req, res) => {
     const {
       godownCode,
       godownName,
-      godownType,
       location,
       contactPerson,
+      contactPersonNumber,
       isActive,
       remarks,
     } = req.body;
@@ -111,15 +111,6 @@ const editGodown = asyncHandler(async (req, res) => {
       isChanged = true;
     }
 
-    // Godown Type
-    if (
-      godownType !== undefined &&
-      godown.godownType !== godownType
-    ) {
-      godown.godownType = godownType;
-      isChanged = true;
-    }
-
     // Location
     if (
       location !== undefined &&
@@ -135,6 +126,15 @@ const editGodown = asyncHandler(async (req, res) => {
       godown.contactPerson !== contactPerson
     ) {
       godown.contactPerson = contactPerson;
+      isChanged = true;
+    }
+
+    // Contact Person Number
+    if (
+      contactPersonNumber !== undefined &&
+      godown.contactPersonNumber !== contactPersonNumber
+    ) {
+      godown.contactPersonNumber = contactPersonNumber;
       isChanged = true;
     }
 
