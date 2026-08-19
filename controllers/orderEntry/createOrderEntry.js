@@ -11,6 +11,7 @@ const { SERVER_URL } = require("../../config/server.config.js");
 const BillDeliverySetting = require("../../models/billDeliverySetting.model");
 const { getOrderBackdate } = require("../../utils/backdateOrderHelper");
 const OutletApproved = require("../../models/outletApproved.model");
+const Godown = require("../../models/godown.model");
 
 // ─────────────────────────────────────────────────────────────────────────
 // GST helpers — mirrors the logic used in the bulk-import controller so both
@@ -74,6 +75,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId,
       orderType,
       orderRemark,
       orderSource,
@@ -127,6 +129,15 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       return res.status(404).json({
         message: "Outlet not found",
       });
+    }
+
+    if (godownId) {
+      const godown = await Godown.findById(godownId);
+      if (!godown) {
+        return res.status(404).json({
+          message: "Godown not found",
+        });
+      }
     }
 
     const isIgst = getIsIgst({ distributor, retailer: outlet });
@@ -260,6 +271,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId,
       cso: outlet?.cso ?? null,
       orderType,
       orderSource,
