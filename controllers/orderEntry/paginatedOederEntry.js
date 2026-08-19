@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 const OrderEntry = require("../../models/orderEntry.model");
 const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
 const OutletApproved = require("../../models/outletApproved.model");
+const State = require("../../models/state.model");
 
 // Splits a comma-separated query param (or accepts an already-parsed array)
 // into a clean array of trimmed, non-empty values. Returns [] for "all",
@@ -34,6 +35,8 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       retailerId,
       retailerPhone,
       outletCode,
+      zoneId,
+      districtId,
       orderType,
       orderSource,
       paymentMode,
@@ -178,6 +181,61 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       // Apply outletCode filter ONLY if retailerId is not already set
       if (retailerIdArr.length === 0 && retailerPhoneArr.length === 0) {
         const outletIds = outlets.map((o) => o._id);
+        query.retailerId =
+          outletIds.length === 1 ? outletIds[0] : { $in: outletIds };
+      }
+    }
+
+    // --------------------------------------------------
+    // ZONE FILTER
+    // --------------------------------------------------
+    if (zoneId && zoneId !== "all") {
+      const zoneFilter = toArray(zoneId);
+
+      const matchedStates = await State.find(
+        { zoneId: { $in: zoneFilter } },
+        { _id: 1 }
+      );
+
+      const stateIds = matchedStates.map((state) => state._id);
+
+      const matchedOutlets = await OutletApproved.find(
+        { stateId: { $in: stateIds } },
+        { _id: 1 }
+      );
+
+      if (matchedOutlets.length === 0) {
+        return emptyResponse();
+      }
+
+      const outletIds = matchedOutlets.map((outlet) => outlet._id);
+
+      // Apply only if retailerId is not already set
+      if (!retailerIdArr.length && !retailerPhoneArr.length && !outletCodeArr.length) {
+        query.retailerId =
+          outletIds.length === 1 ? outletIds[0] : { $in: outletIds };
+      }
+    }
+
+    // --------------------------------------------------
+    // DISTRICT FILTER
+    // --------------------------------------------------
+    if (districtId && districtId !== "all") {
+      const districtFilter = toArray(districtId);
+
+      const matchedOutlets = await OutletApproved.find(
+        { district: { $in: districtFilter } },
+        { _id: 1 }
+      );
+
+      if (matchedOutlets.length === 0) {
+        return emptyResponse();
+      }
+
+      const outletIds = matchedOutlets.map((outlet) => outlet._id);
+
+      // Apply only if retailerId is not already set
+      if (!retailerIdArr.length && !retailerPhoneArr.length && !outletCodeArr.length) {
         query.retailerId =
           outletIds.length === 1 ? outletIds[0] : { $in: outletIds };
       }

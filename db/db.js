@@ -1,5 +1,11 @@
 const mongoose = require("mongoose");
 const { MONGODB_URI } = require("../config/server.config");
+const dns = require("dns");
+
+dns.setServers([
+  '1.1.1.1',
+  '8.8.8.8',
+])
 
 let isConnected = false;
 
