@@ -48,6 +48,7 @@ const convertOrderEnquiryToOrderEntry = asyncHandler(async (req, res) => {
       salesmanName: source.salesmanName,
       routeId: source.routeId,
       retailerId: source.retailerId,
+      godownId: source.godownId,
       orderType: source.orderType,
       orderSource: source.orderSource,
       paymentMode: source.paymentMode,

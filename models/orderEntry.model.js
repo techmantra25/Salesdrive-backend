@@ -122,6 +122,10 @@ const OrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "OutletApproved",
     },
+    godownId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Godown",
+    },
     orderType: {
       type: String,
       enum: ["Counter", "Normal-Sale"],

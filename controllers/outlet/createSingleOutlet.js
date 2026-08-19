@@ -370,12 +370,16 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       sellingBrands = brands.map((brand) => brand._id);
     }
 
+    // =========================
+    // CATEGORY OF OUTLET VALIDATION (aligned with Outlet model enum)
+    // =========================
 
     const validCategories = [
       "Retail",
       "Wholesale",
-      "Project Consumer",
-      "Others",
+      "Project",
+      "Consumer",
+      "Survey",
     ];
 
     const categoryOfOutlet = data.categoryOfOutlet
@@ -430,11 +434,16 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     // RETAILER CLASS VALIDATION
     // =========================
 
-    const validRetailerClasses = ["A", "B", "C", "D"];
+    const validRetailerClasses = ["A", "B", "C", "D", "Survey"];
 
-    const retailerClass = data.retailerClass
-      ?.trim()
-      ?.toUpperCase();
+    const rawRetailerClass = data.retailerClass?.trim();
+
+    // A/B/C/D are normalized to uppercase; "Survey" keeps its exact
+    // casing so it matches the Outlet model enum.
+    const retailerClass =
+      rawRetailerClass?.toUpperCase() === "SURVEY"
+        ? "Survey"
+        : rawRetailerClass?.toUpperCase();
 
     if (
       retailerClass &&
@@ -473,7 +482,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     }
 
     // =========================
-    // POTENTIAL SELECTION VALIDATION (NEW, OPTIONAL)
+    // POTENTIAL SELECTION VALIDATION (aligned with Outlet model enum)
     // =========================
 
     const validPotentialSelections = [
@@ -482,6 +491,7 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
       "Upto 5 Lac",
       "Upto 10 Lac",
       "10 Lac & Above",
+      "Survey",
     ];
 
     const potentialSelection = data.potentialSelection?.trim() || null;
@@ -499,14 +509,15 @@ const createSingleOutlet = asyncHandler(async (req, res) => {
     }
 
     // =========================
-    // PAYMENT CATEGORY VALIDATION (NEW, OPTIONAL)
+    // PAYMENT CATEGORY VALIDATION (aligned with Outlet model enum)
     // =========================
 
     const validPaymentCategories = [
       "Good",
       "Normal",
-      "Follow up",
-      "Continuous Red",
+      "Follow Up",
+      "RED",
+      "Survey",
     ];
 
     const paymentCategory = data.paymentCategory?.trim() || null;

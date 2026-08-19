@@ -20,14 +20,6 @@ const godownSchema = new mongoose.Schema(
       trim: true,
     },
 
-    godownType: {
-      type: String,
-      required: true,
-      trim: true,
-      enum: ["MAIN", "BRANCH", "TRANSIT"],
-      default: "MAIN",
-    },
-
     location: {
       type: String,
       trim: true,
@@ -35,6 +27,12 @@ const godownSchema = new mongoose.Schema(
     },
 
     contactPerson: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    contactPersonNumber: {
       type: String,
       trim: true,
       default: "",

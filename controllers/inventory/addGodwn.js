@@ -8,9 +8,9 @@ const addGodown = asyncHandler(async (req, res) => {
       distributorId,
       godownCode,
       godownName,
-      godownType,
       location,
       contactPerson,
+      contactPersonNumber,
       isActive,
       remarks,
     } = req.body;
@@ -65,9 +65,9 @@ const addGodown = asyncHandler(async (req, res) => {
       distributorId,
       godownCode: godownCode.trim(),
       godownName: godownName.trim(),
-      godownType: godownType || "MAIN",
       location: location || "",
       contactPerson: contactPerson || "",
+      contactPersonNumber: contactPersonNumber || "",
       isActive:
         typeof isActive === "boolean"
           ? isActive

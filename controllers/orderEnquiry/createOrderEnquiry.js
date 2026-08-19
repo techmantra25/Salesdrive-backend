@@ -5,6 +5,7 @@ const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
 const OutletApproved = require("../../models/outletApproved.model");
+const Godown = require("../../models/godown.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 const createOrderEnquiry = asyncHandler(async (req, res) => {
@@ -12,6 +13,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
     const {
       routeId,
       retailerId,
+      godownId,
       orderType,
       orderSource,
       paymentMode,
@@ -62,6 +64,15 @@ if (!outlet) {
   return res.status(404).json({
     message: "Outlet not found",
   });
+}
+
+if (godownId) {
+  const godown = await Godown.findById(godownId);
+  if (!godown) {
+    return res.status(404).json({
+      message: "Godown not found",
+    });
+  }
 }
     for (const item of lineItems) {
       const product = await Product.findById(item.product);
@@ -118,6 +129,7 @@ if (!outlet) {
      salesmanName: outlet?.employeeId || null,
       routeId,
       retailerId,
+      godownId,
       cso: outlet?.cso ?? null,
       orderType,
       orderSource,

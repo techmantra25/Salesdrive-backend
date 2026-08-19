@@ -178,7 +178,7 @@ const outletSchema = new mongoose.Schema(
     },
     categoryOfOutlet: {
       type: [String],
-      enum: ["Retail", "Wholesale", "Project Consumer", "Others"],
+      enum: ["Retail", "Wholesale", "Project", "Consumer", "Survey"],
       default: [],
     },
     // NEW: potential business value bracket for the outlet
@@ -190,6 +190,7 @@ const outletSchema = new mongoose.Schema(
         "Upto 5 Lac",
         "Upto 10 Lac",
         "10 Lac & Above",
+        "Survey",
       ],
       default: null,
     },
@@ -201,7 +202,7 @@ const outletSchema = new mongoose.Schema(
     // NEW: payment behaviour category
     paymentCategory: {
       type: String,
-      enum: ["Good", "Normal", "Follow up", "Continuous Red"],
+      enum: ["Good", "Normal", "Follow Up", "RED", "Survey"],
       default: null,
     },
     sellingBrands: {
@@ -256,7 +257,7 @@ const outletSchema = new mongoose.Schema(
     },
     retailerClass: {
       type: String,
-      enum: ["A", "B", "C", "D"],
+      enum: ["A", "B", "C", "D", "Survey"],
     },
     enrolledStatus: {
       type: String,
