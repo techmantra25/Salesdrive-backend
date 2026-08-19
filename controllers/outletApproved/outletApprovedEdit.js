@@ -411,7 +411,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 
     if (
       req.body.retailerClass &&
-      !["A", "B", "C", "D"].includes(req.body.retailerClass)
+      !["A", "B", "C", "D", "Survey"].includes(req.body.retailerClass)
     ) {
       res.status(400);
       throw new Error("Invalid retailer class");
