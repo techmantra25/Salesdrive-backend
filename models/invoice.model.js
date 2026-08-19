@@ -116,7 +116,11 @@ const invoiceSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-
+godownId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Godown",
+  required: false, 
+},
     vehicleNumber: {
       type: String,
       trim: true,

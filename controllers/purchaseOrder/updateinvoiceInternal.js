@@ -24,7 +24,11 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
     return { skipped: true };
   }
 
-  // Better idempotency check using the unique index fields
+  const godownId = invoice.godownId;
+  if (!godownId) {
+    throw new Error("Invoice has no Godown assigned — cannot adjust stock");
+  }
+
   const existingTxn = await Transaction.findOne({
     invoiceId: invoice._id,
     invoiceLineItemId: item._id,
@@ -35,13 +39,11 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
     return { skipped: true };
   }
 
-  // validate product
   const product = await Product.findById(item.product);
   if (!product) {
     throw new Error("Product not found");
   }
 
-  // validate pricing
   const priceResp = await axios.get(
     `${SERVER_URL}/api/v1/price/product-pricing/${item.product}?distributorId=${distributorId}`,
   );
@@ -52,7 +54,6 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
 
   const priceEntry = priceResp.data.data[0];
 
-  // Calculate RLP and DLP price per piece or box (from previous code)
   let rlpbyPcs = 0;
   let dlpbyPcs = 0;
   if (product.uom === "box") {
@@ -64,48 +65,55 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
     dlpbyPcs = priceEntry.dlp_price || 0;
   }
 
-  // Get or create inventory item
-
+  // 🔑 Inventory scoped by godownId now, not hardcoded "main"
   let inventory = await Inventory.findOne({
     productId: item.product,
     distributorId: distributorId,
-    godownType: "main",
+    godownId: godownId,
   });
 
-  if (!inventory) {
-    // Create new inventory if not exists
-    const inventoryItemId = await generateCode("INVT");
+if (!inventory) {
+  const invitemId = await generateCode("INVT");
 
-    inventory = new Inventory({
-      productId: item.product,
-      distributorId: distributorId,
-      invitemId: inventoryItemId,
-      availableQty: 0,
-      damagedQty: 0,
-      totalStockamtDlp: 0,
-      totalStockamtRlp: 0,
-      godownType: "main",
-    });
-    await inventory.save();
-  }
-
-  // Update inventory quantities (from previous code)
-  inventory.availableQty += item.receivedQty;
-  inventory.damagedQty += item.damageQty || 0;
-  inventory.totalStockamtDlp += dlpbyPcs * item.receivedQty;
-  inventory.totalStockamtRlp += rlpbyPcs * item.receivedQty;
+  inventory = new Inventory({
+    productId: item.product,
+    distributorId: distributorId,
+    godownId: godownId,
+    invitemId,
+    intransitQty: 0,
+    undeliveredQty: 0,
+    damagedQty: 0,
+    availableQty: 0,
+    reservedQty: 0,
+    unsalableQty: 0,
+    offerQty: 0,
+    totalQty: 0,
+    totalStockamtDlp: 0,
+    totalStockamtRlp: 0,
+    totalUnsalableamtDlp: 0,
+    totalUnsalableStockamtRlp: 0,
+    normsQty: 0,
+    godownType: "main",
+    openingStock: false,
+  });
   await inventory.save();
+}
 
-  // create transaction with all required fields
+inventory.availableQty += item.receivedQty;
+inventory.damagedQty += item.damageQty || 0;
+inventory.totalStockamtDlp += dlpbyPcs * item.receivedQty;
+inventory.totalStockamtRlp += rlpbyPcs * item.receivedQty;
+await inventory.save();
+
   const transaction = new Transaction({
     distributorId,
     productId: item.product,
-    invItemId: inventory._id, // REQUIRED field
+    invItemId: inventory._id,
     transactionId: stockId,
     qty: item.receivedQty,
     date: new Date(),
     type: "In",
-    balanceCount: inventory.availableQty, // REQUIRED field
+    balanceCount: inventory.availableQty,
     description: `Invoice ${invoice.invoiceNo} - Stock received`,
     transactionType: "invoice",
     stockType: "salable",
@@ -116,7 +124,6 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
 
   await transaction.save();
 
-  // Create stock ledger entry for invoice
   try {
     await createStockLedgerEntry(transaction._id);
   } catch (error) {
@@ -124,7 +131,6 @@ async function adjustSingleProduct(item, invoice, distributorId, stockId) {
       `Stock ledger creation failed for transaction ${transaction._id}:`,
       error.message,
     );
-    // Don't throw - allow invoice confirmation to continue
   }
 
   return { success: true };

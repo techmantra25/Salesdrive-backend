@@ -16,6 +16,11 @@ const inventorySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Distributor",
     },
+    godownId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Godown",
+  required: true,
+},
     intransitQty: {
       type: Number,
       default: 0,

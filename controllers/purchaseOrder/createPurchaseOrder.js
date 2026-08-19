@@ -5,10 +5,13 @@ const Supplier = require("../../models/supplier.model"); // adjust path/name to 
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
-const { purchaseOrderNumberGenerator } = require("../../utils/codeGenerator");
 const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config");
-
+const Godown = require("../../models/godown.model");
+const {
+  purchaseOrderNumberGenerator,
+  generateCode,
+} = require("../../utils/codeGenerator");
 const createPurchaseOrder = asyncHandler(async (req, res) => {
   try {
     const {
@@ -16,6 +19,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       selectedBrand,
       selectedPlant,
       supplierId,
+      godownId,
       expectedDeliveryDate,
       lineItems,
       totalLines,
@@ -37,6 +41,18 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       return res.status(404).json({ message: "Distributor not found" });
     }
 
+
+    const godown = await Godown.findOne({
+  _id: godownId,
+  distributorId,
+  isActive: true,
+});
+
+if (!godown) {
+  return res.status(404).json({
+    message: "Please select godown",
+  });
+}
     const supplier = await Supplier.findById(supplierId);
     if (!supplier) {
       return res.status(404).json({ message: "Supplier not found" });
@@ -201,6 +217,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       distributorId,
       selectedBrand,
       selectedPlant,
+      godownId,
       purchaseOrderNo: orderNumber,
       supplierId,
       expectedDeliveryDate,
@@ -231,22 +248,45 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
     const purchaseOrderId = savedPurchaseOrder._id;
 
     // Update Inventory In-Transit Qty
-    for (const item of lineItems) {
-      await Inventory.findOneAndUpdate(
-        {
-          distributorId,
-          productId: item.product,
-        },
-        {
-          $inc: {
-            intransitQty: Number(item.orderQty || 0),
-          },
-        },
-        {
-          new: true,
-        }
-      );
-    }
+
+
+// Update Inventory In-Transit Qty — godown-wise, auto-create if missing
+for (const item of lineItems) {
+  const existing = await Inventory.findOne({
+    distributorId,
+    productId: item.product,
+    godownId,
+  });
+
+  if (existing) {
+    existing.intransitQty += Number(item.orderQty || 0);
+    await existing.save();
+  } else {
+    const invitemId = await generateCode("INVT");
+
+    await Inventory.create({
+      productId: item.product,
+      distributorId,
+      godownId,
+      invitemId,
+      intransitQty: Number(item.orderQty || 0),
+      undeliveredQty: 0,
+      damagedQty: 0,
+      availableQty: 0,
+      reservedQty: 0,
+      unsalableQty: 0,
+      offerQty: 0,
+      totalQty: 0,
+      totalStockamtDlp: 0,
+      totalStockamtRlp: 0,
+      totalUnsalableamtDlp: 0,
+      totalUnsalableStockamtRlp: 0,
+      normsQty: 0,
+      godownType: "main",
+      openingStock: false,
+    });
+  }
+}
 
     res.status(200).json({
       status: 200,
