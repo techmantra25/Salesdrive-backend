@@ -128,6 +128,44 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       pipeline.push({ $match: matchStage });
     }
 
+    // ---- Combine across godowns when no specific godown is selected ----
+    // Without a godownId filter, the same product can appear as multiple
+    // separate Inventory docs (one per godown), which previously rendered
+    // as duplicate rows in the UI. When the user picks "All Godowns" (no
+    // godownId, only distributorId / godownType in matchStage), we group
+    // by productId and SUM the quantity/amount fields so the table shows
+    // one combined row per product instead of one row per (product,
+    // godown) pair.
+    //
+    // When a specific godownId IS selected, we skip this — each doc is
+    // already scoped to exactly that godown, so per-godown rows are shown
+    // as-is (matches previous, expected behavior for a single godown).
+    const combineAcrossGodowns = !godownId;
+
+    if (combineAcrossGodowns) {
+      pipeline.push({
+        $group: {
+          _id: "$productId",
+          productId: { $first: "$productId" },
+          distributorId: { $first: "$distributorId" },
+          openingStock: { $first: "$openingStock" },
+          availableQty: { $sum: "$availableQty" },
+          unsalableQty: { $sum: "$unsalableQty" },
+          intransitQty: { $sum: "$intransitQty" },
+          undeliveredQty: { $sum: "$undeliveredQty" },
+          damagedQty: { $sum: "$damagedQty" },
+          reservedQty: { $sum: "$reservedQty" },
+          offerQty: { $sum: "$offerQty" },
+          totalQty: { $sum: "$totalQty" },
+          normsQty: { $sum: "$normsQty" },
+          totalStockamtDlp: { $sum: "$totalStockamtDlp" },
+          totalStockamtRlp: { $sum: "$totalStockamtRlp" },
+          totalUnsalableamtDlp: { $sum: "$totalUnsalableamtDlp" },
+          totalUnsalableStockamtRlp: { $sum: "$totalUnsalableStockamtRlp" },
+        },
+      });
+    }
+
     // Lookup (join) with the Product model to apply product-specific filters
     pipeline.push({
       $lookup: {
@@ -241,6 +279,11 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
           ...godownMatchFragment,
         },
       },
+      // Mirror the same combine-across-godowns logic used in the main
+      // pipeline: when no specific godownId is selected, count distinct
+      // products (post-group row count), not raw per-godown docs — so
+      // this number matches what the table actually displays.
+      ...(combineAcrossGodowns ? [{ $group: { _id: "$productId" } }] : []),
       {
         $count: "totalItems",
       },
