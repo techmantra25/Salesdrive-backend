@@ -42,6 +42,7 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       brandId,
       categoryId,
       collectionId,
+      godownId,
       godownType,
       closingStockDate,
       stockType,
@@ -59,14 +60,24 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     // Build the aggregation pipeline
     const pipeline = [];
 
+    // ---- Shared godown filter fragment ----
+    // A specific godownId always takes precedence over godownType, since
+    // godownType is a denormalized field on each inventory doc (copied from
+    // the godown it belongs to) and a specific godown already disambiguates
+    // type. This same fragment is reused in totalCountPipeline and
+    // pointsCalculationPipeline so all counts/totals stay consistent with
+    // whichever godown filter the user has selected.
+    const godownMatchFragment = godownId
+      ? { godownId: new mongoose.Types.ObjectId(godownId) }
+      : godownType
+      ? { godownType: godownType }
+      : {};
+
     // Match filters for inventory
     const matchStage = {
       distributorId: distributorId,
+      ...godownMatchFragment,
     };
-
-    if (godownType) {
-      matchStage.godownType = godownType;
-    }
 
     if (zeroStockFilter === "false") {
       // Hide zero-quantity items — only rows with positive qty for the
@@ -218,11 +229,16 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     paginatedPipeline.push({ $skip: (pageNum - 1) * limitNum });
     paginatedPipeline.push({ $limit: limitNum });
 
-    // Total count for all items (no filters applied)
+    // Total count — scoped to distributor + the selected godown filter
+    // (godownId/godownType) but NOT the other filters like brand/category/
+    // search/stockType. This gives "how many items exist in this godown"
+    // as a baseline, separate from "how many match my current filters"
+    // (that's filteredCountPipeline below).
     const totalCountPipeline = [
       {
         $match: {
           distributorId: distributorId,
+          ...godownMatchFragment,
         },
       },
       {
@@ -312,6 +328,18 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         {
           $match: {
             "lineItems.product": { $in: pageProductIds },
+            // TODO-CONFIRM: this assumes orderEntry.lineItems has a
+            // godownId field. If it does NOT exist in the schema, this
+            // condition silently matches nothing whenever a godown is
+            // selected (pendingOrderQty would incorrectly show 0 for every
+            // row instead of falling back to distributor-wide). Verify
+            // against orderEntry.model.js before relying on this in
+            // production — remove this block entirely if the field
+            // doesn't exist, and treat pendingOrderQty as inherently
+            // distributor-wide (not godown-scoped) instead.
+            ...(godownId
+              ? { "lineItems.godownId": new mongoose.Types.ObjectId(godownId) }
+              : {}),
           },
         },
         {
@@ -346,8 +374,6 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
 
     const resultInventories = inventories;
 
-
-
     // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;
 
@@ -356,6 +382,7 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         {
           $match: {
             distributorId: distributorId,
+            ...godownMatchFragment,
             $or: [{ availableQty: { $gt: 0 } }, { reservedQty: { $gt: 0 } }],
           },
         },
