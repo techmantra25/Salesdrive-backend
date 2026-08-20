@@ -42,6 +42,7 @@ const stockLedgerSchema = new mongoose.Schema({
         "stockadjustment",
         "invoice",
         "stocktransfer",
+        "godowntransfer",
         "delivery",
         "salesreturn",
         "purchasereturn",
