@@ -263,13 +263,33 @@ const createSingleBill = asyncHandler(async (req, res) => {
               `GST_QTY_OVERBILL: billQty (${billQty}) exceeds orderQty (${orderQty}) for product ${item?.product} on order ${orderId}; scaling anyway, please verify.`,
             );
           }
-        } else {
-          // No matching order line found — this should not normally happen
-          // since a bill always originates from an order. Logged so it can
-          // be investigated; GST is left at 0 rather than guessed.
+                } else {
+          // No matching order line found — this item was added directly
+          // during bill creation (e.g. via the product catalogue) and was
+          // never part of the original order, so there is nothing to scale
+          // GST from. Compute GST from the product's own tax rates instead
+          // of leaving it at 0.
           console.warn(
-            `GST_COPY_MISS: no matching order line found for product ${item?.product} on order ${orderId}; GST left as 0 for this bill line.`,
+            `GST_COPY_MISS: no matching order line found for product ${item?.product} on order ${orderId}; computing GST from product tax rates directly.`,
           );
+
+          taxableAmt = toTwoDecimal(safeNumber(item.taxableAmt));
+
+          const productCgstRate = safeNumber(product?.cgst);
+          const productSgstRate = safeNumber(product?.sgst);
+          const productIgstRate = safeNumber(product?.igst);
+
+          if (isSameState) {
+            totalCGST = toTwoDecimal((taxableAmt * productCgstRate) / 100);
+            totalSGST = toTwoDecimal((taxableAmt * productSgstRate) / 100);
+            totalIGST = 0;
+          } else {
+            totalCGST = 0;
+            totalSGST = 0;
+            totalIGST = toTwoDecimal((taxableAmt * productIgstRate) / 100);
+          }
+
+          netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
         }
 
         recalculatedLineItems.push({
