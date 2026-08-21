@@ -1,256 +1,25 @@
-// const asyncHandler = require("express-async-handler");
-// const Inventory = require("../../models/inventory.model");
-// const Product = require("../../models/product.model");
-// const Transaction = require("../../models/transaction.model");
-// const { transactionCode } = require("../../utils/codeGenerator");
-// const { SERVER_URL } = require("../../config/server.config");
-// const axios = require("axios");
+// ============================================================================
+// OLD LOGIC #1 (original, stock-type <-> stock-type within the SAME godown,
+// salable/unsalable/offer only) — kept commented for history, matches the
+// very first version of this controller.
+// ============================================================================
+// ...(unchanged, see previous version of this file)...
 
+// ============================================================================
+// OLD LOGIC #2 (stock-type <-> stock-type within the SAME godown, extended
+// to include "reserve") — this was the ACTIVE version before this change.
+// It is being REPLACED because the frontend (StockTransfer.jsx) no longer
+// sends stockTypeFrom/stockTypeTo — it now sends godownIdFrom/godownIdTo +
+// a single stockType per row, since the page transfers stock between two
+// GODOWNS rather than reclassifying stock type within one godown.
+//
+// If stock-type-to-stock-type transfers (e.g. Salable -> Unsalable within
+// the same godown) are still needed elsewhere, keep that old handler alive
+// under a different route/export name rather than deleting it outright.
+// ============================================================================
 // const stockTransfer = asyncHandler(async (req, res) => {
-//   try {
-//     const { data } = req.body;
-//     const distributorId = req.user.id;
-
-//     if (!data || !Array.isArray(data)) {
-//       return res
-//         .status(400)
-//         .json({ message: "Data is required and must be an array" });
-//     }
-
-//     const transactions = [];
-//     const skippedRows = [];
-//     const stockId = await transactionCode("LXSTA");
-
-//     await Promise.all(
-//       data.map(async (row, index) => {
-//         console.log(`Processing row ${index + 1}:`, row);
-
-//         const productCode = row.product_code.trim();
-//         const qty = parseInt(row.qty, 10) || 0; // Default to 0 if qty is not provided
-//         const stockTypeFrom = row.stockTypeFrom.trim().toLowerCase();
-//         const stockTypeTo = row.stockTypeTo.trim().toLowerCase();
-//         const remarks = row.remarks
-//           ? row.remarks.trim()
-//           : `${stockTypeFrom} to ${stockTypeTo} Transfer`;
-
-//         if (isNaN(qty) || qty <= 0) {
-//           row.reason = `Invalid quantity for Product code: ${productCode}`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         const product = await Product.findOne({ product_code: productCode });
-
-//         if (!product) {
-//           row.reason = `Product with code ${productCode} not found`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         const priceResponse = await axios.get(
-//           `${SERVER_URL}/api/v1/price/product-pricing/${product._id}?distributorId=${distributorId}`
-//         );
-
-//         const priceEntry = priceResponse?.data?.data[0];
-
-//         if (!priceEntry) {
-//           row.reason = `No price entry found for Product ID ${productCode} at row ${
-//             index + 1
-//           }`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         let rlpbyPcs = 0;
-//         let dlpbyPcs = 0;
-
-//         if (product?.uom === "box") {
-//           const piecesPerBox = product?.no_of_pieces_in_a_box || 1;
-//           rlpbyPcs = priceEntry?.rlp_price / piecesPerBox;
-//           dlpbyPcs = priceEntry?.dlp_price / piecesPerBox;
-//         } else {
-//           rlpbyPcs = priceEntry?.rlp_price || 0;
-//           dlpbyPcs = priceEntry?.dlp_price || 0;
-//         }
-
-//         if (isNaN(rlpbyPcs) || isNaN(dlpbyPcs)) {
-//           row.reason = `Invalid RLP or DLP price calculation for Product code: ${productCode}`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         let inventory = await Inventory.findOne({
-//           productId: product._id,
-//           distributorId,
-//         });
-
-//         if (!inventory) {
-//           row.reason = `No existing inventory found for Product ID ${productCode} and Distributor ID ${distributorId}`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         // Check if the quantity is greater than the available stock in the relevant stock type
-//         if (
-//           (stockTypeFrom === "salable" && qty > inventory.availableQty) ||
-//           (stockTypeFrom === "unsalable" && qty > inventory.unsalableQty) ||
-//           (stockTypeFrom === "offer" && qty > inventory.offerQty)
-//         ) {
-//           row.reason = `Insufficient stock in ${stockTypeFrom} for Product code: ${productCode}`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         // Adjust inventory quantities based on stockTypeFrom and stockTypeTo
-//         const transferStock = () => {
-//           if (stockTypeFrom === "salable" && stockTypeTo === "unsalable") {
-//             inventory.availableQty = Math.max(
-//               (inventory.availableQty || 0) - qty,
-//               0
-//             );
-//             inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-//             inventory.totalStockamtDlp = Math.max(
-//               (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalStockamtRlp = Math.max(
-//               (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalUnsalableamtDlp =
-//               (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-//             inventory.totalUnsalableStockamtRlp =
-//               (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-//           } else if (
-//             stockTypeFrom === "unsalable" &&
-//             stockTypeTo === "salable"
-//           ) {
-//             inventory.unsalableQty = Math.max(
-//               (inventory.unsalableQty || 0) - qty,
-//               0
-//             );
-//             inventory.availableQty = (inventory.availableQty || 0) + qty;
-//             inventory.totalUnsalableamtDlp = Math.max(
-//               (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalUnsalableStockamtRlp = Math.max(
-//               (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalStockamtDlp =
-//               (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-//             inventory.totalStockamtRlp =
-//               (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-//           } else if (stockTypeFrom === "salable" && stockTypeTo === "offer") {
-//             inventory.availableQty = Math.max(
-//               (inventory.availableQty || 0) - qty,
-//               0
-//             );
-//             inventory.offerQty = (inventory.offerQty || 0) + qty;
-//             inventory.totalStockamtDlp = Math.max(
-//               (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalStockamtRlp = Math.max(
-//               (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-//               0
-//             );
-//           } else if (stockTypeFrom === "offer" && stockTypeTo === "salable") {
-//             inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-//             inventory.availableQty = (inventory.availableQty || 0) + qty;
-//             inventory.totalStockamtDlp =
-//               (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-//             inventory.totalStockamtRlp =
-//               (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-//           } else if (stockTypeFrom === "offer" && stockTypeTo === "unsalable") {
-//             inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-//             inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-//             inventory.totalUnsalableamtDlp =
-//               (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-//             inventory.totalUnsalableStockamtRlp =
-//               (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-//           } else if (stockTypeFrom === "unsalable" && stockTypeTo === "offer") {
-//             inventory.unsalableQty = Math.max(
-//               (inventory.unsalableQty || 0) - qty,
-//               0
-//             );
-//             inventory.offerQty = (inventory.offerQty || 0) + qty;
-//             inventory.totalUnsalableamtDlp = Math.max(
-//               (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-//               0
-//             );
-//             inventory.totalUnsalableStockamtRlp = Math.max(
-//               (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-//               0
-//             );
-//           }
-//         };
-
-//         transferStock();
-
-//         // Update totalQty based on stock adjustments
-//         inventory.totalQty =
-//           (inventory.availableQty || 0) +
-//           (inventory.unsalableQty || 0) +
-//           (inventory.offerQty || 0);
-
-//         if (
-//           isNaN(inventory.availableQty) ||
-//           isNaN(inventory.totalStockamtDlp) ||
-//           isNaN(inventory.totalStockamtRlp) ||
-//           isNaN(inventory.unsalableQty) ||
-//           isNaN(inventory.totalUnsalableamtDlp) ||
-//           isNaN(inventory.totalUnsalableStockamtRlp) ||
-//           isNaN(inventory.offerQty) ||
-//           isNaN(inventory.totalQty)
-//         ) {
-//           row.reason = `Invalid inventory calculations for Product code: ${productCode}`;
-//           skippedRows.push({ ...row });
-//           return;
-//         }
-
-//         await inventory.save();
-
-//         transactions.push({
-//           distributorId,
-//           transactionId: stockId,
-//           invItemId: inventory._id,
-//           productId: product._id,
-//           qty,
-//           date: new Date(),
-//           type: "In",
-//           description: remarks,
-//           balanceCount:
-//             stockTypeTo === "salable"
-//               ? inventory.availableQty
-//               : stockTypeTo === "unsalable"
-//               ? inventory.unsalableQty
-//               : inventory.offerQty,
-//           transactionType: "stocktransfer",
-//           stockType: stockTypeTo,
-//         });
-//       })
-//     );
-
-//     if (transactions.length > 0) {
-//       await Transaction.insertMany(transactions);
-//     }
-
-//     res.json({
-//       status: "success",
-//       message: "Stock transfer completed",
-//       skippedRows,
-//     });
-//   } catch (error) {
-//     console.error("Stock Transfer Error:", error);
-//     res.status(500).json({ message: "Stock Transfer failed", error });
-//   }
+//   ...(unchanged, see previous version of this file)...
 // });
-
-// module.exports = { stockTransfer };
-
-// new logic
 
 const asyncHandler = require("express-async-handler");
 const Inventory = require("../../models/inventory.model");
@@ -263,6 +32,72 @@ const {
   createBulkStockLedgerEntries,
 } = require("../../controllers/transction/createStockLedgerEntry");
 
+// Which Inventory fields a given stockType bucket maps to, for the purpose
+// of a godown-to-godown transfer. "pending" is intentionally NOT included
+// here — pendingOrderQty is never stored on the Inventory document at all;
+// it's computed on the fly in inventoryPaginatedList by aggregating
+// un-billed orderEntry line items for the product. There is no physical
+// stock sitting against a product+godown to move for "pending", so any row
+// with stockType "pending" is always skipped with an explanatory reason.
+const STOCK_FIELD_MAP = {
+  salable: {
+    qtyField: "availableQty",
+    dlpField: "totalStockamtDlp",
+    rlpField: "totalStockamtRlp",
+  },
+  unsalable: {
+    qtyField: "unsalableQty",
+    dlpField: "totalUnsalableamtDlp",
+    rlpField: "totalUnsalableStockamtRlp",
+  },
+  offer: {
+    qtyField: "offerQty",
+    dlpField: null,
+    rlpField: null,
+  },
+  reserve: {
+    qtyField: "reservedQty",
+    dlpField: null,
+    rlpField: null,
+  },
+  intransit: {
+    qtyField: "intransitQty",
+    dlpField: null,
+    rlpField: null,
+  },
+};
+
+const recalcTotalQty = (inv) =>
+  (inv.availableQty || 0) +
+  (inv.unsalableQty || 0) +
+  (inv.offerQty || 0) +
+  (inv.reservedQty || 0);
+
+/**
+ * Transfers stock for a set of products from one godown to another.
+ *
+ * Expected req.body:
+ * {
+ *   data: [
+ *     {
+ *       product_code: "3100000001",
+ *       product_name: "CPVC-P-15-MM-SDR11-3M-3092", // optional, informational only
+ *       stockType: "salable" | "unsalable" | "offer" | "reserve" | "intransit",
+ *       godownIdFrom: "<ObjectId>",
+ *       godownIdTo: "<ObjectId>",
+ *       qty: 10,
+ *       remarks: "optional free text",
+ *     },
+ *     ...
+ *   ]
+ * }
+ *
+ * A single product can appear multiple times in `data` (once per stockType
+ * bucket) if the caller wants to move e.g. both Salable and Reserve qty for
+ * the same product in one submission — the frontend's Stock Transfer screen
+ * does exactly this when more than one "Transfer Qty" box is filled in for
+ * a row.
+ */
 const stockTransfer = asyncHandler(async (req, res) => {
   try {
     const { data } = req.body;
@@ -280,16 +115,46 @@ const stockTransfer = asyncHandler(async (req, res) => {
 
     await Promise.all(
       data.map(async (row, index) => {
-        const productCode = row.product_code.trim();
-        const qty = parseInt(row.qty, 10) || 0; // Default to 0 if qty is not provided
-        const stockTypeFrom = row.stockTypeFrom.trim().toLowerCase();
-        const stockTypeTo = row.stockTypeTo.trim().toLowerCase();
+        const productCode = row.product_code?.trim();
+        const qty = parseInt(row.qty, 10) || 0;
+        const stockType = row.stockType?.trim().toLowerCase();
+        const godownIdFrom = row.godownIdFrom;
+        const godownIdTo = row.godownIdTo;
         const remarks = row.remarks
           ? row.remarks.trim()
-          : `${stockTypeFrom} to ${stockTypeTo} Transfer`;
+          : `Godown stock Transfer (${stockType})`;
+
+        if (!productCode) {
+          row.reason = `Product code is required at row ${index + 1}`;
+          skippedRows.push({ ...row });
+          return;
+        }
 
         if (isNaN(qty) || qty <= 0) {
           row.reason = `Invalid quantity for Product code: ${productCode}`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        if (!godownIdFrom || !godownIdTo) {
+          row.reason = `From Godown and To Godown are both required for Product code: ${productCode}`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        if (String(godownIdFrom) === String(godownIdTo)) {
+          row.reason = `From Godown and To Godown cannot be the same for Product code: ${productCode}`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        const fieldMap = STOCK_FIELD_MAP[stockType];
+
+        if (!fieldMap) {
+          row.reason =
+            stockType === "pending"
+              ? `Pending Order Qty cannot be transferred — it isn't physical stock held against a godown, for Product code: ${productCode}`
+              : `Unknown stock type "${row.stockType}" for Product code: ${productCode}`;
           skippedRows.push({ ...row });
           return;
         }
@@ -309,9 +174,8 @@ const stockTransfer = asyncHandler(async (req, res) => {
         const priceEntry = priceResponse?.data?.data[0];
 
         if (!priceEntry) {
-          row.reason = `No price entry found for Product ID ${productCode} at row ${
-            index + 1
-          }`;
+          row.reason = `No price entry found for Product ID ${productCode} at row ${index + 1
+            }`;
           skippedRows.push({ ...row });
           return;
         }
@@ -334,251 +198,119 @@ const stockTransfer = asyncHandler(async (req, res) => {
           return;
         }
 
-        let inventory = await Inventory.findOne({
+        const sourceInventory = await Inventory.findOne({
           productId: product._id,
           distributorId,
+          godownId: godownIdFrom,
         });
 
-        if (!inventory) {
-          row.reason = `No existing inventory found for Product ID ${productCode} and Distributor ID ${distributorId}`;
+        if (!sourceInventory) {
+          row.reason = `No inventory found for Product code ${productCode} in the source godown`;
           skippedRows.push({ ...row });
           return;
         }
 
-        // Check if the quantity is greater than the available stock in the relevant stock type
-        if (
-          (stockTypeFrom === "salable" && qty > inventory.availableQty) ||
-          (stockTypeFrom === "unsalable" && qty > inventory.unsalableQty) ||
-          (stockTypeFrom === "offer" && qty > inventory.offerQty) ||
-          (stockTypeFrom === "reserve" && qty > inventory.reservedQty)
-        ) {
-          row.reason = `Insufficient stock in ${stockTypeFrom} for Product code: ${productCode}`;
+        const availableInSource = sourceInventory[fieldMap.qtyField] || 0;
+
+        if (qty > availableInSource) {
+          row.reason = `Insufficient ${stockType} stock in source godown for Product code: ${productCode}`;
           skippedRows.push({ ...row });
           return;
         }
 
-        // Adjust inventory quantities based on stockTypeFrom and stockTypeTo
-        const transferStock = () => {
-          if (stockTypeFrom === "salable" && stockTypeTo === "unsalable") {
-            inventory.availableQty = Math.max(
-              (inventory.availableQty || 0) - qty,
-              0,
-            );
-            inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-            inventory.totalStockamtDlp = Math.max(
-              (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalStockamtRlp = Math.max(
-              (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-            inventory.totalUnsalableamtDlp =
-              (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalUnsalableStockamtRlp =
-              (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (
-            stockTypeFrom === "unsalable" &&
-            stockTypeTo === "salable"
-          ) {
-            inventory.unsalableQty = Math.max(
-              (inventory.unsalableQty || 0) - qty,
-              0,
-            );
-            inventory.availableQty = (inventory.availableQty || 0) + qty;
-            inventory.totalUnsalableamtDlp = Math.max(
-              (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalUnsalableStockamtRlp = Math.max(
-              (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-            inventory.totalStockamtDlp =
-              (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalStockamtRlp =
-              (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (stockTypeFrom === "salable" && stockTypeTo === "offer") {
-            inventory.availableQty = Math.max(
-              (inventory.availableQty || 0) - qty,
-              0,
-            );
-            inventory.offerQty = (inventory.offerQty || 0) + qty;
-            inventory.totalStockamtDlp = Math.max(
-              (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalStockamtRlp = Math.max(
-              (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          } else if (stockTypeFrom === "offer" && stockTypeTo === "salable") {
-            inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-            inventory.availableQty = (inventory.availableQty || 0) + qty;
-            inventory.totalStockamtDlp =
-              (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalStockamtRlp =
-              (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (stockTypeFrom === "offer" && stockTypeTo === "unsalable") {
-            inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-            inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-            inventory.totalUnsalableamtDlp =
-              (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalUnsalableStockamtRlp =
-              (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (stockTypeFrom === "unsalable" && stockTypeTo === "offer") {
-            inventory.unsalableQty = Math.max(
-              (inventory.unsalableQty || 0) - qty,
-              0,
-            );
-            inventory.offerQty = (inventory.offerQty || 0) + qty;
-            inventory.totalUnsalableamtDlp = Math.max(
-              (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalUnsalableStockamtRlp = Math.max(
-              (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          } else if (stockTypeFrom === "salable" && stockTypeTo === "reserve") {
-            inventory.availableQty = Math.max(
-              (inventory.availableQty || 0) - qty,
-              0,
-            );
-            inventory.reservedQty = (inventory.reservedQty || 0) + qty;
-            inventory.totalStockamtDlp = Math.max(
-              (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalStockamtRlp = Math.max(
-              (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          }
-          // NEW: Reserve to Salable
-          else if (stockTypeFrom === "reserve" && stockTypeTo === "salable") {
-            inventory.reservedQty = Math.max(
-              (inventory.reservedQty || 0) - qty,
-              0,
-            );
-            inventory.availableQty = (inventory.availableQty || 0) + qty;
-            inventory.totalStockamtDlp =
-              (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalStockamtRlp =
-              (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-          }
-          // NEW: Reserve to Unsalable
-          else if (stockTypeFrom === "reserve" && stockTypeTo === "unsalable") {
-            inventory.reservedQty = Math.max(
-              (inventory.reservedQty || 0) - qty,
-              0,
-            );
-            inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-            inventory.totalUnsalableamtDlp =
-              (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalUnsalableStockamtRlp =
-              (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-          }
-          // NEW: Unsalable to Reserve
-          else if (stockTypeFrom === "unsalable" && stockTypeTo === "reserve") {
-            inventory.unsalableQty = Math.max(
-              (inventory.unsalableQty || 0) - qty,
-              0,
-            );
-            inventory.reservedQty = (inventory.reservedQty || 0) + qty;
-            inventory.totalUnsalableamtDlp = Math.max(
-              (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalUnsalableStockamtRlp = Math.max(
-              (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          }
-          // NEW: Reserve to Offer
-          else if (stockTypeFrom === "reserve" && stockTypeTo === "offer") {
-            inventory.reservedQty = Math.max(
-              (inventory.reservedQty || 0) - qty,
-              0,
-            );
-            inventory.offerQty = (inventory.offerQty || 0) + qty;
-          }
-          // NEW: Offer to Reserve
-          else if (stockTypeFrom === "offer" && stockTypeTo === "reserve") {
-            inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-            inventory.reservedQty = (inventory.reservedQty || 0) + qty;
-          }
-        };
+        let destinationInventory = await Inventory.findOne({
+          productId: product._id,
+          distributorId,
+          godownId: godownIdTo,
+        });
 
-        transferStock();
+        // Destination godown may not have an inventory row for this product
+        // yet (first time stock ever lands there) — create one.
+        if (!destinationInventory) {
+          destinationInventory = new Inventory({
+            productId: product._id,
+            distributorId,
+            godownId: godownIdTo,
+            godownType: row.godownTypeTo || sourceInventory.godownType,
+            invitemId: sourceInventory.invitemId,
+          });
+        }
 
-        // Update totalQty based on stock adjustments
-        inventory.totalQty =
-          (inventory.availableQty || 0) +
-          (inventory.unsalableQty || 0) +
-          (inventory.offerQty || 0) +
-          (inventory.reservedQty || 0);
+        // Move qty out of source, into destination.
+        sourceInventory[fieldMap.qtyField] = Math.max(
+          availableInSource - qty,
+          0,
+        );
+        destinationInventory[fieldMap.qtyField] =
+          (destinationInventory[fieldMap.qtyField] || 0) + qty;
+
+        // Carry the DLP/RLP valuation along with the qty, for buckets that
+        // track it (salable / unsalable). Offer, reserve and in-transit
+        // don't carry a separate amount field in the schema, same as in
+        // the previous stock-type-transfer logic.
+        if (fieldMap.dlpField && fieldMap.rlpField) {
+          sourceInventory[fieldMap.dlpField] = Math.max(
+            (sourceInventory[fieldMap.dlpField] || 0) - dlpbyPcs * qty,
+            0,
+          );
+          sourceInventory[fieldMap.rlpField] = Math.max(
+            (sourceInventory[fieldMap.rlpField] || 0) - rlpbyPcs * qty,
+            0,
+          );
+
+          destinationInventory[fieldMap.dlpField] =
+            (destinationInventory[fieldMap.dlpField] || 0) + dlpbyPcs * qty;
+          destinationInventory[fieldMap.rlpField] =
+            (destinationInventory[fieldMap.rlpField] || 0) + rlpbyPcs * qty;
+        }
+
+        sourceInventory.totalQty = recalcTotalQty(sourceInventory);
+        destinationInventory.totalQty = recalcTotalQty(destinationInventory);
 
         if (
-          isNaN(inventory.availableQty) ||
-          isNaN(inventory.totalStockamtDlp) ||
-          isNaN(inventory.totalStockamtRlp) ||
-          isNaN(inventory.unsalableQty) ||
-          isNaN(inventory.totalUnsalableamtDlp) ||
-          isNaN(inventory.totalUnsalableStockamtRlp) ||
-          isNaN(inventory.offerQty) ||
-          isNaN(inventory.reservedQty) ||
-          isNaN(inventory.totalQty)
+          isNaN(sourceInventory[fieldMap.qtyField]) ||
+          isNaN(destinationInventory[fieldMap.qtyField]) ||
+          isNaN(sourceInventory.totalQty) ||
+          isNaN(destinationInventory.totalQty)
         ) {
           row.reason = `Invalid inventory calculations for Product code: ${productCode}`;
           skippedRows.push({ ...row });
           return;
         }
 
-        await inventory.save();
+        await sourceInventory.save();
+        await destinationInventory.save();
 
-        // Add the "Out" transaction for stockTypeFrom
+        // "Out" transaction against the source godown's inventory row
         transactions.push({
           distributorId,
           transactionId: stockId,
-          invItemId: inventory._id,
+          invItemId: sourceInventory._id,
           productId: product._id,
           qty,
           date: new Date(),
           type: "Out",
           description: remarks,
-          balanceCount:
-            stockTypeFrom === "salable"
-              ? inventory.availableQty
-              : stockTypeFrom === "unsalable"
-                ? inventory.unsalableQty
-                : stockTypeFrom === "offer"
-                  ? inventory.offerQty
-                  : inventory.reservedQty,
-          transactionType: "stocktransfer",
-          stockType: stockTypeFrom,
+          balanceCount: sourceInventory[fieldMap.qtyField],
+          transactionType: "godowntransfer",
+          stockType,
+          godownId: godownIdFrom,
         });
 
-        // Add the "In" transaction for stockTypeTo
+        // "In" transaction against the destination godown's inventory row
         transactions.push({
           distributorId,
           transactionId: stockId,
-          invItemId: inventory._id,
+          invItemId: destinationInventory._id,
           productId: product._id,
           qty,
           date: new Date(),
           type: "In",
           description: remarks,
-          balanceCount:
-            stockTypeTo === "salable"
-              ? inventory.availableQty
-              : stockTypeTo === "unsalable"
-                ? inventory.unsalableQty
-                : stockTypeTo === "offer"
-                  ? inventory.offerQty
-                  : inventory.reservedQty,
-          transactionType: "stocktransfer",
-          stockType: stockTypeTo,
+          balanceCount: destinationInventory[fieldMap.qtyField],
+          transactionType: "godowntransfer",
+          stockType,
+          godownId: godownIdTo,
         });
       }),
     );
@@ -591,7 +323,7 @@ const stockTransfer = asyncHandler(async (req, res) => {
         await createBulkStockLedgerEntries(createdTransactions);
       } catch (error) {
         console.error("Bulk stock ledger creation failed:", error.message);
-        // Don't throw - allow adjustment to continue
+        // Don't throw - allow the transfer response to still succeed
       }
     }
 

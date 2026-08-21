@@ -118,6 +118,10 @@ const OrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Beat",
     },
+    zoneId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Zone",
+    },
     retailerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "OutletApproved",

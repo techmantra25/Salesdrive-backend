@@ -60,6 +60,7 @@ const transactionSchema = new mongoose.Schema(
         "stockadjustment",
         "invoice",
         "stocktransfer",
+        "godowntransfer",
         "delivery",
         "salesreturn",
         "purchasereturn",
@@ -67,7 +68,7 @@ const transactionSchema = new mongoose.Schema(
     },
     stockType: {
       type: String,
-      enum: ["salable", "unsalable", "offer", "reserve"],
+      enum: ["salable", "unsalable", "offer", "reserve",  "intransit"],
     },
 
     invoiceId: {
