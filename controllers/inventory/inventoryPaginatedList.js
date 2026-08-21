@@ -360,38 +360,32 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     const pageProductIds = inventories.map((inv) => inv.productId);
 
     if (pageProductIds.length > 0) {
-      const pendingOrderQtyPipeline = [
-        {
-          $match: {
-            distributorId: distributorId,
-            status: { $in: PENDING_ORDER_STATUSES },
-          },
-        },
-        { $unwind: "$lineItems" },
-        {
-          $match: {
-            "lineItems.product": { $in: pageProductIds },
-            // TODO-CONFIRM: this assumes orderEntry.lineItems has a
-            // godownId field. If it does NOT exist in the schema, this
-            // condition silently matches nothing whenever a godown is
-            // selected (pendingOrderQty would incorrectly show 0 for every
-            // row instead of falling back to distributor-wide). Verify
-            // against orderEntry.model.js before relying on this in
-            // production — remove this block entirely if the field
-            // doesn't exist, and treat pendingOrderQty as inherently
-            // distributor-wide (not godown-scoped) instead.
-            ...(godownId
-              ? { "lineItems.godownId": new mongoose.Types.ObjectId(godownId) }
-              : {}),
-          },
-        },
-        {
-          $group: {
-            _id: "$lineItems.product",
-            pendingOrderQty: { $sum: "$lineItems.oderQty" },
-          },
-        },
-      ];
+    const pendingOrderQtyPipeline = [
+  {
+    $match: {
+      distributorId: distributorId,
+      status: { $in: PENDING_ORDER_STATUSES },
+      // godownId lives on the OrderEntry header, not on each lineItem —
+      // filter here, before unwinding, not on "lineItems.godownId" (that
+      // field doesn't exist in the schema; see sample OrderEntry docs).
+      ...(godownId
+        ? { godownId: new mongoose.Types.ObjectId(godownId) }
+        : {}),
+    },
+  },
+  { $unwind: "$lineItems" },
+  {
+    $match: {
+      "lineItems.product": { $in: pageProductIds },
+    },
+  },
+  {
+    $group: {
+      _id: "$lineItems.product",
+      pendingOrderQty: { $sum: "$lineItems.oderQty" },
+    },
+  },
+];
 
       const pendingOrderQtyResult = await orderentry.aggregate(
         pendingOrderQtyPipeline
