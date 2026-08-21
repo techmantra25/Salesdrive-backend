@@ -273,6 +273,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
       retailerId,
       godownId,
       cso: outlet?.cso ?? null,
+      zoneId: outlet?.zoneId ?? null,
       orderType,
       orderSource,
       paymentMode,
@@ -429,6 +430,7 @@ const createOrderEntry = asyncHandler(async (req, res) => {
             { path: "distributorId", select: "" },
             { path: "salesmanName", select: "" },
             { path: "routeId", select: "" },
+            { path: "zoneId", select: "" },
             {
               path: "retailerId",
               select: "",
