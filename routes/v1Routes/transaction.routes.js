@@ -17,6 +17,26 @@ const {
 
 const { stockTransfer } = require("../../controllers/transction/stockTransfer");
 
+const {
+  stockTransferDraftCreate,
+} = require("../../controllers/stockTransferDraft/stockTransferDraftCreate");
+
+const {
+  stockTransferDraftDetail,
+} = require("../../controllers/stockTransferDraft/stockTransferDraftDetail");
+
+const {
+  stockTransferDraftUpdate,
+} = require("../../controllers/stockTransferDraft/stockTransferDraftUpdate");
+
+const {
+  stockTransferDraftList,
+} = require("../../controllers/stockTransferDraft/stockTransferDraftList");
+
+const {
+  stockTransferDraftDelete,
+} = require("../../controllers/stockTransferDraft/stockTransferDraftDelete");
+
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const protectAdminOrEmployeeRoute = require("../../middlewares/protectAdminOrEmployeeRoute");
@@ -38,6 +58,26 @@ const { updateTransactionQty } = require("../../controllers/transction/updateTra
 const transactionRoutes = express.Router();
 
 transactionRoutes.route("/stock-transfer").post(protectDisRoute, stockTransfer);
+
+transactionRoutes
+  .route("/stock-transfer-draft/create")
+  .post(protectDisRoute, stockTransferDraftCreate);
+
+transactionRoutes
+  .route("/stock-transfer-draft/detail/:transferDraftId")
+  .get(protectDisRoute, stockTransferDraftDetail);
+
+transactionRoutes
+  .route("/stock-transfer-draft/update/:transferDraftId")
+  .patch(protectDisRoute, stockTransferDraftUpdate);
+
+transactionRoutes
+  .route("/stock-transfer-draft/all-list")
+  .get(protectDisRoute, stockTransferDraftList);
+
+transactionRoutes
+  .route("/stock-transfer-draft/delete/:transferDraftId")
+  .delete(protectDisRoute, stockTransferDraftDelete);
 
 transactionRoutes.route("/all-list").get(protectDisRoute, allTransactionList);
 transactionRoutes.route("/alllist-admins").post(adminAllTransactionList);
