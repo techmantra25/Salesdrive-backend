@@ -13,6 +13,7 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
       toDate,
       grnFromDate,
       grnToDate,
+      godownId
     } = req.query;
     page = parseInt(page, 10);
     limit = parseInt(limit, 10);
@@ -119,7 +120,15 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
     // BUILD BASE MATCH (applies to all branches)
     // ============================
     const baseMatch = {};
-    if (distributorId) baseMatch.distributorId = distributorId;
+
+    if (distributorId) {
+      baseMatch.distributorId = distributorId;
+    }
+
+    if (godownId) {
+      baseMatch.godownId = godownId;
+    }
+
     if (search) {
       baseMatch.$or = [
         {
@@ -136,7 +145,10 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
         },
       ];
     }
-    if (grnDateRange) baseMatch.grnDate = grnDateRange;
+
+    if (grnDateRange) {
+      baseMatch.grnDate = grnDateRange;
+    }
 
     console.log("==================== BASE MATCH ====================");
     console.log("Base Match:", JSON.stringify(baseMatch, null, 2));
@@ -380,7 +392,8 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
         select: "",
         populate: { path: "brand", select: "" },
       })
-      .populate({ path: "lineItems.plant", select: "" });
+      .populate({ path: "lineItems.plant", select: "" })
+      .populate({ path: "godownId", select: "" });
 
     console.log("==================== QUERY RESULTS ====================");
     console.log("Number of invoices found:", invoices.length);
