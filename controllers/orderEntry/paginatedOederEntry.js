@@ -35,6 +35,7 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
       retailerId,
       retailerPhone,
       outletCode,
+      godownId,
       zoneId,
       districtId,
       orderType,
@@ -131,6 +132,17 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
     // console.log("Retailer Array:", retailerIdArr);
     if (retailerIdArr.length === 1) query.retailerId = retailerIdArr[0];
     else if (retailerIdArr.length > 1) query.retailerId = { $in: retailerIdArr };
+
+    // GODOWN FILTER
+    const godownIdArr = toArray(godownId);
+
+    if (godownIdArr.length === 1) {
+      query.godownId = godownIdArr[0];
+    } else if (godownIdArr.length > 1) {
+      query.godownId = {
+        $in: godownIdArr,
+      };
+    }
 
     // --------------------------------------------------
     // RETAILER PHONE FILTER (multi, normalize both schema + frontend)
@@ -299,6 +311,10 @@ const paginatedOrderEntry = asyncHandler(async (req, res) => {
         { path: "salesmanName" },
         { path: "routeId" },
         { path: "retailerId" },
+        {
+          path: "godownId",
+          select: "godownCode godownName location",
+        },
         { path: "lineItems.product" },
         { path: "lineItems.price" },
         { path: "lineItems.inventoryId" },

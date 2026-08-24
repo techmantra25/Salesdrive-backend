@@ -183,6 +183,10 @@ const BillSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "OutletApproved",
     },
+    godownId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Godown",
+    },
     lineItems: [LineItemSchema],
     totalLines: {
       type: Number,

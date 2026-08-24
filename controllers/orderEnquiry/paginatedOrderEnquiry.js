@@ -14,6 +14,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
       employeeId,
       routeId,
       retailerId,
+      godownId,
       retailerPhone,
       outletCode,
       zoneId,
@@ -42,6 +43,11 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
     if (routeId && routeId !== "all") {
       const filter = toInFilter(routeId);
       if (filter) query.routeId = filter;
+    }
+
+    if (godownId && godownId !== "all") {
+      const filter = toInFilter(godownId);
+      if (filter) query.godownId = filter;
     }
 
     if (orderType && orderType !== "all") query.orderType = orderType;
@@ -196,6 +202,7 @@ const paginatedOrderEnquiry = asyncHandler(async (req, res) => {
         { path: "distributorId" },
         { path: "salesmanName" },
         { path: "routeId" },
+        { path: "godownId", select: "godownCode godownName location" },
         {
           path: "retailerId",
           populate: { path: "employeeId" },

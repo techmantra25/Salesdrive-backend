@@ -90,6 +90,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       routeId,
       retailerId,
       vehicleNumber,
+      godownId,
       lineItems,
       totalLines,
       totalBasePoints,
@@ -151,6 +152,14 @@ const createSingleBill = asyncHandler(async (req, res) => {
       res.status(404);
       throw new Error("Retailer not found");
     }
+
+    // ─── Resolve the godown this bill is billed against ───────────────────────
+    // Prefer whatever the client explicitly sent (e.g. a bill created from a
+    // different godown than the order's default), otherwise fall back to the
+    // order's godown. This is the value persisted on Bill.godownId and used
+    // by the bill list's godown filter / godown name column.
+    const finalGodownId = godownId || order?.godownId || null;
+    // ─────────────────────────────────────────────────────────────────────────
 
     // ─── Fetch & validate distributor/retailer state BEFORE any further processing ───
     const distributorStateId = distributor?.stateId
@@ -345,6 +354,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
       orderLineItems.length,
     );
     console.log("finalCgst:", finalCgst, "finalSgst:", finalSgst, "finalIgst:", finalIgst);
+    console.log("finalGodownId:", finalGodownId);
     console.log("=============================================");
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -471,6 +481,7 @@ const createSingleBill = asyncHandler(async (req, res) => {
         cso: order?.cso,
         routeId,
         retailerId,
+        godownId: finalGodownId,
         vehicleNumber,
         adviceSlipLinks,
         lineItems: recalculatedLineItems,

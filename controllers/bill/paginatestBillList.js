@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const Bill = require("../../models/bill.model");
 const OutletApproved = require("../../models/outletApproved.model");
+const mongoose = require("mongoose");
 
 const paginatedBillList = asyncHandler(async (req, res) => {
   try {
@@ -12,6 +13,7 @@ const paginatedBillList = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId,
       fromDate,
       retailerPhone,
       outletCode,
@@ -98,6 +100,24 @@ const paginatedBillList = asyncHandler(async (req, res) => {
       query.retailerId = retailerId;
     }
 
+    // ----------------------------------
+    // Godown filter
+    // ----------------------------------
+    if (godownId && godownId !== "all") {
+      const godownIds = godownId
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => mongoose.Types.ObjectId.isValid(id))
+        .map((id) => new mongoose.Types.ObjectId(id));
+
+      if (godownIds.length > 0) {
+        query.godownId =
+          godownIds.length === 1
+            ? godownIds[0]
+            : { $in: godownIds };
+      }
+    }
+
     const moment = require("moment-timezone");
 
     // Add date filter for createdAt field
@@ -151,7 +171,6 @@ const paginatedBillList = asyncHandler(async (req, res) => {
     if (exclude && exclude?.ledgerCollectionStatus) {
       query.ledgerCollectionStatus = { $ne: exclude.ledgerCollectionStatus };
     }
-
     // Fetch the data with pagination
     const BillList = await Bill.find(query)
       .populate([
@@ -160,6 +179,10 @@ const paginatedBillList = asyncHandler(async (req, res) => {
         { path: "routeId", select: "" },
         { path: "orderId", select: "" },
         { path: "retailerId", select: "" },
+        {
+          path: "godownId",
+          select: "_id godownName godownCode",
+        },
         { path: "lineItems.product", select: "" },
         { path: "lineItems.price", select: "" },
         { path: "lineItems.inventoryId", select: "" },
