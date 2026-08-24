@@ -118,7 +118,7 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
     ],
     invoicestatus: {
       type: String,
-      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced", "Cancelled"],
+      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
       default: "Pending",
     },
 

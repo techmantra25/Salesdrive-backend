@@ -88,13 +88,10 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
       approved_by = null;
     }
 
-   if (status === "Cancelled") {
-  approvedStatus = "Not Approved";
-  approved_by = req?.user?._id || null;
-
-  // When PO is cancelled, invoice status should also be cancelled
-  req.body.invoicestatus = "Cancelled";
-}
+    if (status === "Cancelled") {
+      approvedStatus = "Not Approved";
+      approved_by = req?.user?._id || null;
+    }
 
     req.body.approvedStatus = approvedStatus;
     req.body.approved_by = approved_by;
