@@ -14,6 +14,7 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       distributorId,
       approvedStatus,
       search,
+      godownId
     } = req.query;
 
     let query = {};
@@ -25,20 +26,22 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       query.approvedStatus = approvedStatus;
     }
 
-  if (search) {
-  query.$or = [
-    { purchaseOrderNo: new RegExp(search, "i") },
+    if (search) {
+      query.$or = [
+        { purchaseOrderNo: new RegExp(search, "i") },
 
-    { soNumber: new RegExp(search, "i") },
+        { soNumber: new RegExp(search, "i") },
 
-    { "sapStatusData.Vbeln": new RegExp(search, "i") },
+        { "sapStatusData.Vbeln": new RegExp(search, "i") },
 
-    { "sapStatusData.Vbelnso": new RegExp(search, "i") },
-  ];
-}
+        { "sapStatusData.Vbelnso": new RegExp(search, "i") },
+      ];
+    }
     // Filter by distributor
     if (distributorId) query.distributorId = distributorId;
-
+    if (godownId) {
+      query.godownId = godownId;
+    }
     // Filter by date range (createdAt)
     if (fromDate || toDate) {
       query.createdAt = {};
@@ -61,6 +64,10 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       .populate([
         { path: "distributorId", select: "name dbCode" },
         { path: "supplierId", select: "supplierName supplierCode" },
+        {
+          path: "godownId",
+          select: "godownName",
+        },
         {
           path: "lineItems.product",
           select: "name cat_id collection_id brand",
@@ -103,60 +110,60 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
     ]);
 
     const updatedOrders = await Promise.all(
-  populatedOrders.map(async (po) => {
-    // =========================
-    // BUILD RECEIVED MAP
-    // =========================
-    const invoices = await Invoice.find({
-      purchaseOrderId: po._id,
-    });
+      populatedOrders.map(async (po) => {
+        // =========================
+        // BUILD RECEIVED MAP
+        // =========================
+        const invoices = await Invoice.find({
+          purchaseOrderId: po._id,
+        });
 
-    const receivedMap = {};
+        const receivedMap = {};
 
-    for (const inv of invoices) {
-      for (const li of inv.lineItems) {
-        const key = String(li.product);
+        for (const inv of invoices) {
+          for (const li of inv.lineItems) {
+            const key = String(li.product);
 
-        receivedMap[key] =
-          (receivedMap[key] || 0) + Number(li.qty || 0);
-      }
-    }
+            receivedMap[key] =
+              (receivedMap[key] || 0) + Number(li.qty || 0);
+          }
+        }
 
-    // =========================
-    // PROCESS LINE ITEMS
-    // =========================
-    const updatedLineItems = po.lineItems.map((item) => {
-      const productId = item?.product?._id;
+        // =========================
+        // PROCESS LINE ITEMS
+        // =========================
+        const updatedLineItems = po.lineItems.map((item) => {
+          const productId = item?.product?._id;
 
-      const alreadyReceived =
-        receivedMap[String(productId)] || 0;
+          const alreadyReceived =
+            receivedMap[String(productId)] || 0;
 
-      const remainingQty = Math.max(
-        (item.orderQty || 0) - alreadyReceived,
-        0
-      );
+          const remainingQty = Math.max(
+            (item.orderQty || 0) - alreadyReceived,
+            0
+          );
 
-      const piecesPerBox = Number(
-        item?.product?.no_of_pieces_in_a_box || 1
-      );
+          const piecesPerBox = Number(
+            item?.product?.no_of_pieces_in_a_box || 1
+          );
 
-      const remainingBoxQty = Math.floor(
-        remainingQty / piecesPerBox
-      );
+          const remainingBoxQty = Math.floor(
+            remainingQty / piecesPerBox
+          );
 
-      return {
-        ...item.toObject(),
-        existorderqty: remainingQty,
-        existboxorderqty: remainingBoxQty,
-      };
-    });
+          return {
+            ...item.toObject(),
+            existorderqty: remainingQty,
+            existboxorderqty: remainingBoxQty,
+          };
+        });
 
-    return {
-      ...po.toObject(),
-      lineItems: updatedLineItems,
-    };
-  })
-);
+        return {
+          ...po.toObject(),
+          lineItems: updatedLineItems,
+        };
+      })
+    );
     const filteredCount = await PurchaseOrder.countDocuments(query);
     totalQuery = {};
     if (distributorId) {

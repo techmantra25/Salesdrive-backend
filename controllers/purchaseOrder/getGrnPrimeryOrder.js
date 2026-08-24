@@ -13,6 +13,7 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
       .populate([
         { path: "distributorId", select: "" },
         { path: "supplierId", select: "" },
+        { path: "godownId", select: "" },
         {
           path: "lineItems.product",
           select: "",
@@ -58,7 +59,7 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
         try {
           const productId = item?.product?._id;
 
-      
+
           const alreadyReceived =
             receivedMap[String(productId)] || 0;
 
@@ -87,9 +88,9 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
           return {
             ...item,
 
-           
+
             existorderqty: remainingQty,
-            existboxorderqty: remainingBoxQty,      
+            existboxorderqty: remainingBoxQty,
             grnQty: alreadyReceived,
             grnBoxQty: Math.floor(
               alreadyReceived / piecesPerBox
@@ -122,7 +123,7 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
       })
     );
 
- 
+
     lineItems = await Promise.all(
       lineItems.map(async (item) => {
         try {
