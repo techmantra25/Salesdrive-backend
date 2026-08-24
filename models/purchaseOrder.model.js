@@ -105,11 +105,6 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Plant",
     },
-    godownId: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "Godown",
-  required: [true, "Godown is required"],
-},
     purchaseOrderNo: {
       type: String,
       required: true,
