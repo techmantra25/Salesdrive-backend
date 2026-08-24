@@ -105,6 +105,11 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Plant",
     },
+    godownId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Godown",
+  required: [true, "Godown is required"],
+},
     purchaseOrderNo: {
       type: String,
       required: true,
@@ -118,7 +123,7 @@ const PurchasOrderEntrySchema = new mongoose.Schema(
     ],
     invoicestatus: {
       type: String,
-      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced"],
+      enum: ["Pending", "Partially-Invoiced", "Complete-Invoiced", "Cancelled"],
       default: "Pending",
     },
 
