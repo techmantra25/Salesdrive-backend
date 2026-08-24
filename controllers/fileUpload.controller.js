@@ -42,6 +42,50 @@ const generateCodesInBatch = async (prefix, count) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Business-field enum helpers
+//
+// These mirror the enums defined on the OutletApproved schema
+// (models/outletApproved.model.js). Keeping them centralized here means a
+// schema change only needs to be mirrored in one place in this controller.
+//
+// categoryOfOutlet:   ["Retail", "Wholesale", "Project", "Consumer", "Survey"]
+// potentialSelection: ["Below 1 Lac", "Upto 3 Lac", "Upto 5 Lac", "Upto 10 Lac", "10 Lac & Above", "Survey"]
+// paymentCategory:    ["Good", "Normal", "Follow Up", "RED", "Survey"]
+// retailerClass:      ["A", "B", "C", "D", "Survey"]
+// ---------------------------------------------------------------------------
+const OUTLET_CATEGORY_VALUES = [
+  "Retail",
+  "Wholesale",
+  "Project",
+  "Consumer",
+  "Survey",
+];
+const OUTLET_POTENTIAL_VALUES = [
+  "Below 1 Lac",
+  "Upto 3 Lac",
+  "Upto 5 Lac",
+  "Upto 10 Lac",
+  "10 Lac & Above",
+  "Survey",
+];
+const OUTLET_PAYMENT_CATEGORY_VALUES = ["Good", "Normal", "Follow Up", "RED", "Survey"];
+const OUTLET_RETAILER_CLASS_VALUES = ["A", "B", "C", "D", "Survey"];
+
+// Case-insensitively matches `raw` against `validValues` and returns the
+// canonically-cased value from the schema enum (or null if there's no match
+// / no input). This avoids issues like Array.prototype.toUpperCase() turning
+// "Survey" into "SURVEY", which would no longer match the schema enum.
+const matchEnumValue = (raw, validValues) => {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const match = validValues.find(
+    (value) => value.toLowerCase() === trimmed.toLowerCase(),
+  );
+  return match || undefined; // undefined signals "provided but invalid"
+};
+
 const saveCsvToDB = asyncHandler(async (req, res) => {
   try {
     const results = [];
@@ -663,8 +707,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const productsToInsert = [];
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
-                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${batchStart + 1
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
+                    }/${Math.ceil(results.length / BATCH_SIZE)} (rows ${
+                      batchStart + 1
                     }-${Math.min(batchStart + BATCH_SIZE, results.length)})`,
                   );
 
@@ -954,7 +1000,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 const distributorCode = null;
                 const mrp = row["MRP"];
                 const hasCsvMrp =
-                  mrp !== undefined && mrp !== null && String(mrp).trim() !== "";
+                  mrp !== undefined &&
+                  mrp !== null &&
+                  String(mrp).trim() !== "";
                 const L1DiscountPercentage = row["L1(%)"];
                 const L2DiscountPercentage = row["L2(%)"];
                 const effectiveDate = row["Effective Date"]
@@ -1132,9 +1180,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 existingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"
-                    }_${price.distributorId || "null"
-                    }`;
+                  const key = `${price.productId}_${price.price_type}_${
+                    price.regionId || "null"
+                  }_${price.distributorId || "null"}`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1148,8 +1196,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
-                  }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1455,11 +1504,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Date validation
                 let effectiveDateParsed = todayStart;
                 if (effectiveDate) {
-                  const parsedDate = moment(
-                    effectiveDate,
-                    "DD-MM-YYYY",
-                    true,
-                  );
+                  const parsedDate = moment(effectiveDate, "DD-MM-YYYY", true);
                   if (!parsedDate.isValid()) {
                     skippedRowsForPrice.push({
                       ...row,
@@ -1571,8 +1616,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                 // Group existing prices by combination key
                 activeExistingPrices.forEach((price) => {
-                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${price.distributorId || "null"
-                    }`;
+                  const key = `${price.productId}_${price.price_type}_${price.regionId || "null"}_${
+                    price.distributorId || "null"
+                  }`;
                   if (!existingPricesMap.has(key)) {
                     existingPricesMap.set(key, []);
                   }
@@ -1586,8 +1632,9 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               const validRows = [];
 
               for (const row of preValidatedRows) {
-                const combinationKey = `${row.productId}_${row.priceType}_${row.regionId || "null"
-                  }_${row.distributorId || "null"}`;
+                const combinationKey = `${row.productId}_${row.priceType}_${
+                  row.regionId || "null"
+                }_${row.distributorId || "null"}`;
                 const existingPrices =
                   existingPricesMap.get(combinationKey) || [];
 
@@ -1856,7 +1903,11 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 const effectiveDateParsed = moment
-                  .tz(parsedEff.format("YYYY-MM-DD"), "YYYY-MM-DD", "Asia/Kolkata")
+                  .tz(
+                    parsedEff.format("YYYY-MM-DD"),
+                    "YYYY-MM-DD",
+                    "Asia/Kolkata",
+                  )
                   .startOf("day")
                   .toDate();
                 const todayStart = moment(now)
@@ -1876,20 +1927,44 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 }
 
                 totalProductsMatched += matchedProducts.length;
-                const productIds = matchedProducts.map((product) => product._id);
+                const productIds = matchedProducts.map(
+                  (product) => product._id,
+                );
                 const activePrices = await Price.find({
                   productId: { $in: productIds },
-                  price_type: "national",
-                  regionId: null,
                   distributorId: null,
                   status: true,
                   $or: [
-                    { expiresAt: { $exists: false } },
-                    { expiresAt: null },
-                    { expiresAt: { $gte: now } },
+                    {
+                      $and: [
+                        { price_type: "national" },
+                        { regionId: null },
+                        {
+                          $or: [
+                            { expiresAt: { $exists: false } },
+                            { expiresAt: null },
+                            { expiresAt: { $gte: now } },
+                          ],
+                        },
+                      ],
+                    },
+                    {
+                      $and: [
+                        { price_type: "regional" },
+                        {
+                          $or: [
+                            { expiresAt: { $exists: false } },
+                            { expiresAt: null },
+                            { expiresAt: { $gte: now } },
+                          ],
+                        },
+                      ],
+                    },
                   ],
                 })
-                  .select("_id mrp_price effective_date expiresAt productId status")
+                  .select(
+                    "_id mrp_price effective_date expiresAt productId status price_type regionId",
+                  )
                   .lean();
 
                 if (activePrices.length === 0) {
@@ -1924,7 +1999,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   }
 
                   const sortedPrices = productPrices.sort(
-                    (a, b) => new Date(b.effective_date) - new Date(a.effective_date),
+                    (a, b) =>
+                      new Date(b.effective_date) - new Date(a.effective_date),
                   );
                   const latestPrice = sortedPrices[0];
                   const mrpNumber = Number(latestPrice.mrp_price);
@@ -2008,18 +2084,36 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                   productPrices.forEach((price) => {
                     const finalExpiresAt = price.expiresAt ?? expiresAt;
-                    const isExpiredPrice = moment(finalExpiresAt)
-                      .tz("Asia/Kolkata")
-                      .isSameOrBefore(now);
+                    const isExpiredRegionalPrice =
+                      price.price_type === "regional" &&
+                      finalExpiresAt &&
+                      moment(finalExpiresAt)
+                        .tz("Asia/Kolkata")
+                        .isSameOrBefore(now);
+                    const isPastNationalPrice =
+                      price.price_type === "national" &&
+                      moment(price.effective_date)
+                        .tz("Asia/Kolkata")
+                        .isBefore(todayStart, "day");
+                    const isOlderThanReplacement =
+                      moment(price.effective_date)
+                        .tz("Asia/Kolkata")
+                        .isBefore(effectiveDateParsed, "day");
+                    const shouldDeactivate =
+                      (price.price_type === "regional" &&
+                        (isExpiredRegionalPrice || isOlderThanReplacement)) ||
+                      (price.price_type === "national" &&
+                        (isPastNationalPrice || isOlderThanReplacement));
+                    const updateFields = {
+                      expiresAt: finalExpiresAt,
+                      status: shouldDeactivate ? false : price.status,
+                    };
 
                     priceUpdates.push({
                       updateOne: {
                         filter: { _id: price._id },
                         update: {
-                          $set: {
-                            expiresAt: finalExpiresAt,
-                            status: isExpiredPrice ? false : price.status,
-                          },
+                          $set: updateFields,
                         },
                       },
                     });
@@ -2302,7 +2396,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 for (let i = 0; i < finalValidRows.length; i += BATCH_SIZE) {
                   const batch = finalValidRows.slice(i, i + BATCH_SIZE);
                   console.log(
-                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${batch.length
+                    `Processing batch ${i / BATCH_SIZE + 1}, size: ${
+                      batch.length
                     }`,
                   );
 
@@ -2766,9 +2861,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     lookupMaps.existingOutletCodes.add(outletCode);
                     lookupMaps.existingOutletUIDs.add(outletUID);
 
-
-
-             // Lookup and validate Employee Code (Salesman Code)
+                    // Lookup and validate Employee Code (Salesman Code)
                     const employeeCode = row["Employee Code"]?.trim();
                     let employeeId = null;
 
@@ -2876,36 +2969,44 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     }
 
                     // ==============================================
-                    // Validate Category Of Outlet (now multi-value)
-                    // Matches the OutletApproved schema enum:
-                    // ["Retail", "Wholesale", "Project Consumer", "Others"]
-                    // Comma separated values are supported, e.g.
-                    // "Retail,Wholesale"
+                    // Validate Category Of Outlet (multi-value, comma
+                    // separated, e.g. "Retail,Wholesale").
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Retail", "Wholesale", "Project", "Consumer", "Survey"]
+                    //
+                    // Values are matched case-insensitively and stored
+                    // using the schema's canonical casing.
                     // ==============================================
-                    const validCategories = [
-                      "Retail",
-                      "Wholesale",
-                      "Project Consumer",
-                      "Others",
-                    ];
-
-                    const categoryOfOutlet = row["Category of Outlet"]?.trim()
+                    const categoryOfOutletRaw = row["Category of Outlet"]
+                      ?.trim()
                       ? row["Category of Outlet"]
-                        .split(",")
-                        .map((cat) => cat.trim())
-                        .filter(Boolean)
+                          .split(",")
+                          .map((cat) => cat.trim())
+                          .filter(Boolean)
                       : [];
 
-                    const invalidCategories = categoryOfOutlet.filter(
-                      (cat) => !validCategories.includes(cat),
-                    );
+                    const categoryOfOutlet = [];
+                    const invalidCategories = [];
+
+                    categoryOfOutletRaw.forEach((cat) => {
+                      const matched = matchEnumValue(
+                        cat,
+                        OUTLET_CATEGORY_VALUES,
+                      );
+                      if (!matched) {
+                        invalidCategories.push(cat);
+                      } else {
+                        categoryOfOutlet.push(matched);
+                      }
+                    });
 
                     if (invalidCategories.length > 0) {
                       skippedRows.push({
                         ...row,
                         reason: `Invalid category of outlet: ${invalidCategories.join(
                           ", ",
-                        )}. Must be one of: ${validCategories.join(", ")} at row ${row.index}`,
+                        )}. Must be one of: ${OUTLET_CATEGORY_VALUES.join(", ")} at row ${row.index}`,
                       });
                       totalSkipped++;
                       continue;
@@ -2913,57 +3014,57 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
 
                     // ==============================================
                     // Validate Potential Selection (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Below 1 Lac", "Upto 3 Lac", "Upto 5 Lac",
+                    //  "Upto 10 Lac", "10 Lac & Above", "Survey"]
                     // ==============================================
-                    const validPotentialSelections = [
-                      "Below 1 Lac",
-                      "Upto 3 Lac",
-                      "Upto 5 Lac",
-                      "Upto 10 Lac",
-                      "10 Lac & Above",
-                    ];
+                    const potentialSelectionRaw = row["Potential"]?.trim();
+                    let potentialSelection = null;
 
-                    const potentialSelection =
-                      row["Potential"]?.trim() || null;
+                    if (potentialSelectionRaw) {
+                      potentialSelection = matchEnumValue(
+                        potentialSelectionRaw,
+                        OUTLET_POTENTIAL_VALUES,
+                      );
 
-                    if (
-                      potentialSelection &&
-                      !validPotentialSelections.includes(potentialSelection)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid potential selection: ${potentialSelection}. Must be one of: ${validPotentialSelections.join(
-                          ", ",
-                        )} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                      if (!potentialSelection) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid potential selection: ${potentialSelectionRaw}. Must be one of: ${OUTLET_POTENTIAL_VALUES.join(
+                            ", ",
+                          )} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     // ==============================================
                     // Validate Payment Category (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["Good", "Normal", "Follow Up", "RED", "Survey"]
                     // ==============================================
-                    const validPaymentCategories = [
-                      "Good",
-                      "Normal",
-                      "Follow up",
-                      "Continuous Red",
-                    ];
+                    const paymentCategoryRaw = row["Payment Category"]?.trim();
+                    let paymentCategory = null;
 
-                    const paymentCategory =
-                      row["Payment Category"]?.trim() || null;
+                    if (paymentCategoryRaw) {
+                      paymentCategory = matchEnumValue(
+                        paymentCategoryRaw,
+                        OUTLET_PAYMENT_CATEGORY_VALUES,
+                      );
 
-                    if (
-                      paymentCategory &&
-                      !validPaymentCategories.includes(paymentCategory)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid payment category: ${paymentCategory}. Must be one of: ${validPaymentCategories.join(
-                          ", ",
-                        )} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                      if (!paymentCategory) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid payment category: ${paymentCategoryRaw}. Must be one of: ${OUTLET_PAYMENT_CATEGORY_VALUES.join(
+                            ", ",
+                          )} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     // ==============================================
@@ -3000,7 +3101,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       birthday = parsedBirthday.toDate();
                     }
 
-                    // Validate category of outlet
+                    // Validate enrolled status
                     const validEnrolledStatuses = ["ENROLLED", "NOT ENROLLED"];
                     const enrolledStatus =
                       row["Enrolled Status"]?.trim()?.toUpperCase() ||
@@ -3036,21 +3137,33 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                       }
                     }
 
-                    // Validate retailer class
-                    const validRetailerClasses = ["A", "B", "C", "D"];
-                    const retailerClass = row["Retailer Class"]
-                      ?.trim()
-                      ?.toUpperCase();
-                    if (
-                      retailerClass &&
-                      !validRetailerClasses.includes(retailerClass)
-                    ) {
-                      skippedRows.push({
-                        ...row,
-                        reason: `Invalid retailer class: ${retailerClass}. Must be one of: ${validRetailerClasses.join(", ")} at row ${row.index}`,
-                      });
-                      totalSkipped++;
-                      continue;
+                    // ==============================================
+                    // Validate Retailer Class (optional)
+                    //
+                    // Matches OutletApproved schema enum:
+                    // ["A", "B", "C", "D", "Survey"]
+                    //
+                    // Matched case-insensitively so both "a" and "A"
+                    // resolve to "A", and "survey" resolves to "Survey"
+                    // instead of being force-uppercased to "SURVEY".
+                    // ==============================================
+                    const retailerClassRaw = row["Retailer Class"]?.trim();
+                    let retailerClass = null;
+
+                    if (retailerClassRaw) {
+                      retailerClass = matchEnumValue(
+                        retailerClassRaw,
+                        OUTLET_RETAILER_CLASS_VALUES,
+                      );
+
+                      if (!retailerClass) {
+                        skippedRows.push({
+                          ...row,
+                          reason: `Invalid retailer class: ${retailerClassRaw}. Must be one of: ${OUTLET_RETAILER_CLASS_VALUES.join(", ")} at row ${row.index}`,
+                        });
+                        totalSkipped++;
+                        continue;
+                      }
                     }
 
                     try {
@@ -3092,16 +3205,16 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         location: row["Location"]?.trim() || null,
                         gpsLocation: row["GPS Location"]?.trim() || null,
                         categoryOfOutlet: categoryOfOutlet,
-                        // NEW FIELDS
+                        // Business fields aligned with OutletApproved schema
                         potentialSelection: potentialSelection,
                         birthday: birthday,
                         paymentCategory: paymentCategory,
                         sellingBrands: sellingBrands,
                         competitorBrands: row["Competitor Brands"]
                           ? row["Competitor Brands"]
-                            .split(",")
-                            .map((brand) => brand.trim())
-                            .filter((brand) => brand.length > 0)
+                              .split(",")
+                              .map((brand) => brand.trim())
+                              .filter((brand) => brand.length > 0)
                           : [],
                         existingRetailer: existingRetailerBool,
                         outletStatus: "Approved",
@@ -3115,6 +3228,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                         shipToPincode: row["Ship To Pincode"]?.trim() || null,
                         // createdBy: req.user?._id || null,
                         createdBy_type: req.user ? "User" : "Employee",
+                        googleMapLink: row["Google Map Link"]?.trim() || null,
                       };
 
                       outletsToInsert.push(outletDoc);
@@ -3249,21 +3363,21 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
               }); // Step 2: Batch fetch sub divisions, distributors, and existing beats
               const [subDivisions, distributors, existingBeats] =
                 await Promise.all([
-                SubDivision.find({
-                  code: { $in: Array.from(subDivisionCodesForBeat) },
-                })
-                  .populate({
-                    path: "districtId",
-                    select: "stateId",
+                  SubDivision.find({
+                    code: { $in: Array.from(subDivisionCodesForBeat) },
                   })
-                  .lean(),
-                Distributor.find({
-                  dbCode: { $in: Array.from(distributorCodes) },
-                }).lean(),
-                Beat.find({ name: { $in: Array.from(beatNames) } })
-                  .select("name regionId distributorId")
-                  .lean(),
-              ]); // Step 3: Create lookup maps
+                    .populate({
+                      path: "districtId",
+                      select: "stateId",
+                    })
+                    .lean(),
+                  Distributor.find({
+                    dbCode: { $in: Array.from(distributorCodes) },
+                  }).lean(),
+                  Beat.find({ name: { $in: Array.from(beatNames) } })
+                    .select("name regionId distributorId")
+                    .lean(),
+                ]); // Step 3: Create lookup maps
 
               const stateIdsForRegions = [
                 ...new Set(
@@ -3722,7 +3836,7 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                 // Step 3: Create lookup maps
                 const lookupMaps = {
                   existingEmpIds: new Set(
-                    existingEmployees.map(() => emp.empId),
+                    existingEmployees.map((emp) => emp.empId),
                   ),
                   designations: new Map(
                     designations.map((desg) => [desg.code, desg]),
@@ -3785,7 +3899,8 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                   const batch = results.slice(batchStart, batchEnd);
 
                   console.log(
-                    `Processing batch ${Math.floor(batchStart / BATCH_SIZE) + 1
+                    `Processing batch ${
+                      Math.floor(batchStart / BATCH_SIZE) + 1
                     }: rows ${batchStart + 1}-${batchEnd}`,
                   );
 

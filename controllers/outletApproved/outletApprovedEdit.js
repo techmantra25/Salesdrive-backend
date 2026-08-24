@@ -82,13 +82,14 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       }
     }
 
-    // ---------------- POTENTIAL SELECTION VALIDATION (NEW, OPTIONAL) ----------------
+    // ---------------- POTENTIAL SELECTION VALIDATION (matches model enum) ----------------
     const validPotentialSelections = [
       "Below 1 Lac",
       "Upto 3 Lac",
       "Upto 5 Lac",
       "Upto 10 Lac",
       "10 Lac & Above",
+      "Survey",
     ];
 
     let potentialSelectionToUpdate;
@@ -110,8 +111,8 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       }
     }
 
-    // ---------------- PAYMENT CATEGORY VALIDATION (NEW, OPTIONAL) ----------------
-    const validPaymentCategories = ["Good", "Normal", "Follow up", "Continuous Red"];
+    // ---------------- PAYMENT CATEGORY VALIDATION (matches model enum) ----------------
+    const validPaymentCategories = ["Good", "Normal", "Follow Up", "RED", "Survey"];
 
     let paymentCategoryToUpdate;
 
@@ -150,14 +151,13 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       }
     }
 
-    // ---------------- CATEGORY OF OUTLET VALIDATION (NEW, matches schema array/enum) ----------------
-    // ---------------- CATEGORY OF OUTLET VALIDATION ----------------
+    // ---------------- CATEGORY OF OUTLET VALIDATION (matches model enum/array) ----------------
     // Case-insensitive match against the canonical enum, and silently drop
     // any legacy/unknown values instead of blocking the whole edit request.
     // This lets outlets with old dirty data (e.g. "RETAILER" from before the
     // enum was tightened) get cleaned up automatically on the next save,
     // rather than becoming permanently un-editable.
-    const validCategoriesOfOutlet = ["Retail", "Wholesale", "Project Consumer", "Others"];
+    const validCategoriesOfOutlet = ["Retail", "Wholesale", "Project", "Consumer", "Survey"];
 
     let categoryOfOutletToUpdate;
 
@@ -411,7 +411,7 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
 
     if (
       req.body.retailerClass &&
-      !["A", "B", "C", "D"].includes(req.body.retailerClass)
+      !["A", "B", "C", "D", "Survey"].includes(req.body.retailerClass)
     ) {
       res.status(400);
       throw new Error("Invalid retailer class");

@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const PurchaseOrder = require("../../models/purchaseOrder.model");
 const Distributor = require("../../models/distributor.model");
+const Invoice = require("../../models/invoice.model");
 const { format } = require("fast-csv");
 const moment = require("moment-timezone");
 
@@ -74,6 +75,41 @@ const poReport = asyncHandler(async (req, res) => {
 
       return totalGst;
     };
+
+    // ---- Precompute GRN received qty per PO+product ------------------------
+    // grnQty / grnBoxQty are NOT stored on the PurchaseOrder document — they
+    // have to be derived from Invoice line items (same logic as
+    // getGrnPrimeryOrder / purchaseOrderExcelView). Since this endpoint
+    // streams via cursor for memory efficiency, we can't join on the fly per
+    // row, so: 1) grab just the _ids of POs matching the filter, 2) run a
+    // single aggregation over Invoice to sum received qty per PO+product,
+    // 3) build a lookup map used while streaming rows below.
+    const matchingPoIds = await PurchaseOrder.find(filter).distinct("_id");
+
+    const receivedMap = {};
+    if (matchingPoIds.length > 0) {
+      const receivedAgg = await Invoice.aggregate([
+        { $match: { purchaseOrderId: { $in: matchingPoIds } } },
+        { $unwind: "$lineItems" },
+        {
+          $group: {
+            _id: {
+              purchaseOrderId: "$purchaseOrderId",
+              product: "$lineItems.product",
+            },
+            totalQty: { $sum: { $ifNull: ["$lineItems.qty", 0] } },
+          },
+        },
+      ]);
+
+      for (const row of receivedAgg) {
+        const key = `${String(row._id.purchaseOrderId)}_${String(
+          row._id.product,
+        )}`;
+        receivedMap[key] = row.totalQty;
+      }
+    }
+    // -------------------------------------------------------------------------
 
     // Populate fields - matching purchaseOrderExcelView exactly
     const populateFields = [
@@ -208,6 +244,15 @@ const poReport = asyncHandler(async (req, res) => {
       } else {
         // Write one row per line item
         po.lineItems.forEach((lineItem) => {
+          const productId = lineItem?.product?._id;
+          const receivedKey = `${String(po._id)}_${String(productId)}`;
+          const alreadyReceived = receivedMap[receivedKey] || 0;
+          const piecesPerBox =
+            Number(lineItem?.product?.no_of_pieces_in_a_box) || 1;
+
+          const grnQty = alreadyReceived;
+          const grnBoxQty = Math.floor(alreadyReceived / piecesPerBox);
+
           csvStream.write({
             "PO No": po?.purchaseOrderNo || "",
             "Distributor Code": po?.distributorId?.dbCode || "",
@@ -239,8 +284,12 @@ const poReport = asyncHandler(async (req, res) => {
             // Fixed typo: was lineItem?.oderQty (field doesn't exist on the
             // schema), which meant this column was always blank.
             "Order Qty (PCS)": lineItem?.orderQty || "",
-            "GRN Qty (BOX)": lineItem?.grnBoxQty || 0,
-            "GRN Qty (PCS)": lineItem?.grnQty || 0,
+            // Fixed: grnQty/grnBoxQty are never stored on the PurchaseOrder
+            // document itself (lineItem?.grnBoxQty / grnQty were always
+            // undefined -> 0 here). Now sourced from the Invoice-derived
+            // receivedMap built above, same formula as getGrnPrimeryOrder.
+            "GRN Qty (BOX)": grnBoxQty,
+            "GRN Qty (PCS)": grnQty,
             "Stock Qty": lineItem?.inventoryId?.availableQty || "",
             "In-Transit Qty": lineItem?.inventoryId?.intransitQty || "",
             MRP: lineItem?.price?.mrp_price || "",
