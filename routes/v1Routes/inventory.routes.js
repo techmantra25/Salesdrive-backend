@@ -45,6 +45,7 @@ const {
 const {
   allInventoriesPaginatedListReport,
 } = require("../../controllers/inventory/allInventoriesPaginatedListReport");
+<<<<<<< HEAD
 const {
   addGodown,
 } = require("../../controllers/inventory/addGodwn.js");
@@ -55,6 +56,8 @@ const {
 const {
   editGodown,
 } = require("../../controllers/inventory/editGodown.js");
+=======
+>>>>>>> 68a3ab1775d7bb095d9656826d84b6aa897048b1
 
 const inventoryRoutes = express.Router();
 

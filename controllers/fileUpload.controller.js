@@ -2054,16 +2054,10 @@ const saveCsvToDB = asyncHandler(async (req, res) => {
                     continue;
                   }
 
-                  if (effectiveDateParsed <= todayStart) {
-                    skippedRowsForCollectionPrice.push({
-                      ...row,
-                      reason:
-                        "Price effective date should be greater than the current date",
-                    });
-                    continue;
-                  }
+                  const isPastOrCurrentDate = effectiveDateParsed <= todayStart;
 
                   if (
+                    !isPastOrCurrentDate &&
                     moment(latestPrice.effective_date)
                       .tz("Asia/Kolkata")
                       .isSameOrAfter(effectiveDateParsed)
