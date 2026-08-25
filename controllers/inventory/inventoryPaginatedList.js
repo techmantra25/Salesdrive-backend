@@ -6,10 +6,9 @@ const Invoice = require("../../models/invoice.model");
 const Distributor = require("../../models/distributor.model");
 const getInTransitQty = require("../../utils/getInTransitQty");
 const orderentry = require("../../models/orderEntry.model");
+const Price = require("../../models/price.model");
 
 // Maps frontend sort keys -> actual field paths in the aggregation pipeline.
-// Paths under "product." only exist after the $unwind stage.
-// "basePointTotal" is a computed field added via $addFields (see below).
 const SORTABLE_FIELDS = {
   product_code: "product.product_code",
   product_type: "product.product_type",
@@ -26,12 +25,7 @@ const SORTABLE_FIELDS = {
   basePoint: "basePointTotal",
 };
 
-// closingStockCount is intentionally NOT in SORTABLE_FIELDS: it's derived
-// from a per-item Transaction lookup that runs AFTER pagination/skip/limit,
-// so it can't be sorted across the full result set without querying every
-// matching inventory row's transaction history up front (expensive). It
-// remains page-local only; see handleSort in InventoryTable.jsx.
-
+// closingStockCount is intentionally NOT in SORTABLE_FIELDS
 const inventoryPaginatedList = asyncHandler(async (req, res) => {
   try {
     const {
@@ -45,21 +39,22 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       godownType,
       closingStockDate,
       stockType,
-      zeroStockFilter, // "true" (only zero) | "false" (hide zero) | undefined/"all" (no filter)
+      zeroStockFilter,
       sortField,
       sortOrder,
     } = req.query;
 
     const distributorId = req.user._id;
 
-    // Convert page and limit to numbers
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
 
-    // Build the aggregation pipeline
     const pipeline = [];
 
-    // Match filters for inventory
+    // --------------------------------------------------
+    // INVENTORY FILTER
+    // --------------------------------------------------
+
     const matchStage = {
       distributorId: distributorId,
     };
@@ -69,8 +64,6 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     }
 
     if (zeroStockFilter === "false") {
-      // Hide zero-quantity items — only rows with positive qty for the
-      // selected stockType.
       if (stockType === "salable") {
         matchStage.$or = [
           { availableQty: { $gt: 0 } },
@@ -82,7 +75,6 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         matchStage.reservedQty = { $gt: 0 };
       }
     } else if (zeroStockFilter === "true") {
-      // Show ONLY zero-quantity items for the selected stockType.
       if (stockType === "salable") {
         matchStage.$and = [
           {
@@ -110,14 +102,15 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         ];
       }
     }
-    // zeroStockFilter undefined or "all": no quantity filter applied —
-    // every row for the matched stockType is returned, zero or not.
 
-    if (Object.keys(matchStage).length > 0) {
-      pipeline.push({ $match: matchStage });
-    }
+    pipeline.push({
+      $match: matchStage,
+    });
 
-    // Lookup (join) with the Product model to apply product-specific filters
+    // --------------------------------------------------
+    // PRODUCT
+    // --------------------------------------------------
+
     pipeline.push({
       $lookup: {
         from: "products",
@@ -127,16 +120,16 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       },
     });
 
-    // Unwind the product array (since $lookup returns an array)
     pipeline.push({
       $unwind: "$product",
     });
 
-    // Apply filters on the product fields
+    // Product filters
     const productMatchStage = {};
 
     if (productId) {
-      productMatchStage["product._id"] = new mongoose.Types.ObjectId(productId);
+      productMatchStage["product._id"] =
+        new mongoose.Types.ObjectId(productId);
     }
 
     if (searchTerm) {
@@ -144,33 +137,47 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
 
       productMatchStage["$and"] = tokens.map((token) => ({
         $or: [
-          { "product.product_code": { $regex: token, $options: "i" } },
-          { "product.name": { $regex: token, $options: "i" } },
+          {
+            "product.product_code": {
+              $regex: token,
+              $options: "i",
+            },
+          },
+          {
+            "product.name": {
+              $regex: token,
+              $options: "i",
+            },
+          },
         ],
       }));
     }
 
     if (brandId) {
-      productMatchStage["product.brand"] = new mongoose.Types.ObjectId(brandId);
+      productMatchStage["product.brand"] =
+        new mongoose.Types.ObjectId(brandId);
     }
 
     if (categoryId) {
-      productMatchStage["product.cat_id"] = new mongoose.Types.ObjectId(
-        categoryId
-      );
+      productMatchStage["product.cat_id"] =
+        new mongoose.Types.ObjectId(categoryId);
     }
 
     if (collectionId) {
-      productMatchStage["product.collection_id"] = new mongoose.Types.ObjectId(
-        collectionId
-      );
+      productMatchStage["product.collection_id"] =
+        new mongoose.Types.ObjectId(collectionId);
     }
 
     if (Object.keys(productMatchStage).length > 0) {
-      pipeline.push({ $match: productMatchStage });
+      pipeline.push({
+        $match: productMatchStage,
+      });
     }
 
-    // Lookup (join) with the Distributor model
+    // --------------------------------------------------
+    // DISTRIBUTOR
+    // --------------------------------------------------
+
     pipeline.push({
       $lookup: {
         from: "distributors",
@@ -180,11 +187,110 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       },
     });
 
-    // basePoint isn't a stored field — compute it here so it can be sorted
-    // the same way it's calculated on the frontend:
-    // product.base_point * (availableQty + reservedQty)
+    pipeline.push({
+      $unwind: "$distributor",
+    });
+
+    // Get distributor region
     pipeline.push({
       $addFields: {
+        distributorRegionId: "$distributor.regionId",
+      },
+    });
+
+    // --------------------------------------------------
+    // PRICE
+    // Regional price first
+    // National price if regional does not exist
+    // --------------------------------------------------
+
+    pipeline.push({
+      $lookup: {
+        from: "prices",
+        let: {
+          productId: "$productId",
+          regionId: "$distributorRegionId",
+        },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  {
+                    $eq: ["$productId", "$$productId"],
+                  },
+                  {
+                    $eq: ["$status", true],
+                  },
+                  {
+                    $or: [
+                      {
+                        $and: [
+                          {
+                            $eq: ["$price_type", "regional"],
+                          },
+                          {
+                            $eq: ["$regionId", "$$regionId"],
+                          },
+                        ],
+                      },
+                      {
+                        $eq: ["$price_type", "national"],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+
+          // Regional gets priority over national
+          {
+            $addFields: {
+              pricePriority: {
+                $cond: [
+                  {
+                    $eq: ["$price_type", "regional"],
+                  },
+                  1,
+                  2,
+                ],
+              },
+            },
+          },
+
+          // Latest price
+          {
+            $sort: {
+              pricePriority: 1,
+              effective_date: -1,
+              createdAt: -1,
+            },
+          },
+
+          {
+            $limit: 1,
+          },
+        ],
+        as: "selectedPrice",
+      },
+    });
+
+    // Convert selectedPrice array into object
+    pipeline.push({
+      $unwind: {
+        path: "$selectedPrice",
+        preserveNullAndEmptyArrays: true,
+      },
+    });
+
+    // --------------------------------------------------
+    // CALCULATE BASE POINT + DLP/RLP
+    // --------------------------------------------------
+
+    pipeline.push({
+      $addFields: {
+        // Existing base point calculation
         basePointTotal: {
           $multiply: [
             {
@@ -197,28 +303,107 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
             },
             {
               $add: [
-                { $convert: { input: "$availableQty", to: "double", onError: 0, onNull: 0 } },
-                { $convert: { input: "$reservedQty", to: "double", onError: 0, onNull: 0 } },
+                {
+                  $convert: {
+                    input: "$availableQty",
+                    to: "double",
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
+                {
+                  $convert: {
+                    input: "$reservedQty",
+                    to: "double",
+                    onError: 0,
+                    onNull: 0,
+                  },
+                },
               ],
-            }
+            },
+          ],
+        },
+
+        // AVAILABLE QTY × DLP PRICE
+        totalStockamtDlp: {
+          $multiply: [
+            {
+              $convert: {
+                input: "$availableQty",
+                to: "double",
+                onError: 0,
+                onNull: 0,
+              },
+            },
+            {
+              $convert: {
+                input: "$selectedPrice.dlp_price",
+                to: "double",
+                onError: 0,
+                onNull: 0,
+              },
+            },
+          ],
+        },
+
+        // AVAILABLE QTY × RLP PRICE
+        totalStockamtRlp: {
+          $multiply: [
+            {
+              $convert: {
+                input: "$availableQty",
+                to: "double",
+                onError: 0,
+                onNull: 0,
+              },
+            },
+            {
+              $convert: {
+                input: "$selectedPrice.rlp_price",
+                to: "double",
+                onError: 0,
+                onNull: 0,
+              },
+            },
           ],
         },
       },
     });
 
-    // Sort: whitelist-driven, defaults to product name ascending.
-    // _id is a tiebreaker so pagination stays stable when many rows share
-    // the same sort value.
+    // --------------------------------------------------
+    // SORT
+    // --------------------------------------------------
+
     const sortDirection = sortOrder === "desc" ? -1 : 1;
-    const sortKey = SORTABLE_FIELDS[sortField] || "product.name";
-    pipeline.push({ $sort: { [sortKey]: sortDirection, _id: 1 } });
 
-    // Pagination: Skip and limit
+    const sortKey =
+      SORTABLE_FIELDS[sortField] || "product.name";
+
+    pipeline.push({
+      $sort: {
+        [sortKey]: sortDirection,
+        _id: 1,
+      },
+    });
+
+    // --------------------------------------------------
+    // PAGINATION
+    // --------------------------------------------------
+
     const paginatedPipeline = [...pipeline];
-    paginatedPipeline.push({ $skip: (pageNum - 1) * limitNum });
-    paginatedPipeline.push({ $limit: limitNum });
 
-    // Total count for all items (no filters applied)
+    paginatedPipeline.push({
+      $skip: (pageNum - 1) * limitNum,
+    });
+
+    paginatedPipeline.push({
+      $limit: limitNum,
+    });
+
+    // --------------------------------------------------
+    // TOTAL COUNT
+    // --------------------------------------------------
+
     const totalCountPipeline = [
       {
         $match: {
@@ -230,9 +415,10 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       },
     ];
 
-    // Count total items matching current filters
-    // (sort doesn't affect count, but reuse pipeline up to before $sort is
-    // unnecessary — $sort has no effect on $count either way)
+    // --------------------------------------------------
+    // FILTERED COUNT
+    // --------------------------------------------------
+
     const filteredCountPipeline = [
       ...pipeline,
       {
@@ -240,101 +426,150 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       },
     ];
 
-    // Get distributor info to check RBP scheme mapping
-    const distributor = await Distributor.findById(distributorId).select(
-      "RBPSchemeMapped"
-    );
+    // --------------------------------------------------
+    // DISTRIBUTOR INFO
+    // --------------------------------------------------
 
-    // Execute all pipelines concurrently
-    let [inventories, totalCountResult, filteredCountResult] =
-      await Promise.all([
-        Inventory.aggregate(paginatedPipeline),
-        Inventory.aggregate(totalCountPipeline),
-        Inventory.aggregate(filteredCountPipeline),
-      ]);
+    const distributor = await Distributor.findById(
+      distributorId
+    ).select("RBPSchemeMapped regionId");
+
+    // --------------------------------------------------
+    // EXECUTE
+    // --------------------------------------------------
+
+    let [
+      inventories,
+      totalCountResult,
+      filteredCountResult,
+    ] = await Promise.all([
+      Inventory.aggregate(paginatedPipeline),
+      Inventory.aggregate(totalCountPipeline),
+      Inventory.aggregate(filteredCountPipeline),
+    ]);
 
     const totalItems =
-      totalCountResult.length > 0 ? totalCountResult[0].totalItems : 0;
+      totalCountResult.length > 0
+        ? totalCountResult[0].totalItems
+        : 0;
+
     const totalFilteredItems =
       filteredCountResult.length > 0
         ? filteredCountResult[0].totalFilteredItems
         : 0;
-    const totalPages = Math.ceil(totalFilteredItems / limitNum);
+
+    const totalPages = Math.ceil(
+      totalFilteredItems / limitNum
+    );
+
+    // --------------------------------------------------
+    // CLOSING STOCK
+    // --------------------------------------------------
 
     if (closingStockDate && stockType) {
       let endDate = new Date(closingStockDate);
+
       endDate.setHours(23, 59, 59, 999);
 
       inventories = await Promise.all(
         inventories.map(async (invItem) => {
           const transactions = await Transaction.find({
             $and: [
-              { distributorId: distributorId },
-              { productId: invItem.productId },
-              { createdAt: { $lt: endDate } },
-              { stockType: stockType },
+              {
+                distributorId: distributorId,
+              },
+              {
+                productId: invItem.productId,
+              },
+              {
+                createdAt: {
+                  $lt: endDate,
+                },
+              },
+              {
+                stockType: stockType,
+              },
             ],
-          }).sort({ createdAt: -1 });
+          }).sort({
+            createdAt: -1,
+          });
 
           if (transactions.length > 0) {
             const lastTransaction = transactions[0];
+
             return {
               ...invItem,
-              closingStockCount: lastTransaction?.balanceCount,
-            };
-          } else {
-            return {
-              ...invItem,
-              closingStockCount: null,
+              closingStockCount:
+                lastTransaction?.balanceCount,
             };
           }
+
+          return {
+            ...invItem,
+            closingStockCount: null,
+          };
         })
       );
     }
-    // ---- Pending order qty enrichment (page-local, like closingStockCount) ----
-    // "Pending" orders (status: 'Pending', billIds: []) represent qty already
-    // requested but not yet billed — still counts as committed against stock.
-    // 'Completed_Billed' orders are excluded: that stock has already left
-    // inventory via the bill, so it's no longer "pending".
-    const PENDING_ORDER_STATUSES = ["Pending"]; // add more statuses here if needed, e.g. "Approved"
 
-    const pageProductIds = inventories.map((inv) => inv.productId);
+    // --------------------------------------------------
+    // PENDING ORDER QTY
+    // --------------------------------------------------
+
+    const PENDING_ORDER_STATUSES = ["Pending"];
+
+    const pageProductIds = inventories.map(
+      (inv) => inv.productId
+    );
 
     if (pageProductIds.length > 0) {
       const pendingOrderQtyPipeline = [
         {
           $match: {
             distributorId: distributorId,
-            status: { $in: PENDING_ORDER_STATUSES },
+            status: {
+              $in: PENDING_ORDER_STATUSES,
+            },
           },
         },
-        { $unwind: "$lineItems" },
+        {
+          $unwind: "$lineItems",
+        },
         {
           $match: {
-            "lineItems.product": { $in: pageProductIds },
+            "lineItems.product": {
+              $in: pageProductIds,
+            },
           },
         },
         {
           $group: {
             _id: "$lineItems.product",
-            pendingOrderQty: { $sum: "$lineItems.oderQty" },
+            pendingOrderQty: {
+              $sum: "$lineItems.oderQty",
+            },
           },
         },
       ];
 
-      const pendingOrderQtyResult = await orderentry.aggregate(
-        pendingOrderQtyPipeline
-      );
+      const pendingOrderQtyResult =
+        await orderentry.aggregate(
+          pendingOrderQtyPipeline
+        );
 
-      // Build a quick lookup map: productId (string) -> pendingOrderQty
       const pendingQtyMap = {};
+
       pendingOrderQtyResult.forEach((item) => {
-        pendingQtyMap[item._id.toString()] = item.pendingOrderQty;
+        pendingQtyMap[item._id.toString()] =
+          item.pendingOrderQty;
       });
 
       inventories = inventories.map((invItem) => ({
         ...invItem,
-        pendingOrderQty: pendingQtyMap[invItem.productId.toString()] || 0,
+        pendingOrderQty:
+          pendingQtyMap[
+            invItem.productId.toString()
+          ] || 0,
       }));
     } else {
       inventories = inventories.map((invItem) => ({
@@ -342,23 +577,42 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
         pendingOrderQty: 0,
       }));
     }
-    // ---- end pending order qty enrichment ----
+
+    // --------------------------------------------------
+    // RESULT
+    // --------------------------------------------------
 
     const resultInventories = inventories;
 
+    // --------------------------------------------------
+    // CURRENT STOCK TOTAL POINTS
+    // --------------------------------------------------
 
-
-    // Calculate currentStockTotalPoints if conditions are met
     let currentStockTotalPoints = null;
 
-    if (distributor?.RBPSchemeMapped === "yes" && stockType === "salable") {
+    if (
+      distributor?.RBPSchemeMapped === "yes" &&
+      stockType === "salable"
+    ) {
       const pointsCalculationPipeline = [
         {
           $match: {
             distributorId: distributorId,
-            $or: [{ availableQty: { $gt: 0 } }, { reservedQty: { $gt: 0 } }],
+            $or: [
+              {
+                availableQty: {
+                  $gt: 0,
+                },
+              },
+              {
+                reservedQty: {
+                  $gt: 0,
+                },
+              },
+            ],
           },
         },
+
         {
           $lookup: {
             from: "products",
@@ -367,34 +621,55 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
             as: "product",
           },
         },
+
         {
           $unwind: "$product",
         },
       ];
 
-      if (Object.keys(productMatchStage).length > 0) {
-        pointsCalculationPipeline.push({ $match: productMatchStage });
+      if (
+        Object.keys(productMatchStage).length > 0
+      ) {
+        pointsCalculationPipeline.push({
+          $match: productMatchStage,
+        });
       }
 
-      const allInventoriesForPoints = await Inventory.aggregate(
-        pointsCalculationPipeline
-      );
+      const allInventoriesForPoints =
+        await Inventory.aggregate(
+          pointsCalculationPipeline
+        );
 
-      currentStockTotalPoints = allInventoriesForPoints.reduce(
-        (totalPoints, invItem) => {
-          const basePoint = parseFloat(invItem.product?.base_point) || 0;
-          const availableQty = Number(invItem.availableQty) || 0;
-          const reservedQty = Number(invItem.reservedQty) || 0;
-          const totalQty = availableQty + reservedQty;
-          const productPoints = basePoint * totalQty;
+      currentStockTotalPoints =
+        allInventoriesForPoints.reduce(
+          (totalPoints, invItem) => {
+            const basePoint =
+              parseFloat(
+                invItem.product?.base_point
+              ) || 0;
 
-          return totalPoints + productPoints;
-        },
-        0
-      );
+            const availableQty =
+              Number(invItem.availableQty) || 0;
+
+            const reservedQty =
+              Number(invItem.reservedQty) || 0;
+
+            const totalQty =
+              availableQty + reservedQty;
+
+            const productPoints =
+              basePoint * totalQty;
+
+            return totalPoints + productPoints;
+          },
+          0
+        );
     }
 
-    // Build pagination object
+    // --------------------------------------------------
+    // PAGINATION RESPONSE
+    // --------------------------------------------------
+
     const pagination = {
       currentPage: pageNum,
       limit: limitNum,
@@ -407,8 +682,13 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       distributor?.RBPSchemeMapped === "yes" &&
       currentStockTotalPoints !== null
     ) {
-      pagination.currentStockTotalPoints = currentStockTotalPoints;
+      pagination.currentStockTotalPoints =
+        currentStockTotalPoints;
     }
+
+    // --------------------------------------------------
+    // RESPONSE
+    // --------------------------------------------------
 
     return res.status(200).json({
       status: 200,
@@ -420,7 +700,8 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
     res.status(400).json({
       error: true,
       status: 400,
-      message: error?.message || "Something went wrong",
+      message:
+        error?.message || "Something went wrong",
     });
   }
 });
