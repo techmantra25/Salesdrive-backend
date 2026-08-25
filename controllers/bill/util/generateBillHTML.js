@@ -614,15 +614,21 @@ const generateBillHTML = (bill, options = {}) => {
     return total + (Number(item?.taxableAmt || item?.netAmt) || 0);
   }, 0);
 
-  // Taxable Amount is now read straight from the bill's taxableAmount
-  // field, the same source the Sales Order generator uses for its
-  // "Taxable Amount" summary row (instead of grossAmount - discount).
+  // Taxable Amount is read straight from the bill's taxableAmount field —
+  // the same source the Sales Order generator uses for its "Taxable
+  // Amount" summary row. Crucially, this stored value already has
+  // freight/handling folded in (it isn't just grossAmount - discount), so
+  // it must NOT be added to again below.
   const taxableAmount = Number(bill?.taxableAmount || 0);
 
+  // FIX: Invoice Amount was previously computed as
+  //   taxableAmount + freightCharges + handlingCharges + cgst + sgst + igst
+  // which double-counted freight/handling, since bill.taxableAmount already
+  // includes them. Freight & Handling Fee is still shown as its own line in
+  // the summary for transparency, but it is purely informational and is no
+  // longer added into the Invoice Amount total.
   const invoiceAmount =
     taxableAmount +
-    (Number(bill?.freightCharges) || 0) +
-    (Number(bill?.handlingCharges) || 0) +
     (Number(bill?.cgst) || 0) +
     (Number(bill?.sgst) || 0) +
     (Number(bill?.igst) || 0);
