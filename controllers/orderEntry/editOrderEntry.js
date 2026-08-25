@@ -90,27 +90,19 @@ console.log("Edit Order Entry Request Body:", req.body);
             // PRODUCT ID
             // ==========================================
 
-            const productId =
+                    const productId =
                 item?.product?._id ||
                 item?.product ||
                 null;
 
             // ==========================================
-            // FIND ACTIVE PRICE
+            // PRESERVE ORIGINAL PRICE FROM LINE ITEM
             // ==========================================
 
-            let priceId = null;
-
-            if (productId) {
-
-                const activePrice =
-                    await Price.findOne({
-                        productId: productId,
-                        status: true,
-                    }).sort({ createdAt: -1 });
-
-                priceId = activePrice?._id || null;
-            }
+            const priceId =
+                item?.price?._id ||
+                item?.price ||
+                null;
 
 
             let inventoryId =
