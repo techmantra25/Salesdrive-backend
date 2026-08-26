@@ -57,6 +57,10 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     const { categoryId, collectionId, brandId, brandIds, subBrandId } =
       req.query;
 
+    // Single-date PO/quotation date — used only to select the price
+    // valid on that date instead of today's active price.
+    const quotationDate = req?.query?.quotationDate || null;
+
     const query = {
       status: true,
       _id: { $in: productHavePricingIds },
@@ -223,7 +227,7 @@ const productListPaginatedForPurchaseOrder = asyncHandler(async (req, res) => {
     // );
 
     const productIds = resultProductList.map(p => p._doc?._id.toString() || p._id?.toString());
-    const batchPrices = await getBatchProductPricing(productIds, distributorId);
+    const batchPrices = await getBatchProductPricing(productIds, distributorId, null, quotationDate);
     resultProductList = resultProductList.map((product) => {
       const productId = product._doc?.id?.toString() || product._id?.toString();
       const prices = batchPrices[productId] || [];
