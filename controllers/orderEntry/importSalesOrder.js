@@ -7,6 +7,7 @@ const OutletApproved = require("../../models/outletApproved.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
+const Godown = require("../../models/godown.model");
 const { orderNumberGeneratorNew } = require("../../utils/codeGenerator");
 
 const safeNumber = (value) => {
@@ -344,16 +345,32 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       continue;
     }
 
-    const inventory = await Inventory.findOne({
-      productId: product._id,
-      distributorId: distributor._id,
-      godownType: "main",
-    });
+    // Resolve inventory against the SAME godown this order is placed
+    // against (orderMeta.godownId, from the CSV's Godown Code). This must
+    // mirror EntryProductCatalogue.jsx's manual-entry resolution — falling
+    // back to godownType "main" only when no Godown Code was supplied.
+    // Using the wrong godown here silently attaches an unrelated godown's
+    // inventoryId to the line item, and createSingleBill's stock check
+    // trusts that inventoryId as-is — so a bill can pass and be delivered
+    // even when the actually-ordered godown has zero stock.
+    const inventory = orderMeta.godownId
+      ? await Inventory.findOne({
+          productId: product._id,
+          distributorId: distributor._id,
+          godownId: orderMeta.godownId,
+        })
+      : await Inventory.findOne({
+          productId: product._id,
+          distributorId: distributor._id,
+          godownType: "main",
+        });
 
     if (!inventory) {
       validationErrors.push({
         ...item,
-        reason: `Inventory not found for Product Code ${item.productCode}`,
+        reason: orderMeta.godownId
+          ? `Inventory not found for Product Code ${item.productCode} in the specified Godown`
+          : `Inventory not found for Product Code ${item.productCode}`,
       });
       continue;
     }
@@ -426,6 +443,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     salesmanName: orderMeta.employee._id,
     routeId: orderMeta.routeId,
     retailerId: orderMeta.retailer._id,
+    godownId: orderMeta.godownId ?? null,
     cso: orderMeta.retailer?.cso ?? null,
     orderType: orderMeta.orderType,
     orderSource: "Distributor",
@@ -499,6 +517,9 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const retailerCode = String(getFirstValue(row, ["Retailer Code"])).trim();
       const retailerName = String(getFirstValue(row, ["Retailer Name"])).trim();
       const orderDate = getFirstValue(row, ["Order Date"]);
+      const godownCode = String(
+        getFirstValue(row, ["Godown Code"]),
+      ).trim();
       const productCode = String(getFirstValue(row, ["Product Code"])).trim();
       const orderQty = safeNumber(getFirstValue(row, ["Order Quantity"]));
       const orderType = DEFAULT_ORDER_TYPE;
@@ -523,10 +544,14 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
+      // Godown Code is optional — rows for the same salesman/retailer/date but
+      // different godown codes are split into separate orders, same as if the
+      // Order Date differed.
       const groupKey = [
         salesmanCode,
         retailerCode,
         orderDate || "",
+        godownCode || "",
         orderType,
         paymentMode,
       ].join("||");
@@ -536,6 +561,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           salesmanCode,
           retailerCode,
           orderDate,
+          godownCode,
           orderType,
           paymentMode,
           rows: [],
@@ -612,6 +638,30 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           };
         }
 
+        // Godown Code is optional. When supplied, it must resolve to an
+        // active godown belonging to this distributor (mirrors the
+        // distributorId+godownCode uniqueness on the Godown model).
+        let godownId = null;
+        if (group.godownCode) {
+          const godown = await Godown.findOne({
+            distributorId: distributor._id,
+            godownCode: group.godownCode,
+            isActive: true,
+          });
+
+          if (!godown) {
+            throw {
+              message: `Godown not found for Godown Code ${group.godownCode}`,
+              validationErrors: group.rows.map((row) => ({
+                ...row,
+                reason: `Godown not found for Godown Code ${group.godownCode}`,
+              })),
+            };
+          }
+
+          godownId = godown._id;
+        }
+
         const { order, validationErrors } = await createImportedOrder({
           distributor,
           rows: group.rows,
@@ -619,6 +669,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
             employee,
             retailer,
             routeId,
+            godownId,
             orderDate: group.orderDate,
             orderType: group.orderType,
             paymentMode: group.paymentMode,
