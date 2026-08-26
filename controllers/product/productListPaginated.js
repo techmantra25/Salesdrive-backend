@@ -13,7 +13,16 @@ const productListPaginated = asyncHandler(async (req, res) => {
     const limit = parseInt(req.query.limit) || 5;
     const skip = (page - 1) * limit;
     const distributorId = req?.user?._id;
-    const { categoryId, collectionId, brandId, subBrandId, godownId } = req.query;
+    const {
+      categoryId,
+      collectionId,
+      brandId,
+      subBrandId,
+      godownId,
+      quotationDate,
+    } = req.query;
+
+    console.log("hjdcjsdhg", req.query);
 
     // Normalize godownId once — treat "undefined"/"null" strings (which
     // can arrive from the frontend when no godown is selected) as absent.
@@ -87,7 +96,7 @@ const productListPaginated = asyncHandler(async (req, res) => {
 
     console.time("EXTERNAL_APIS");
     const [pricingByProduct, inventoryByProduct] = await Promise.all([
-      getBatchProductPricing(productIds_batch, distributorId),
+      getBatchProductPricing(productIds_batch, distributorId, null, quotationDate),
       getBatchInventoryStock(
         productIds_batch,
         distributorId,
