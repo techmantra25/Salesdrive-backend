@@ -7,6 +7,7 @@ const OutletApproved = require("../../models/outletApproved.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
+const Godown = require("../../models/godown.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 /* ---------------------------------------------------------- helpers --- */
@@ -349,16 +350,30 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
       continue;
     }
 
-    const inventory = await Inventory.findOne({
-      productId: product._id,
-      distributorId: distributor._id,
-      godownType: "main",
-    });
+    // Resolve inventory against the SAME godown this enquiry is placed
+    // against (enquiryMeta.godownId, from the CSV's Godown Code) — mirrors
+    // importSalesOrder.js's resolution, so an enquiry converted to an order
+    // later carries an inventoryId that actually matches its own godown,
+    // instead of borrowing an unrelated "main" godown's stock record.
+    // Falls back to godownType "main" only when no Godown Code was supplied.
+    const inventory = enquiryMeta.godownId
+      ? await Inventory.findOne({
+          productId: product._id,
+          distributorId: distributor._id,
+          godownId: enquiryMeta.godownId,
+        })
+      : await Inventory.findOne({
+          productId: product._id,
+          distributorId: distributor._id,
+          godownType: "main",
+        });
 
     if (!inventory) {
       validationErrors.push({
         ...item,
-        reason: `Inventory not found for Product Code ${item.productCode}`,
+        reason: enquiryMeta.godownId
+          ? `Inventory not found for Product Code ${item.productCode} in the specified Godown`
+          : `Inventory not found for Product Code ${item.productCode}`,
       });
       continue;
     }
@@ -430,6 +445,7 @@ const enquiryData = {
   enquiryNo,
   salesmanName: enquiryMeta.employee?._id,
   retailerId: enquiryMeta.retailer._id,
+  godownId: enquiryMeta.godownId ?? null,
   cso: enquiryMeta.retailer?.cso ?? null,
   orderType: enquiryMeta.orderType,
   orderSource: "Distributor",
@@ -499,6 +515,9 @@ const bulkCreateOrderEnquiry = asyncHandler(async (req, res) => {
       // "Enquiry Date" is the current CSV header; "Order Date" kept as a
       // fallback so previously-downloaded/older sheets keep working.
       const orderDate = getFirstValue(row, ["Enquiry Date", "Order Date"]);
+      const godownCode = String(
+        getFirstValue(row, ["Godown Code"]),
+      ).trim();
       const productCode = String(getFirstValue(row, ["Product Code"])).trim();
       // "Enquiry Quantity" is the current CSV header; "Order Quantity" kept
       // as a fallback for the same reason.
@@ -534,10 +553,14 @@ const bulkCreateOrderEnquiry = asyncHandler(async (req, res) => {
         continue;
       }
 
+      // Godown Code is optional — rows for the same salesman/retailer/date
+      // but a different godown code are split into separate enquiries, same
+      // as if the Enquiry Date differed.
       const groupKey = [
         salesmanCode,
         retailerCode,
         orderDate || "",
+        godownCode || "",
         orderType,
         paymentMode,
       ].join("||");
@@ -547,6 +570,7 @@ const bulkCreateOrderEnquiry = asyncHandler(async (req, res) => {
           salesmanCode,
           retailerCode,
           orderDate,
+          godownCode,
           orderType,
           paymentMode,
           rows: [],
@@ -612,12 +636,37 @@ const bulkCreateOrderEnquiry = asyncHandler(async (req, res) => {
           };
         }
 
+        // Godown Code is optional. When supplied, it must resolve to an
+        // active godown belonging to this distributor (mirrors the
+        // distributorId+godownCode uniqueness on the Godown model).
+        let godownId = null;
+        if (group.godownCode) {
+          const godown = await Godown.findOne({
+            distributorId: distributor._id,
+            godownCode: group.godownCode,
+            isActive: true,
+          });
+
+          if (!godown) {
+            throw {
+              message: `Godown not found for Godown Code ${group.godownCode}`,
+              validationErrors: group.rows.map((row) => ({
+                ...row,
+                reason: `Godown not found for Godown Code ${group.godownCode}`,
+              })),
+            };
+          }
+
+          godownId = godown._id;
+        }
+
         const { enquiry, validationErrors } = await createImportedEnquiry({
           distributor,
           rows: group.rows,
           enquiryMeta: {
             employee,
             retailer,
+            godownId,
             orderDate: group.orderDate,
             orderType: group.orderType,
             paymentMode: group.paymentMode,
