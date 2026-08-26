@@ -29,10 +29,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     }
 
     if (!purchaseOrder.godownId) {
-  return res.status(400).json({
-    message: "Purchase Order has no Godown assigned. Cannot proceed with GRN.",
-  });
-}
+      return res.status(400).json({
+        message: "Purchase Order has no Godown assigned. Cannot proceed with GRN.",
+      });
+    }
 
     if (foreclose === true) {
       const {
@@ -476,7 +476,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         {
           distributorId: purchaseOrder.distributorId,
           productId: item.product,
-           godownId: purchaseOrder.godownId, 
+          godownId: purchaseOrder.godownId,
         },
         {
           $inc: {
@@ -571,7 +571,12 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         .map((p) => `${p.name} (${p.qty})`)
         .join(", ");
 
-      finalMessage += `⚠️ Partial GRN created for: ${successMsg}`;
+      const label =
+        invoicetype === "Complete-Invoiced"
+          ? "✅ GRN created for:"
+          : "⚠️ Partial GRN created for:";
+
+      finalMessage += `${label} ${successMsg}`;
     }
 
     if (failedProducts.length) {
