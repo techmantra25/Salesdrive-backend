@@ -190,14 +190,14 @@ const productListPaginated = asyncHandler(async (req, res) => {
     const skip = (page - 1) * limit;
     const distributorId = req?.user?._id;
     const {
-  categoryId,
-  collectionId,
-  brandId,
-  subBrandId,
-  quotationDate,
-} = req.query;
+      categoryId,
+      collectionId,
+      brandId,
+      subBrandId,
+      quotationDate,
+    } = req.query;
 
-console.log("hjdcjsdhg",req.query);
+    console.log("hjdcjsdhg", req.query);
 
     // Get product IDs from inventory in which available quantity is greater than 0
 
@@ -300,7 +300,7 @@ console.log("hjdcjsdhg",req.query);
       //     )
       //   )
       // ),
-getBatchProductPricing(productIds_batch, distributorId, null, quotationDate),
+      getBatchProductPricing(productIds_batch, distributorId, null, quotationDate),
       // Promise.allSettled(
       //   productIds_batch.map((id) =>
       //     axios.get(
