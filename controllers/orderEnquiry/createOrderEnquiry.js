@@ -9,6 +9,7 @@ const Godown = require("../../models/godown.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 const createOrderEnquiry = asyncHandler(async (req, res) => {
+  
   try {
     const {
       routeId,
