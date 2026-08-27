@@ -94,8 +94,14 @@ const parseOrderDate = (value) => {
   return parsed.toDate();
 };
 
-const isPriceValid = (price) => {
-  const nowDateTime = moment().tz("Asia/Kolkata").toDate();
+/**
+ * Range check: effective_date <= compareDate <= expiresAt (or no expiresAt).
+ * When `compareDate` is omitted, falls back to "now" (Asia/Kolkata).
+ */
+const isPriceValid = (price, compareDate = null) => {
+  const cmpDateTime = compareDate
+    ? moment(compareDate).tz("Asia/Kolkata").startOf("day").toDate()
+    : moment().tz("Asia/Kolkata").toDate();
 
   const effectiveDate = moment(price?.effective_date)
     .tz("Asia/Kolkata")
@@ -109,21 +115,40 @@ const isPriceValid = (price) => {
       .toDate();
 
     return (
-      moment(effectiveDate).isSameOrBefore(nowDateTime) &&
-      moment(expiresAt).isSameOrAfter(nowDateTime)
+      moment(effectiveDate).isSameOrBefore(cmpDateTime) &&
+      moment(expiresAt).isSameOrAfter(cmpDateTime)
     );
   }
 
-  return moment(effectiveDate).isSameOrBefore(nowDateTime);
+  return moment(effectiveDate).isSameOrBefore(cmpDateTime);
 };
 
-const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
-  const allPrices = await Price.find({
-    productId,
-    status: true,
-  })
-    .sort({ _id: -1 })
-    .lean();
+/**
+ * Distributor > Regional > National price resolution.
+ *
+ * If `quotationDate` is supplied (i.e. we're pricing a back/forward-dated
+ * enquiry from the CSV's Enquiry Date column), we:
+ *   - do NOT filter by `status: true` — an inactive price is still usable
+ *     as long as its effective_date/expiresAt window covers quotationDate.
+ *   - check date-validity against quotationDate instead of "now".
+ *
+ * If `quotationDate` is not supplied, behavior is unchanged: only active
+ * prices are considered, checked against "now".
+ */
+const getPriceForProduct = async ({
+  productId,
+  distributorId,
+  regionId,
+  quotationDate = null,
+}) => {
+  const priceQuery = { productId };
+
+  // Only restrict to active prices when NOT doing a quotationDate lookup
+  if (!quotationDate) {
+    priceQuery.status = true;
+  }
+
+  const allPrices = await Price.find(priceQuery).sort({ _id: -1 }).lean();
 
   const distributorIdStr = distributorId?.toString();
   const regionIdStr = regionId?.toString();
@@ -135,7 +160,7 @@ const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
         p.price_type === "distributor" &&
         p.distributorId?.toString() === distributorIdStr &&
         p.regionId?.toString() === regionIdStr &&
-        isPriceValid(p),
+        isPriceValid(p, quotationDate),
     );
     if (distributorPrice) return distributorPrice;
   }
@@ -146,14 +171,14 @@ const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
       (p) =>
         p.price_type === "regional" &&
         p.regionId?.toString() === regionIdStr &&
-        isPriceValid(p),
+        isPriceValid(p, quotationDate),
     );
     if (regionalPrice) return regionalPrice;
   }
 
   // Level 3 — National fallback
   const nationalPrice = allPrices.find(
-    (p) => p.price_type === "national" && isPriceValid(p),
+    (p) => p.price_type === "national" && isPriceValid(p, quotationDate),
   );
 
   return nationalPrice || null;
@@ -311,6 +336,21 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
   // regionId is raw ObjectId (not populated) — safe to toString() directly
   const regionId = distributor?.regionId?.toString() || null;
 
+  // Parsed up-front (moved ahead of the line-item loop) so the enquiry date
+  // is available to the price lookup below — pricing must be resolved
+  // against THIS date, not "now".
+  const manualDate = parseOrderDate(enquiryMeta.orderDate);
+
+  if (!manualDate) {
+    throw {
+      message: "Invalid Enquiry Date",
+      validationErrors: rows.map((row) => ({
+        ...row,
+        reason: `Invalid Enquiry Date ${enquiryMeta.orderDate}`,
+      })),
+    };
+  }
+
   for (const item of mergeRowsByProduct(rows)) {
     const product = await Product.findOne({
       product_code: String(item.productCode).trim(),
@@ -336,6 +376,7 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
       productId: product._id,
       distributorId: distributor._id,
       regionId,
+      quotationDate: manualDate,
     });
 
     // Reject if price missing OR rlp_price is zero
@@ -413,50 +454,38 @@ const createImportedEnquiry = async ({ distributor, rows, enquiryMeta }) => {
     ),
   );
 
-  const manualDate = parseOrderDate(enquiryMeta.orderDate);
-
-  if (!manualDate) {
-    throw {
-      message: "Invalid Enquiry Date",
-      validationErrors: rows.map((row) => ({
-        ...row,
-        reason: `Invalid Enquiry Date ${enquiryMeta.orderDate}`,
-      })),
-    };
-  }
-
-const enquiryData = {
-  distributorId: distributor._id,
-  enquiryNo,
-  salesmanName: enquiryMeta.employee?._id,
-  retailerId: enquiryMeta.retailer._id,
-  cso: enquiryMeta.retailer?.cso ?? null,
-  orderType: enquiryMeta.orderType,
-  orderSource: "Distributor",
-  paymentMode: enquiryMeta.paymentMode,
-  manualDate,
-  lineItems,
-  totalLines: lineItems.length,
-  totalBasePoints,
-  grossAmount: total("grossAmt"),
-  schemeDiscount: 0,
-  distributorDiscount: totalDistributorDiscount,
-  freightCharges: 0,
-  handlingCharges: 0,
-  taxableAmount: total("taxableAmt"),
-  cgst: total("totalCGST"),
-  sgst: total("totalSGST"),
-  igst: total("totalIGST"),
-  invoiceAmount: netAmount,
-  roundOffAmount: Number(netAmount.toFixed(0)),
-  cashDiscount: 0,
-  cashDiscountApplied: false,
-  cashDiscountType: "amount",
-  cashDiscountValue: 0,
-  creditAmount: 0,
-  netAmount: Number(netAmount.toFixed(0)),
-  adjustedCreditNoteIds: [],
-};
+  const enquiryData = {
+    distributorId: distributor._id,
+    enquiryNo,
+    salesmanName: enquiryMeta.employee?._id,
+    retailerId: enquiryMeta.retailer._id,
+    cso: enquiryMeta.retailer?.cso ?? null,
+    orderType: enquiryMeta.orderType,
+    orderSource: "Distributor",
+    paymentMode: enquiryMeta.paymentMode,
+    manualDate,
+    lineItems,
+    totalLines: lineItems.length,
+    totalBasePoints,
+    grossAmount: total("grossAmt"),
+    schemeDiscount: 0,
+    distributorDiscount: totalDistributorDiscount,
+    freightCharges: 0,
+    handlingCharges: 0,
+    taxableAmount: total("taxableAmt"),
+    cgst: total("totalCGST"),
+    sgst: total("totalSGST"),
+    igst: total("totalIGST"),
+    invoiceAmount: netAmount,
+    roundOffAmount: Number(netAmount.toFixed(0)),
+    cashDiscount: 0,
+    cashDiscountApplied: false,
+    cashDiscountType: "amount",
+    cashDiscountValue: 0,
+    creditAmount: 0,
+    netAmount: Number(netAmount.toFixed(0)),
+    adjustedCreditNoteIds: [],
+  };
 
   const createdEnquiry = await OrderEnquiry.create(enquiryData);
 

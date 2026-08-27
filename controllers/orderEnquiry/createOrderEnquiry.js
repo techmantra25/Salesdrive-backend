@@ -8,6 +8,7 @@ const OutletApproved = require("../../models/outletApproved.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 
 const createOrderEnquiry = asyncHandler(async (req, res) => {
+  
   try {
     const {
       routeId,
