@@ -63,33 +63,34 @@ function groupBySoNumber(rows) {
   return groups;
 }
 
-/**
- * Pick the best-matching active Price doc for a product.
- * Preference: distributor-specific -> regional (distributor's region) -> national.
- */
-async function resolvePrice(productId, distributor) {
+async function resolvePrice(productId, distributor, poDate) {
+  const dateFilter = {
+    effective_date: { $lte: poDate },
+    $or: [{ expiresAt: null }, { expiresAt: { $gte: poDate } }],
+  };
+
   let price = await Price.findOne({
     productId,
-    status: true,
     price_type: "distributor",
     distributorId: distributor._id,
-  });
+    ...dateFilter,
+  }).sort({ effective_date: -1 });
 
   if (!price && distributor.regionId) {
     price = await Price.findOne({
       productId,
-      status: true,
       price_type: "regional",
       regionId: distributor.regionId,
-    });
+      ...dateFilter,
+    }).sort({ effective_date: -1 });
   }
 
   if (!price) {
     price = await Price.findOne({
       productId,
-      status: true,
       price_type: "national",
-    });
+      ...dateFilter,
+    }).sort({ effective_date: -1 });
   }
 
   return price;
@@ -127,8 +128,12 @@ async function resolveGodownForCode(godownCode, distributor) {
  * Inventory (and inventoryId) is resolved per-godown, since stock is
  * tracked godown-wise. godownId here is the group's already-resolved
  * godown (see resolveGodownForCode / createSinglePoFromGroup).
+ *
+ * Price resolution date: prefers this row's own `po_date`, falls back
+ * to the group's `groupPoDate` (the so_number group's manualDate), and
+ * finally falls back to "now" if neither is present/parseable.
  */
-async function buildLineItemFromRow(row, distributor, isInterState, godownId) {
+async function buildLineItemFromRow(row, distributor, isInterState, godownId, groupPoDate) {
   const brandName = String(row.brand || "").trim();
   const productCode = String(row.product_code || "").trim();
   const uomQty = Number(row.uom_qty);
@@ -159,9 +164,14 @@ async function buildLineItemFromRow(row, distributor, isInterState, godownId) {
     throw new Error(`Product "${productCode}" has invalid uom "${product.uom}"`);
   }
 
-  const price = await resolvePrice(product._id, distributor);
+  const rowPoDate = row.po_date ? parseDDMMYYYY(row.po_date) : null;
+  const poDate = rowPoDate || groupPoDate || new Date();
+
+  const price = await resolvePrice(product._id, distributor, poDate);
   if (!price) {
-    throw new Error(`No active price found for product "${productCode}"`);
+    throw new Error(
+      `No price found for product "${productCode}" valid on ${poDate.toDateString()}`
+    );
   }
 
   // Inventory is godown-scoped — look it up (and later update/create it)
@@ -362,7 +372,7 @@ async function createSinglePoFromGroup({
 
   for (const row of rows) {
     try {
-      const lineItem = await buildLineItemFromRow(row, distributor, isInterState, godownId);
+      const lineItem = await buildLineItemFromRow(row, distributor, isInterState, godownId, manualDate);
       lineItems.push(lineItem);
     } catch (err) {
       rowErrors.push({
