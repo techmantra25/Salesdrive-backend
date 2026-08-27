@@ -144,229 +144,229 @@ const processInvoiceAdjustments = async ({
 
     try {
 
-    /**
-     * ✅ Prevent duplicate transaction
-     */
-    const existingTxn = await Transaction.findOne({
-      invoiceId: invoice._id,
-      invoiceLineItemId: item._id,
-      transactionType: "invoice",
-    });
+      /**
+       * ✅ Prevent duplicate transaction
+       */
+      const existingTxn = await Transaction.findOne({
+        invoiceId: invoice._id,
+        invoiceLineItemId: item._id,
+        transactionType: "invoice",
+      });
 
-    if (existingTxn) {
-      continue;
-    }
+      if (existingTxn) {
+        continue;
+      }
 
-    /**
-     * ✅ Product
-     */
-    const product = await Product.findById(
-      item.product
-    );
-
-    if (!product) {
-      throw new Error("Product not found");
-    }
-
-    /**
-     * ✅ Price — 3-tier fallback: distributor-specific -> regional
-     * (scoped by the distributor's OWN regionId) -> national.
-     *
-     * A price doc with price_type "regional" always has
-     * distributorId: null (it's shared by every distributor in that
-     * region), so it will never match a `{ distributorId }` query.
-     * Skipping the regional tier meant any product priced only at the
-     * regional level (no distributor override, no national price)
-     * either threw "Price not found" here — silently skipping its
-     * Inventory update entirely — or, worse, could pick up an unrelated
-     * Price doc with blank dlp_price/rlp_price, resolving the rate to 0
-     * without erroring. Either way totalStockamtDlp/totalStockamtRlp
-     * came out 0 even while availableQty moved normally.
-     */
-    let priceEntry = await Price.findOne({
-      productId: item.product,
-      distributorId,
-      status: true,
-    })
-      .sort({ createdAt: -1 });
-
-    if (!priceEntry && distributor?.regionId) {
-      priceEntry = await Price.findOne({
-        productId: item.product,
-        price_type: "regional",
-        regionId: distributor.regionId,
-        status: true,
-      })
-        .sort({ createdAt: -1 });
-    }
-
-    if (!priceEntry) {
-      priceEntry = await Price.findOne({
-        productId: item.product,
-        price_type: "national",
-        status: true,
-      })
-        .sort({ createdAt: -1 });
-    }
-
-    if (!priceEntry) {
-      throw new Error(
-        `Price not found for ${product.name}`
+      /**
+       * ✅ Product
+       */
+      const product = await Product.findById(
+        item.product
       );
-    }
 
-    /**
-     * ✅ RLP/DLP (per single piece)
-     *
-     * dlp_price/rlp_price on the Price doc are stored at the UOM level
-     * (per box, per bundle, etc). For "box" UOM we divide down to a
-     * per-piece rate using no_of_pieces_in_a_box; every other UOM is
-     * already effectively 1 piece per unit, so the raw price is used
-     * as-is.
-     */
-    let rlpbyPcs = 0;
-    let dlpbyPcs = 0;
+      if (!product) {
+        throw new Error("Product not found");
+      }
 
-    if (product.uom === "box") {
+      /**
+       * ✅ Price — 3-tier fallback: distributor-specific -> regional
+       * (scoped by the distributor's OWN regionId) -> national.
+       *
+       * A price doc with price_type "regional" always has
+       * distributorId: null (it's shared by every distributor in that
+       * region), so it will never match a `{ distributorId }` query.
+       * Skipping the regional tier meant any product priced only at the
+       * regional level (no distributor override, no national price)
+       * either threw "Price not found" here — silently skipping its
+       * Inventory update entirely — or, worse, could pick up an unrelated
+       * Price doc with blank dlp_price/rlp_price, resolving the rate to 0
+       * without erroring. Either way totalStockamtDlp/totalStockamtRlp
+       * came out 0 even while availableQty moved normally.
+       */
+      let priceEntry = await Price.findOne({
+        productId: item.product,
+        distributorId,
+        status: true,
+      })
+        .sort({ createdAt: -1 });
 
-      const piecesPerBox =
-        Number(product.no_of_pieces_in_a_box) || 1;
+      if (!priceEntry && distributor?.regionId) {
+        priceEntry = await Price.findOne({
+          productId: item.product,
+          price_type: "regional",
+          regionId: distributor.regionId,
+          status: true,
+        })
+          .sort({ createdAt: -1 });
+      }
 
-      rlpbyPcs =
-        Number(priceEntry.rlp_price || 0) /
-        piecesPerBox;
+      if (!priceEntry) {
+        priceEntry = await Price.findOne({
+          productId: item.product,
+          price_type: "national",
+          status: true,
+        })
+          .sort({ createdAt: -1 });
+      }
 
-      dlpbyPcs =
-        Number(priceEntry.dlp_price || 0) /
-        piecesPerBox;
+      if (!priceEntry) {
+        throw new Error(
+          `Price not found for ${product.name}`
+        );
+      }
 
-    } else {
+      /**
+       * ✅ RLP/DLP (per single piece)
+       *
+       * dlp_price/rlp_price on the Price doc are stored at the UOM level
+       * (per box, per bundle, etc). For "box" UOM we divide down to a
+       * per-piece rate using no_of_pieces_in_a_box; every other UOM is
+       * already effectively 1 piece per unit, so the raw price is used
+       * as-is.
+       */
+      let rlpbyPcs = 0;
+      let dlpbyPcs = 0;
 
-      rlpbyPcs = Number(priceEntry.rlp_price || 0);
+      if (product.uom === "box") {
 
-      dlpbyPcs = Number(priceEntry.dlp_price || 0);
-    }
+        const piecesPerBox =
+          Number(product.no_of_pieces_in_a_box) || 1;
 
-    /**
-     * ✅ Inventory — scoped to this PO's godown
-     */
-    let inventory = await Inventory.findOne({
-      productId: item.product,
-      distributorId,
-      godownId,
-    });
+        rlpbyPcs =
+          Number(priceEntry.rlp_price || 0) /
+          piecesPerBox;
 
-    if (!inventory) {
+        dlpbyPcs =
+          Number(priceEntry.dlp_price || 0) /
+          piecesPerBox;
 
-      const inventoryItemId =
-        await generateCode("INVT");
+      } else {
 
-      inventory = new Inventory({
+        rlpbyPcs = Number(priceEntry.rlp_price || 0);
+
+        dlpbyPcs = Number(priceEntry.dlp_price || 0);
+      }
+
+      /**
+       * ✅ Inventory — scoped to this PO's godown
+       */
+      let inventory = await Inventory.findOne({
         productId: item.product,
         distributorId,
         godownId,
-        invitemId: inventoryItemId,
-        availableQty: 0,
-        damagedQty: 0,
-        totalStockamtDlp: 0,
-        totalStockamtRlp: 0,
-        godownType: "main",
       });
-    }
 
-    /**
-     * ✅ Update Inventory
-     */
-    inventory.availableQty += Number(
-      item.receivedQty || 0
-    );
+      if (!inventory) {
 
-    inventory.damagedQty += Number(
-      item.damageQty || 0
-    );
+        const inventoryItemId =
+          await generateCode("INVT");
 
-    /**
-     * totalStockamtDlp/totalStockamtRlp represent the CURRENT value of
-     * stock on hand — availableQty * price-per-piece — not a running
-     * sum of per-receipt (qty * price-at-that-time) amounts.
-     *
-     * The old `+=` accumulator approach meant that if ANY earlier
-     * receipt resolved dlpbyPcs/rlpbyPcs to 0 (e.g. a Price doc whose
-     * dlp_price/rlp_price is null — only mrp_price is required on the
-     * Price schema), that receipt's contribution was permanently baked
-     * in as 0 and never corrected, and the total also drifted out of
-     * sync whenever the price changed between GRNs for the same
-     * product/distributor. Recomputing from the current availableQty
-     * and current price keeps the figure always correct and self-heals
-     * a previously-zeroed total the next time stock moves.
-     */
-    inventory.totalStockamtDlp =
-      inventory.availableQty * dlpbyPcs;
-
-    inventory.totalStockamtRlp =
-      inventory.availableQty * rlpbyPcs;
-
-    // Received stock also clears out of "in transit" once it lands.
-    inventory.intransitQty = Math.max(
-      0,
-      Number(inventory.intransitQty || 0) - Number(item.receivedQty || 0)
-    );
-
-    await inventory.save();
-
-    stockSummary.push({
-      product: item.product,
-      productCode: product.product_code,
-      productName: product.name,
-      receivedQty: Number(item.receivedQty || 0),
-      availableQty: inventory.availableQty,
-      intransitQty: inventory.intransitQty,
-      dlpRatePerPc: dlpbyPcs,
-      rlpRatePerPc: rlpbyPcs,
-      totalStockamtDlp: inventory.totalStockamtDlp,
-      totalStockamtRlp: inventory.totalStockamtRlp,
-    });
-
-    /**
-     * ✅ Transaction
-     */
-    const transaction = await Transaction.create(
-      [
-        {
-          distributorId,
+        inventory = new Inventory({
           productId: item.product,
-          invItemId: inventory._id,
-          transactionId: stockId,
-          qty: item.receivedQty,
-          date: new Date(),
-          type: "In",
-          balanceCount: inventory.availableQty,
-          description: `Invoice ${invoice.invoiceNo} - Stock received`,
-          transactionType: "invoice",
-          stockType: "salable",
-          invoiceId: invoice._id,
-          invoiceLineItemId: item._id,
-          billLineItemId: null,
-        },
-      ],
-    );
+          distributorId,
+          godownId,
+          invitemId: inventoryItemId,
+          availableQty: 0,
+          damagedQty: 0,
+          totalStockamtDlp: 0,
+          totalStockamtRlp: 0,
+          godownType: "main",
+        });
+      }
 
-    /**
-     * ✅ Stock Ledger
-     */
-    try {
-
-      await createStockLedgerEntry(
-        transaction[0]._id
+      /**
+       * ✅ Update Inventory
+       */
+      inventory.availableQty += Number(
+        item.receivedQty || 0
       );
 
-    } catch (ledgerError) {
-
-      console.log(
-        "Stock ledger error:",
-        ledgerError.message
+      inventory.damagedQty += Number(
+        item.damageQty || 0
       );
-    }
+
+      /**
+       * totalStockamtDlp/totalStockamtRlp represent the CURRENT value of
+       * stock on hand — availableQty * price-per-piece — not a running
+       * sum of per-receipt (qty * price-at-that-time) amounts.
+       *
+       * The old `+=` accumulator approach meant that if ANY earlier
+       * receipt resolved dlpbyPcs/rlpbyPcs to 0 (e.g. a Price doc whose
+       * dlp_price/rlp_price is null — only mrp_price is required on the
+       * Price schema), that receipt's contribution was permanently baked
+       * in as 0 and never corrected, and the total also drifted out of
+       * sync whenever the price changed between GRNs for the same
+       * product/distributor. Recomputing from the current availableQty
+       * and current price keeps the figure always correct and self-heals
+       * a previously-zeroed total the next time stock moves.
+       */
+      inventory.totalStockamtDlp =
+        inventory.availableQty * dlpbyPcs;
+
+      inventory.totalStockamtRlp =
+        inventory.availableQty * rlpbyPcs;
+
+      // Received stock also clears out of "in transit" once it lands.
+      inventory.intransitQty = Math.max(
+        0,
+        Number(inventory.intransitQty || 0) - Number(item.receivedQty || 0)
+      );
+
+      await inventory.save();
+
+      stockSummary.push({
+        product: item.product,
+        productCode: product.product_code,
+        productName: product.name,
+        receivedQty: Number(item.receivedQty || 0),
+        availableQty: inventory.availableQty,
+        intransitQty: inventory.intransitQty,
+        dlpRatePerPc: dlpbyPcs,
+        rlpRatePerPc: rlpbyPcs,
+        totalStockamtDlp: inventory.totalStockamtDlp,
+        totalStockamtRlp: inventory.totalStockamtRlp,
+      });
+
+      /**
+       * ✅ Transaction
+       */
+      const transaction = await Transaction.create(
+        [
+          {
+            distributorId,
+            productId: item.product,
+            invItemId: inventory._id,
+            transactionId: stockId,
+            qty: item.receivedQty,
+            date: new Date(),
+            type: "In",
+            balanceCount: inventory.availableQty,
+            description: `Invoice ${invoice.invoiceNo} - Stock received`,
+            transactionType: "invoice",
+            stockType: "salable",
+            invoiceId: invoice._id,
+            invoiceLineItemId: item._id,
+            billLineItemId: null,
+          },
+        ],
+      );
+
+      /**
+       * ✅ Stock Ledger
+       */
+      try {
+
+        await createStockLedgerEntry(
+          transaction[0]._id
+        );
+
+      } catch (ledgerError) {
+
+        console.log(
+          "Stock ledger error:",
+          ledgerError.message
+        );
+      }
 
     } catch (itemError) {
       // Don't let one product's failure (missing Price, missing Product,
@@ -566,7 +566,7 @@ const generateGRNForPO = async ({
           String(p.product) === String(product._id) &&
           (p.soNumber
             ? normalizeSoNumber(p.soNumber).toLowerCase() ===
-              normalizeSoNumber(soNumber).toLowerCase()
+            normalizeSoNumber(soNumber).toLowerCase()
             : true)
       );
 
@@ -587,15 +587,28 @@ const generateGRNForPO = async ({
       }
 
       /**
-       * 💰 Price Validation — same distributor -> regional -> national
-       * fallback used in processInvoiceAdjustments (see comment there).
+       * 💰 Price Resolution — the PO's own lineItem (`poItem.price`) is a
+       * ref to the EXACT Price doc the PO was raised against, frozen at
+       * that moment. A GRN confirmed later must bill off that same doc,
+       * not whatever Price doc currently matches this product/distributor
+       * — a newer/superseding Price doc (even one marked `status: true`)
+       * can carry a different dlp_price than the one shown on the PO, and
+       * querying fresh would silently bill the SO at that different rate.
+       * The distributor -> regional -> national fallback below only runs
+       * if the PO line item has no price ref at all.
        */
-      let priceDoc = await Price.findOne({
-        productId: product._id,
-        distributorId: purchaseOrder.distributorId,
-        status: true,
-      })
-        .sort({ createdAt: -1 });
+      let priceDoc = poItem.price
+        ? await Price.findById(poItem.price)
+        : null;
+
+      if (!priceDoc) {
+        priceDoc = await Price.findOne({
+          productId: product._id,
+          distributorId: purchaseOrder.distributorId,
+          status: true,
+        })
+          .sort({ createdAt: -1 });
+      }
 
       if (!priceDoc && poDistributor?.regionId) {
         priceDoc = await Price.findOne({
@@ -636,15 +649,32 @@ const generateGRNForPO = async ({
 
       /**
        * 💵 Pricing
+       *
+       * Gross value is the SO qty priced at the distributor list price
+       * (dlp_price on the Price doc) — the same rate
+       * processInvoiceAdjustments below uses for stock valuation — NOT a
+       * recompute from mrp_price and whatever L1% happens to be on this
+       * CSV row/PO line item. dlp_price is stored at the UOM level (e.g.
+       * per box), so for box-UOM products it's brought down to a
+       * per-piece rate first, exactly like dlpbyPcs is derived further
+       * down in this file.
+       *
+       * If a Price doc has no dlp_price configured, fall back to the
+       * mrp - L1% calc rather than silently invoicing the line at ₹0.
        */
       const mrp = Number(priceDoc.mrp_price || 0);
+      const dlpPrice = Number(priceDoc.dlp_price || 0);
 
-      const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+      const piecesPerUnit = Number(product.no_of_pieces_in_a_box || 0);
 
-      let basicRate = mrp;
+      let basicRate =
+        product.uom === "box" && piecesPerUnit > 0
+          ? dlpPrice / piecesPerUnit
+          : dlpPrice;
 
-      if (l1 > 0) {
-        basicRate = mrp - (mrp * l1) / 100;
+      if (!basicRate) {
+        const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+        basicRate = l1 > 0 ? mrp - (mrp * l1) / 100 : mrp;
       }
 
       /**
@@ -777,7 +807,7 @@ const generateGRNForPO = async ({
       (p) =>
         p.soNumber
           ? normalizeSoNumber(p.soNumber).toLowerCase() ===
-            normalizeSoNumber(soNumber).toLowerCase()
+          normalizeSoNumber(soNumber).toLowerCase()
           : true
     );
 
@@ -803,6 +833,19 @@ const generateGRNForPO = async ({
       ? "Complete-Invoiced"
       : "Partially-Invoiced";
 
+    // =========================
+    // 🔢 ROUND OFF
+    // =========================
+    // Same gap as the single-GRN confirm controller: `invoiceAmount`
+    // keeps the raw, un-rounded totalNet (e.g. ₹79,983.35), and only
+    // `totalInvoiceAmount` ("Net Amount") gets rounded, with `roundOff`
+    // storing the exact adjustment — previously `roundOff` was never
+    // computed and just sat at the schema default of 0 no matter what.
+    // This keeps a bulk-confirmed invoice's Invoice Amount / Round off /
+    // Net Amount reconciling the same way a single-confirmed one does.
+    const roundedInvoiceAmount = Math.round(totalNet);
+    const roundOff = roundedInvoiceAmount - totalNet;
+
     /**
      * 🧾 Create Invoice
      */
@@ -810,6 +853,8 @@ const generateGRNForPO = async ({
       [
         {
           distributorId: purchaseOrder.distributorId,
+
+          godownId: purchaseOrder.godownId,
 
           invoiceNo:
             invoiceNo ||
@@ -835,10 +880,8 @@ const generateGRNForPO = async ({
           grnNumber,
 
           purchaseOrderId: purchaseOrder._id,
-          // PurchaseOrder has no root-level soNumber field (it lives on
-          // lineItems) — stamp the actual (normalized) SO key this GRN
-          // batch is for.
-          soNumber: normalizeSoNumber(soNumber),
+          
+          soNumber: purchaseOrder.soNumber || "",
 
           lineItems: invoiceLineItems,
 
@@ -854,7 +897,9 @@ const generateGRNForPO = async ({
 
           invoiceAmount: totalNet,
 
-          totalInvoiceAmount: totalNet,
+          roundOff,
+
+          totalInvoiceAmount: roundedInvoiceAmount,
 
           GRNLogId: new mongoose.Types.ObjectId(),
 

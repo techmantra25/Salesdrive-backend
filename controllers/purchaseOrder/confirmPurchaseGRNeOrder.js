@@ -405,6 +405,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       }
     }
 
+
+    const roundedInvoiceAmount = Math.round(totalNet);
+    const roundOff = roundedInvoiceAmount - totalNet;
+
     // =========================
     // 🧾 CREATE INVOICE
     // =========================
@@ -432,7 +436,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         sgst: totalSGST,
         igst: totalIGST,
         invoiceAmount: totalNet,
-        totalInvoiceAmount: totalNet,
+        roundOff,
+        totalInvoiceAmount: roundedInvoiceAmount,
         GRNFKDATE: new Date(),
         grnStatus: "success",
         invoicetype,
