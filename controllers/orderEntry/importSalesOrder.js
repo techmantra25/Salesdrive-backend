@@ -93,8 +93,14 @@ const parseOrderDate = (value) => {
   return parsed.toDate();
 };
 
-const isPriceValid = (price) => {
-  const nowDateTime = moment().tz("Asia/Kolkata").toDate();
+/**
+ * Range check: effective_date <= compareDate <= expiresAt (or no expiresAt).
+ * When `compareDate` is omitted, falls back to "now" (Asia/Kolkata).
+ */
+const isPriceValid = (price, compareDate = null) => {
+  const cmpDateTime = compareDate
+    ? moment(compareDate).tz("Asia/Kolkata").startOf("day").toDate()
+    : moment().tz("Asia/Kolkata").toDate();
 
   const effectiveDate = moment(price?.effective_date)
     .tz("Asia/Kolkata")
@@ -108,21 +114,40 @@ const isPriceValid = (price) => {
       .toDate();
 
     return (
-      moment(effectiveDate).isSameOrBefore(nowDateTime) &&
-      moment(expiresAt).isSameOrAfter(nowDateTime)
+      moment(effectiveDate).isSameOrBefore(cmpDateTime) &&
+      moment(expiresAt).isSameOrAfter(cmpDateTime)
     );
   }
 
-  return moment(effectiveDate).isSameOrBefore(nowDateTime);
+  return moment(effectiveDate).isSameOrBefore(cmpDateTime);
 };
 
-const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
-  const allPrices = await Price.find({
-    productId,
-    status: true,
-  })
-    .sort({ _id: -1 })
-    .lean();
+/**
+ * Distributor > Regional > National price resolution.
+ *
+ * If `quotationDate` is supplied (i.e. we're pricing a back/forward-dated
+ * order from the CSV's Order Date column), we:
+ *   - do NOT filter by `status: true` — an inactive price is still usable
+ *     as long as its effective_date/expiresAt window covers quotationDate.
+ *   - check date-validity against quotationDate instead of "now".
+ *
+ * If `quotationDate` is not supplied, behavior is unchanged: only active
+ * prices are considered, checked against "now".
+ */
+const getPriceForProduct = async ({
+  productId,
+  distributorId,
+  regionId,
+  quotationDate = null,
+}) => {
+  const priceQuery = { productId };
+
+  // Only restrict to active prices when NOT doing a quotationDate lookup
+  if (!quotationDate) {
+    priceQuery.status = true;
+  }
+
+  const allPrices = await Price.find(priceQuery).sort({ _id: -1 }).lean();
 
   const distributorIdStr = distributorId?.toString();
   const regionIdStr = regionId?.toString();
@@ -134,7 +159,7 @@ const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
         p.price_type === "distributor" &&
         p.distributorId?.toString() === distributorIdStr &&
         p.regionId?.toString() === regionIdStr &&
-        isPriceValid(p),
+        isPriceValid(p, quotationDate),
     );
     if (distributorPrice) return distributorPrice;
   }
@@ -145,14 +170,14 @@ const getPriceForProduct = async ({ productId, distributorId, regionId }) => {
       (p) =>
         p.price_type === "regional" &&
         p.regionId?.toString() === regionIdStr &&
-        isPriceValid(p),
+        isPriceValid(p, quotationDate),
     );
     if (regionalPrice) return regionalPrice;
   }
 
   // Level 3 — National fallback
   const nationalPrice = allPrices.find(
-    (p) => p.price_type === "national" && isPriceValid(p),
+    (p) => p.price_type === "national" && isPriceValid(p, quotationDate),
   );
 
   return nationalPrice || null;
@@ -307,6 +332,21 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   // regionId is raw ObjectId (not populated) — safe to toString() directly
   const regionId = distributor?.regionId?.toString() || null;
 
+  // Parsed up-front (moved ahead of the line-item loop) so the order date
+  // is available to the price lookup below — pricing must be resolved
+  // against THIS date, not "now".
+  const orderDate = parseOrderDate(orderMeta.orderDate);
+
+  if (!orderDate) {
+    throw {
+      message: "Invalid Order Date",
+      validationErrors: rows.map((row) => ({
+        ...row,
+        reason: `Invalid Order Date ${orderMeta.orderDate}`,
+      })),
+    };
+  }
+
   for (const item of mergeRowsByProduct(rows)) {
     const product = await Product.findOne({
       product_code: String(item.productCode).trim(),
@@ -332,6 +372,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       productId: product._id,
       distributorId: distributor._id,
       regionId,
+      quotationDate: orderDate,
     });
 
     // ✅ Reject if price missing OR rlp_price is zero
@@ -424,18 +465,6 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       0,
     ),
   );
-
-  const orderDate = parseOrderDate(orderMeta.orderDate);
-
-  if (!orderDate) {
-    throw {
-      message: "Invalid Order Date",
-      validationErrors: rows.map((row) => ({
-        ...row,
-        reason: `Invalid Order Date ${orderMeta.orderDate}`,
-      })),
-    };
-  }
 
   const orderData = {
     distributorId: distributor._id,
