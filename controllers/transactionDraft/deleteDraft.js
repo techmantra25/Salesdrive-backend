@@ -8,7 +8,7 @@ const deleteDraft = asyncHandler(async (req, res) => {
     const distributorId = req.user?._id;
 
     const deletedDraft = await TransactionDraft.findOneAndDelete({
-      _id: transactionDraftId,
+      transactionDraftId: transactionDraftId,
       "draft_data.distributorId": distributorId,
     });
 

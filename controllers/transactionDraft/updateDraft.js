@@ -67,14 +67,14 @@ const updateTransactionDraft = asyncHandler(async (req, res) => {
     }
 
     // Replace the draft_data array with filteredMappedData
-    const updatedTransactionDraft = await TransactionDraft.findByIdAndUpdate(
-      transactionDraftId,
+    const updatedTransactionDraft = await TransactionDraft.findOneAndUpdate(
+      { transactionDraftId },
       {
         $set: {
-          draft_data: filteredMappedData, // Completely replace the draft_data array with filteredMappedData
+          draft_data: filteredMappedData,
         },
       },
-      { new: true, runValidators: true } // Return the updated document and validate
+      { new: true, runValidators: true }
     );
 
     // Check if the draft was found and updated
