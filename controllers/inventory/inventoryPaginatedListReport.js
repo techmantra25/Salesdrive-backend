@@ -2,16 +2,20 @@ const asyncHandler = require("express-async-handler");
 const Inventory = require("../../models/inventory.model");
 const Price = require("../../models/price.model");
 const Distributor = require("../../models/distributor.model");
+const Godown = require("../../models/godown.model"); // adjust path if different
 const { format } = require("fast-csv");
 const moment = require("moment-timezone");
 
 const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
   try {
-    const { stockType, showZeroStock, distributorId } = req.query;
+    const { stockType, showZeroStock, distributorId, godownId } = req.query;
 
     const query = {};
     if (distributorId) {
       query.distributorId = distributorId;
+    }
+    if (godownId) {
+      query.godownId = godownId;
     }
 
     const showZeroStockBool =
@@ -46,6 +50,8 @@ const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
     const headers = [
       "Distributor Code",
       "Distributor Name",
+      "Godown Code",
+      "Godown Name",
       "Brand Code",
       "Brand",
       "Sub Brand Code",
@@ -79,6 +85,10 @@ const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
       {
         path: "distributorId",
         select: "dbCode name regionId",
+      },
+      {
+        path: "godownId",
+        select: "godownCode godownName godownType location isActive",
       },
     ];
 
@@ -127,8 +137,8 @@ const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
       distributorRegionMap.set(dist._id.toString(), dist.regionId?.toString());
     });
 
-    const distributorPriceMap = new Map(); 
-    const regionalPriceMap = new Map(); 
+    const distributorPriceMap = new Map();
+    const regionalPriceMap = new Map();
     const nationalPriceMap = new Map();
 
     allPrices.forEach((price) => {
@@ -202,6 +212,7 @@ const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
     while (hasMore) {
       const inventoryBatch = await Inventory.find(query)
         .populate(populateFields)
+        .sort({ distributorId: 1, godownId: 1, productId: 1 })
         .skip(skip)
         .limit(batchSize)
         .lean();
@@ -226,6 +237,8 @@ const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
         csvStream.write({
           "Distributor Code": inv.distributorId?.dbCode || "",
           "Distributor Name": inv.distributorId?.name || "",
+          "Godown Code": inv.godownId?.godownCode || "",
+          "Godown Name": inv.godownId?.godownName || "",
           "Brand Code": inv.productId?.brand?.code || "",
           Brand: inv.productId?.brand?.desc || "",
           "Sub Brand Code": inv.productId?.subBrand?.code || "",
