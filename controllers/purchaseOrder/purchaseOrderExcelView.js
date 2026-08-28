@@ -13,6 +13,8 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       fromDate,
       toDate,
       distributorId,
+      godownId, // single godown filter
+      godownIds, // comma-separated list of godown filters
       invoiceStatus, // "Pending" | "Partially-Invoiced" | "Complete-Invoiced"
       purchaseOrderId, // array
       purchaseOrderNo,
@@ -34,6 +36,24 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
 
     // Filter by distributor
     if (distributorId) query.distributorId = distributorId;
+
+    // Filter by godown (single or multiple)
+    if (godownId) {
+      query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      const ids = [
+        ...new Set(
+          godownIds
+            .split(",")
+            .map((id) => id.trim())
+            .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+        ),
+      ];
+
+      if (ids.length > 0) {
+        query.godownId = { $in: ids };
+      }
+    }
 
     // Filter by date range (createdAt)
     if (fromDate || toDate) {
@@ -88,6 +108,10 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
               select: "name",
             },
           },
+        },
+        {
+          path: "godownId",
+          select: "godownCode godownName godownType location isActive",
         },
         { path: "supplierId", select: "supplierName supplierCode" },
         {
