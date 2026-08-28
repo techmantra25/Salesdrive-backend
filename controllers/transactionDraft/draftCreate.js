@@ -21,7 +21,16 @@ const draftCreate = asyncHandler(async (req, res) => {
 
     await Promise.all(
       data.map(async (item, index) => {
-        const { product_code, qty, type, stockType, remarks } = item;
+        const { product_code, qty, type, stockType, remarks, godownId } =
+          item;
+
+        if (!godownId) {
+          throw new Error(
+            `Godown is required for Product code ${product_code} at row ${
+              index + 1
+            }`
+          );
+        }
 
         // Find the product by product_code
         const product = await Product.findOne({ product_code });
@@ -31,15 +40,15 @@ const draftCreate = asyncHandler(async (req, res) => {
           );
         }
 
-        // Find the inventory for the product and distributor
         const inventory = await Inventory.findOne({
           productId: product._id,
           distributorId,
+          godownId,
         });
 
         if (!inventory) {
           throw new Error(
-            `Inventory not found for Product ${product_code} at row ${
+            `Inventory not found for Product ${product_code} in the selected godown at row ${
               index + 1
             }`
           );
@@ -53,6 +62,7 @@ const draftCreate = asyncHandler(async (req, res) => {
           productId: product._id,
           transactionDraftId,
           invItemId,
+          godownId,
           qty: Number(qty), // Ensure qty is a number
           date: new Date(), // Use current date for transaction
           type: type === "Add" ? "In" : "Out", // Map adjustment to type

@@ -5,13 +5,13 @@ const TransactionDraft = require("../../models/transactionDraft.model");
 const deleteDraft = asyncHandler(async (req, res) => {
   try {
     const { transactionDraftId } = req.params;
+    const distributorId = req.user?._id;
 
-    // Find and delete the transaction draft by _id
-    const deletedDraft = await TransactionDraft.findByIdAndDelete(
-      transactionDraftId
-    );
+    const deletedDraft = await TransactionDraft.findOneAndDelete({
+      _id: transactionDraftId,
+      "draft_data.distributorId": distributorId,
+    });
 
-    // If no draft is found, return 404
     if (!deletedDraft) {
       return res.status(404).json({
         status: 404,

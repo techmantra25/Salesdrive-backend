@@ -14,6 +14,11 @@ const transactionDraftItemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Inventory",
     },
+    godownId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Godown",
+      required: true,
+    },
     qty: {
       type: Number,
       required: true, // Quantity is required
@@ -31,7 +36,7 @@ const transactionDraftItemSchema = new mongoose.Schema(
     },
     stockType: {
       type: String,
-      enum: ["salable", "unsalable", "offer"],
+      enum: ["salable", "unsalable", "reserve", "offer"],
     },
   },
   { _id: false } // Disable individual _id for each transaction item

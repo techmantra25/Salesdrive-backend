@@ -15,6 +15,10 @@ const detailDraft = asyncHandler(async (req, res) => {
         path: "draft_data.productId",
         select: "name product_code", // Adjust as per your Product model fields
       },
+      {
+        path: "draft_data.godownId",
+        select: "godownName godownCode",
+      },
     ]);
 
     if (!transactionDraft) {
