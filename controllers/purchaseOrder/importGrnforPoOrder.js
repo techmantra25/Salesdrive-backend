@@ -39,6 +39,15 @@ const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
+ * Sentinel key used to bucket CSV rows that don't carry an explicit
+ * Invoice Number. All such rows for a given SO still share ONE
+ * auto-generated invoice/GRN, exactly like before. Rows that DO specify
+ * an Invoice Number are grouped by that exact (trimmed) number instead,
+ * so the same SO can now be split across several invoices/GRNs.
+ */
+const AUTO_INVOICE_KEY = "__AUTO__";
+
+/**
  * 🔁 Merge duplicate product rows
  */
 const mergeLineItems = (items) => {
@@ -673,7 +682,7 @@ const generateGRNForPO = async ({
           : dlpPrice;
 
       if (!basicRate) {
-        const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+        const l1 = Number(poItem.l1Basic ?? 0);
         basicRate = l1 > 0 ? mrp - (mrp * l1) / 100 : mrp;
       }
 
@@ -803,6 +812,14 @@ const generateGRNForPO = async ({
     // Scoped to just THIS soNumber's line items — a PO that happens to
     // mix multiple SOs shouldn't have one SO's completeness decided by
     // another SO's unrelated items.
+    //
+    // NOTE: because the same SO can now be split across several
+    // invoices/GRNs (one per distinct Invoice Number in the upload),
+    // "complete" here is judged only against what THIS invoice's
+    // lineItems cover. The PO-level `invoicestatus` further down still
+    // looks across ALL invoices ever raised against the PO, so the
+    // SO/PO as a whole is only marked Complete-Invoiced once every
+    // invoice combined has received the full ordered qty.
     const relevantPoItems = purchaseOrder.lineItems.filter(
       (p) =>
         p.soNumber
@@ -880,8 +897,8 @@ const generateGRNForPO = async ({
           grnNumber,
 
           purchaseOrderId: purchaseOrder._id,
-          
-          soNumber: purchaseOrder.soNumber || "",
+
+          soNumber: soNumber || "",
 
           lineItems: invoiceLineItems,
 
@@ -946,7 +963,11 @@ const generateGRNForPO = async ({
     /**
      * 🔄 Update PO Invoice Status (whole-PO status, across all of its
      * line items regardless of soNumber — invoicestatus is a PO-root
-     * field, not per-SO).
+     * field, not per-SO). This aggregates across EVERY invoice ever
+     * created against this PO — including any earlier invoices raised
+     * under a different Invoice Number for the same SO — so splitting
+     * one SO across multiple invoices still converges to the correct
+     * PO-level status once all of them are in.
      */
     const allInvoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
@@ -1041,13 +1062,19 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
       return res.status(400).json({ message: "No data provided" });
     }
 
+    /**
+     * 📦 Group by SO Number, then by Invoice Number.
+     *
+     * `grouped[soNumber][invoiceKey]` holds the rows for one GRN/Invoice.
+     * A single SO can now legitimately be split across several distinct
+     * Invoice Numbers — each such subgroup is confirmed as its own GRN
+     * further down, instead of being rejected with a "must have same
+     * Invoice Number" error. Rows that don't carry an Invoice Number at
+     * all still fall into ONE shared AUTO_INVOICE_KEY bucket per SO, so
+     * they keep getting a single auto-generated invoice, same as before.
+     */
     const grouped = {};
 
-    /**
-     * 📦 Group by SO Number (normalized: trimmed, so a CSV with stray
-     * whitespace around "SO000001" still groups into the same batch as
-     * the one used when the purchase order was created).
-     */
     for (const row of rows) {
       const soNumber = normalizeSoNumber(
         row["SO Number"] || row["soNumber"]
@@ -1060,8 +1087,22 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
+      const invoiceNoRaw =
+        row["Invoice Number"] ||
+        row["invoiceNo"] ||
+        row["invoice_number"] ||
+        null;
+
+      const invoiceKey = invoiceNoRaw
+        ? String(invoiceNoRaw).trim()
+        : AUTO_INVOICE_KEY;
+
       if (!grouped[soNumber]) {
-        grouped[soNumber] = [];
+        grouped[soNumber] = {};
+      }
+
+      if (!grouped[soNumber][invoiceKey]) {
+        grouped[soNumber][invoiceKey] = [];
       }
 
       const product = await Product.findOne({
@@ -1069,10 +1110,10 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
       });
 
       if (!product) {
-        grouped[soNumber].push({
+        grouped[soNumber][invoiceKey].push({
           productCode: String(productCode).trim(),
           orderQty: 0,
-          invoiceNo: row["Invoice Number"] || null,
+          invoiceNo: invoiceNoRaw,
           originalRow: row,
         });
 
@@ -1093,20 +1134,12 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
           ? boxOrderQty * pcsPerBox
           : boxOrderQty;
 
-      grouped[soNumber].push({
+      grouped[soNumber][invoiceKey].push({
         productCode: String(productCode).trim(),
 
         orderQty: finalQty,
 
-        l1Basic: Number(
-          row["L1 Basic"] || row["l1Basic"] || 0
-        ),
-
-        invoiceNo:
-          row["Invoice Number"] ||
-          row["invoiceNo"] ||
-          row["invoice_number"] ||
-          null,
+        invoiceNo: invoiceNoRaw,
 
         invoiceDate:
           row["Invoice Date"] || null,
@@ -1128,115 +1161,113 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
     const errorCsvRows = [];
 
     /**
-     * 🚀 Process Each SO
+     * 🚀 Process Each SO, and within it each distinct Invoice Number
+     * subgroup as its own GRN/Invoice.
      */
     for (const soNumber of Object.keys(grouped)) {
-      try {
-        /**
-         * ❌ Same SO must have same invoice number
-         */
-        const invoiceNumbers = [
-          ...new Set(
-            grouped[soNumber]
-              .map((item) => String(item.invoiceNo || "").trim())
-              .filter(Boolean)
-          ),
-        ];
+      // soNumber lives on lineItems, not on the PurchaseOrder root —
+      // find the PO that actually has a line item carrying this SO.
+      // Case-insensitive + already-trimmed `soNumber` guards against
+      // the exact same value being typed with different casing across
+      // the bulk-PO-create sheet and this GRN sheet.
+      const purchaseOrder = await PurchaseOrder.findOne({
+        "lineItems.soNumber": new RegExp(
+          `^${escapeRegex(soNumber)}$`,
+          "i"
+        ),
+      });
 
-        if (invoiceNumbers.length > 1) {
-          throw {
-            message:
-              "Multiple invoice numbers found for same SO",
-            validationErrors: grouped[soNumber].map((item) => ({
-              ...item,
-              originalRow: item.originalRow,
-              reason:
-                "All products of same SO must have same Invoice Number",
-            })),
-          };
-        }
+      if (!purchaseOrder) {
+        const message = `SO Number "${soNumber}" not found`;
 
-        // soNumber lives on lineItems, not on the PurchaseOrder root —
-        // find the PO that actually has a line item carrying this SO.
-        // Case-insensitive + already-trimmed `soNumber` guards against
-        // the exact same value being typed with different casing across
-        // the bulk-PO-create sheet and this GRN sheet.
-        const purchaseOrder = await PurchaseOrder.findOne({
-          "lineItems.soNumber": new RegExp(
-            `^${escapeRegex(soNumber)}$`,
-            "i"
-          ),
-        });
+        for (const invoiceKey of Object.keys(grouped[soNumber])) {
+          errors.push({
+            soNumber,
+            invoiceNo:
+              invoiceKey === AUTO_INVOICE_KEY ? null : invoiceKey,
+            message,
+          });
 
-        if (!purchaseOrder) {
-          throw new Error(`SO Number "${soNumber}" not found`);
-        }
-
-        const result = await generateGRNForPO({
-          purchaseOrder,
-
-          soNumber,
-
-          lineItems: grouped[soNumber],
-
-          invoiceNo:
-            grouped[soNumber][0]?.invoiceNo || null,
-
-          invoiceDate:
-            grouped[soNumber][0]?.invoiceDate || null,
-
-          grnDate:
-            grouped[soNumber][0]?.grnDate || null,
-
-          vehicleNumber:
-            grouped[soNumber][0]?.vehicleNumber || "",
-        });
-
-        results.push({
-          soNumber,
-          purchaseOrderNo: purchaseOrder.purchaseOrderNo,
-          message: result.message,
-          // Per-product available/in-transit qty + running total DLP/RLP
-          // stock value — same figures a single-GRN confirm tracks.
-          stockSummary: result.stockSummary,
-          // Which products (if any) failed their stock adjustment and why
-          // — this is what to check when a product's DLP/RLP total looks
-          // stale after a bulk GRN upload.
-          stockAdjustmentErrors: result.stockAdjustmentErrors,
-        });
-      } catch (err) {
-        errors.push({
-          soNumber,
-          message: err.message,
-        });
-
-        /**
-         * ✅ Validation Error CSV
-         */
-        if (
-          err.validationErrors &&
-          Array.isArray(err.validationErrors) &&
-          err.validationErrors.length > 0
-        ) {
-          err.validationErrors.forEach((item) => {
+          grouped[soNumber][invoiceKey].forEach((item) => {
             errorCsvRows.push({
               ...item.originalRow,
-              Reason:
-                item.reason || err.message || "Validation failed",
+              Reason: message,
             });
           });
         }
 
-        /**
-         * ✅ ANY OTHER ERROR CSV
-         */
-        else {
-          grouped[soNumber].forEach((item) => {
-            errorCsvRows.push({
-              ...item.originalRow,
-              Reason: err.message || "Unknown error",
-            });
+        continue;
+      }
+
+      for (const invoiceKey of Object.keys(grouped[soNumber])) {
+        const items = grouped[soNumber][invoiceKey];
+
+        try {
+          const result = await generateGRNForPO({
+            purchaseOrder,
+
+            soNumber,
+
+            lineItems: items,
+
+            invoiceNo: items[0]?.invoiceNo || null,
+
+            invoiceDate: items[0]?.invoiceDate || null,
+
+            grnDate: items[0]?.grnDate || null,
+
+            vehicleNumber: items[0]?.vehicleNumber || "",
           });
+
+          results.push({
+            soNumber,
+            invoiceNo: result.data?.invoiceNo || null,
+            purchaseOrderNo: purchaseOrder.purchaseOrderNo,
+            message: result.message,
+            // Per-product available/in-transit qty + running total DLP/RLP
+            // stock value — same figures a single-GRN confirm tracks.
+            stockSummary: result.stockSummary,
+            // Which products (if any) failed their stock adjustment and why
+            // — this is what to check when a product's DLP/RLP total looks
+            // stale after a bulk GRN upload.
+            stockAdjustmentErrors: result.stockAdjustmentErrors,
+          });
+        } catch (err) {
+          errors.push({
+            soNumber,
+            invoiceNo:
+              invoiceKey === AUTO_INVOICE_KEY ? null : invoiceKey,
+            message: err.message,
+          });
+
+          /**
+           * ✅ Validation Error CSV
+           */
+          if (
+            err.validationErrors &&
+            Array.isArray(err.validationErrors) &&
+            err.validationErrors.length > 0
+          ) {
+            err.validationErrors.forEach((item) => {
+              errorCsvRows.push({
+                ...item.originalRow,
+                Reason:
+                  item.reason || err.message || "Validation failed",
+              });
+            });
+          }
+
+          /**
+           * ✅ ANY OTHER ERROR CSV
+           */
+          else {
+            items.forEach((item) => {
+              errorCsvRows.push({
+                ...item.originalRow,
+                Reason: err.message || "Unknown error",
+              });
+            });
+          }
         }
       }
     }
