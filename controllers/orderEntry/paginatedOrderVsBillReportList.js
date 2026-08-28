@@ -108,6 +108,8 @@ const flattenOrderToRows = (ele) => {
         dbZone: order?.distributorId?.stateId?.zoneId?.name,
         dbState: order?.distributorId?.stateId?.name,
         dbCity: order?.distributorId?.city,
+        godownCode: order?.godownId?.godownCode,
+        godownName: order?.godownId?.godownName,
         employeeCode: order?.salesmanName?.empId,
         employeeName: order?.salesmanName?.name,
         employeeDesignation: order?.salesmanName?.desgId?.name,
@@ -178,6 +180,8 @@ const paginatedOrderVsBillReportList = asyncHandler(async (req, res) => {
       orderType,
       orderSource,
       paymentMode,
+      godownId,
+      godownIds,
       fromDate,
       toDate,
       status,
@@ -193,6 +197,12 @@ const paginatedOrderVsBillReportList = asyncHandler(async (req, res) => {
     if (orderSource) query.orderSource = orderSource;
     if (paymentMode) query.paymentMode = paymentMode;
     if (status) query.status = status;
+
+    if (godownId) {
+      query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      query.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
+    }
 
     if (fromDate || toDate) {
       query.createdAt = {};
@@ -220,6 +230,10 @@ const paginatedOrderVsBillReportList = asyncHandler(async (req, res) => {
             select: "name zoneId",
             populate: { path: "zoneId", select: "name" },
           },
+        },
+        {
+          path: "godownId",
+          select: "godownCode godownName godownType location isActive",
         },
         {
           path: "salesmanName",

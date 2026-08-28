@@ -1,4 +1,5 @@
 const asyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 const Inventory = require("../../models/inventory.model");
 const Price = require("../../models/price.model");
 const Distributor = require("../../models/distributor.model");
@@ -8,14 +9,35 @@ const moment = require("moment-timezone");
 
 const inventoryPaginatedListReport = asyncHandler(async (req, res) => {
   try {
-    const { stockType, showZeroStock, distributorId, godownId } = req.query;
+    const {
+      stockType,
+      showZeroStock,
+      distributorId,
+      godownId, // single godown filter (kept for backward compatibility)
+      godownIds, // comma-separated list of godown filters (multi-select)
+    } = req.query;
 
     const query = {};
     if (distributorId) {
       query.distributorId = distributorId;
     }
+
+    // Filter by godown (single or multiple)
     if (godownId) {
       query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      const ids = [
+        ...new Set(
+          godownIds
+            .split(",")
+            .map((id) => id.trim())
+            .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+        ),
+      ];
+
+      if (ids.length > 0) {
+        query.godownId = { $in: ids };
+      }
     }
 
     const showZeroStockBool =
