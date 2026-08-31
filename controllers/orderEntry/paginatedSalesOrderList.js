@@ -13,6 +13,8 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
     salesmanName,
     routeId,
     retailerId,
+    godownId,
+    godownIds,
     page = 1,
     limit = 20,
   } = req.query;
@@ -31,6 +33,11 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
   }
   if (retailerId) {
     filter.retailerId = { $in: retailerId.split(",") };
+  }
+  if (godownId) {
+    filter.godownId = godownId;
+  } else if (godownIds && godownIds !== "all") {
+    filter.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
   }
   if (search) {
     filter.orderNo = new RegExp(search, "i");
@@ -65,6 +72,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
 
   const populateFields = [
     { path: "distributorId", select: "dbCode name" },
+    { path: "godownId", select: "godownCode godownName" },
     {
       path: "salesmanName",
       select: "empId name",
@@ -100,12 +108,12 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
 
   // -------------------- SHAPE — ONE ROW PER PRODUCT LINE ITEM --------------------
   // Matches the requested table columns exactly: Order Number, Order Date,
-  // Order Source, Salesman Code, Salesman Name, Beat Code, Beat, Retailer Code,
-  // Retailer, Brand, Product Type, Category, Product Code, Product Name,
-  // Order Qty (Pcs), Order Qty (BOX), MRP, RLP, Gross Amount,
-  // Freight And Delivery Charges, Handling Charges, Scheme Discount,
-  // Special Disc Amount, Total Disc %, Basic Amount, Net Amount (Incl. Amt),
-  // Order to Bill Status.
+  // Order Source, Godown Code, Godown Name, Salesman Code, Salesman Name,
+  // Beat Code, Beat, Retailer Code, Retailer, Brand, Product Type, Category,
+  // Product Code, Product Name, Order Qty (Pcs), Order Qty (BOX), MRP, RLP,
+  // Gross Amount, Freight And Delivery Charges, Handling Charges,
+  // Scheme Discount, Special Disc Amount, Total Disc %, Basic Amount,
+  // Net Amount (Incl. Amt), Order to Bill Status.
   const data = orders.flatMap((order) => {
     const lineItems = order.lineItems || [];
 
@@ -124,6 +132,8 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
           orderNo: order.orderNo || "",
           orderDate: order.updatedAt,
           orderSource: order.orderSource || "",
+          godownCode: order.godownId?.godownCode || "",
+          godownName: order.godownId?.godownName || "",
           salesmanCode: order.salesmanName?.empId || "",
           salesmanNameLabel: order.salesmanName?.name || "",
           beatCode: order.routeId?.code || "",
@@ -162,6 +172,8 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
         orderNo: order.orderNo || "",
         orderDate: order.updatedAt,
         orderSource: order.orderSource || "",
+        godownCode: order.godownId?.godownCode || "",
+        godownName: order.godownId?.godownName || "",
         salesmanCode: order.salesmanName?.empId || "",
         salesmanNameLabel: order.salesmanName?.name || "",
         beatCode: order.routeId?.code || "",

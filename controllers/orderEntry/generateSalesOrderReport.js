@@ -38,6 +38,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId,
+      godownIds,
     } = req.query;
 
     const filter = {};
@@ -62,6 +64,15 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
         $in: retailerId.split(","),
       };
     }
+
+    if (godownId) {
+      filter.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      filter.godownId = {
+        $in: godownIds.split(",").map((id) => id.trim()),
+      };
+    }
+
     if (search) {
       filter.orderNo = new RegExp(search, "i");
     }
@@ -107,6 +118,10 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
         },
       },
       {
+        path: "godownId",
+        select: "godownCode godownName",
+      },
+      {
         path: "salesmanName",
         select: "empId name empMappingId",
         populate: {
@@ -150,6 +165,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
+      "Godown Code",
+      "Godown Name",
       "Order Number",
       "Order Date",
       "Order Source",
@@ -215,6 +232,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           //   order.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": order.distributorId?.stateId?.name || "",
           "Distributor's City": order.distributorId?.city || "",
+          "Godown Code": order.godownId?.godownCode || "",
+          "Godown Name": escapeCSVValue(order.godownId?.godownName || ""),
           "Order Number": order.orderNo || "",
           "Order Date": moment(order.updatedAt)
             .tz("Asia/Kolkata")
