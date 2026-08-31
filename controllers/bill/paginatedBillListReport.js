@@ -24,8 +24,11 @@ const paginatedBillListReport = asyncHandler(async (req, res) => {
       paymentMode,
       orderSource,
       brandIds,
+      godownId,
+      godownIds,
     } = req.query;
 
+    
     const pageNum = Math.max(Number(page) || 1, 1);
     const limitNum = Math.max(Number(limit) || 10, 1);
 
@@ -37,6 +40,12 @@ const paginatedBillListReport = asyncHandler(async (req, res) => {
     if (salesmanName) query.salesmanName = { $in: salesmanName.split(",") };
     if (routeId) query.routeId = { $in: routeId.split(",") };
     if (retailerId) query.retailerId = { $in: retailerId.split(",") };
+
+    if (godownId) {
+      query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      query.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
+    }
 
     if (billStatus) query.status = billStatus;
     if (orderType) query.orderType = orderType;
@@ -93,6 +102,7 @@ const paginatedBillListReport = asyncHandler(async (req, res) => {
             populate: { path: "zoneId", select: "name" },
           },
         },
+        { path: "godownId", select: "godownCode godownName" },
         {
           path: "salesmanName",
           populate: {
@@ -140,6 +150,8 @@ const paginatedBillListReport = asyncHandler(async (req, res) => {
           orderDate: bill?.orderId?.createdAt,
           allocationNo: bill?.loadSheetId?.allocationNo,
           vehicleNo: bill?.loadSheetId?.vehicleId?.vehicle_no,
+          godownCode: bill.godownId?.godownCode,
+          godownName: bill.godownId?.godownName,
           distributorName: bill.distributorId?.name,
           distributorCode: bill.distributorId?.dbCode,
           distributorState: bill?.distributorId?.stateId?.name,

@@ -29,6 +29,8 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
       deliveryToDate,
       cancelledFromDate,
       cancelledToDate,
+      godownId,
+      godownIds,
     } = req.query;
 
     console.log("Dataaaaaaaaaa", req.query);
@@ -59,6 +61,13 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
         $in: retailerId.split(","),
       };
     }
+
+    if (godownId) {
+      query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      query.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
+    }
+
     if (billStatus) query.status = billStatus;
 
     //  Created Date
@@ -177,6 +186,7 @@ const paginatedBillReport = asyncHandler(async (req, res) => {
             },
           },
         },
+        { path: "godownId", select: "godownCode godownName" },
         {
           path: "salesmanName",
           select: "",
