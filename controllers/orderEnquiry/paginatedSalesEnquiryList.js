@@ -12,6 +12,8 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
     toDate,
     routeId,
     retailerId,
+    godownId,
+    godownIds,
     page = 1,
     limit = 20,
   } = req.query;
@@ -27,6 +29,11 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
   }
   if (retailerId) {
     filter.retailerId = { $in: retailerId.split(",") };
+  }
+  if (godownId) {
+    filter.godownId = godownId;
+  } else if (godownIds && godownIds !== "all") {
+    filter.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
   }
   if (search) {
     filter.enquiryNo = new RegExp(search, "i");
@@ -72,6 +79,7 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         },
       },
     },
+    { path: "godownId", select: "godownCode godownName" },
     { path: "routeId", select: "code name" },
     { path: "retailerId", select: "outletCode outletName" },
     {
@@ -104,10 +112,11 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
 
   // -------------------- SHAPE — ONE ROW PER PRODUCT LINE ITEM --------------------
   // Matches the requested table columns exactly: Enquiry Number, Enquiry Date,
-  // Order Source, Beat Code, Beat, Retailer Code, Retailer, Brand, Product Type,
-  // Category, Product Code, Product Name, Order Qty (Pcs), Order Qty (BOX), MRP,
-  // RLP, Gross Amount, Freight And Delivery Charges, Handling Charges,
-  // Scheme Discount, Special Disc Amount, Total Disc %, Net Amount (Incl. Amt),
+  // Order Source, Godown Code, Godown Name, Beat Code, Beat, Retailer Code,
+  // Retailer, Brand, Product Type, Category, Product Code, Product Name,
+  // Order Qty (Pcs), Order Qty (BOX), MRP, RLP, Gross Amount,
+  // Freight And Delivery Charges, Handling Charges, Scheme Discount,
+  // Special Disc Amount, Total Disc %, Net Amount (Incl. Amt),
   // Enquiry to Order Status, Converted Order No.
   const data = enquiries.flatMap((enquiry) => {
     const lineItems = enquiry.lineItems || [];
@@ -127,6 +136,8 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
           enquiryNo: enquiry.enquiryNo || "",
           enquiryDate: enquiry.updatedAt,
           orderSource: enquiry.orderSource || "",
+          godownCode: enquiry.godownId?.godownCode || "",
+          godownName: enquiry.godownId?.godownName || "",
           beatCode: enquiry.routeId?.code || "",
           beatName: enquiry.routeId?.name || "",
           retailerCode: enquiry.retailerId?.outletCode || "",
@@ -162,6 +173,8 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         enquiryNo: enquiry.enquiryNo || "",
         enquiryDate: enquiry.updatedAt,
         orderSource: enquiry.orderSource || "",
+        godownCode: enquiry.godownId?.godownCode || "",
+        godownName: enquiry.godownId?.godownName || "",
         beatCode: enquiry.routeId?.code || "",
         beatName: enquiry.routeId?.name || "",
         retailerCode: enquiry.retailerId?.outletCode || "",

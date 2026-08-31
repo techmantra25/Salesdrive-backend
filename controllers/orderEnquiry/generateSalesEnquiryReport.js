@@ -38,6 +38,8 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
     //   salesmanName,
       routeId,
       retailerId,
+      godownId,
+      godownIds,
     } = req.query;
 
     const filter = {};
@@ -62,6 +64,15 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
         $in: retailerId.split(","),
       };
     }
+
+    if (godownId) {
+      filter.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      filter.godownId = {
+        $in: godownIds.split(",").map((id) => id.trim()),
+      };
+    }
+
     if (search) {
       filter.enquiryNo = new RegExp(search, "i");
     }
@@ -106,6 +117,7 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
           },
         },
       },
+      { path: "godownId", select: "godownCode godownName" },
     //   {
     //     path: "salesmanName",
     //     select: "empId name empMappingId",
@@ -154,6 +166,8 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
       // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
+      "Godown Code",
+      "Godown Name",
       "Enquiry Number",
       "Enquiry Date",
       "Order Source",
@@ -219,6 +233,8 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
           //   enquiry.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": enquiry.distributorId?.stateId?.name || "",
           "Distributor's City": enquiry.distributorId?.city || "",
+          "Godown Code": enquiry.godownId?.godownCode || "",
+          "Godown Name": escapeCSVValue(enquiry.godownId?.godownName || ""),
           "Enquiry Number": enquiry.enquiryNo || "",
           "Enquiry Date": moment(enquiry.updatedAt)
             .tz("Asia/Kolkata")
