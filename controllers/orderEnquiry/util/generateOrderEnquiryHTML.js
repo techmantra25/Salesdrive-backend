@@ -637,6 +637,23 @@ const generateOrderEnquiryHTML = (orderEnquiry, options = {}) => {
           (Number(item?.netAmt) || 0) > 0),
     )
     : [];
+
+  // Sort: product type ascending, then product name ascending within each type.
+  validLineItems.sort((a, b) => {
+    const typeCompare = String(a?.product?.product_type || "").localeCompare(
+      String(b?.product?.product_type || ""),
+      undefined,
+      { sensitivity: "base" }
+    );
+    if (typeCompare !== 0) return typeCompare;
+
+    return String(a?.product?.name || "").localeCompare(
+      String(b?.product?.name || ""),
+      undefined,
+      { sensitivity: "base" }
+    );
+  });
+
   const grossAmount = validLineItems.reduce((total, item) => {
     return total + (Number(item?.taxableAmt) || 0);
   }, 0);
