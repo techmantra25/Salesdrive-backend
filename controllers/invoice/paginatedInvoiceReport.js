@@ -81,6 +81,21 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
       filter.invoiceNo = { $regex: req.query.invoiceNo, $options: "i" };
     }
 
+    // NEW: Godown filter — supports a single id (godownId) or a
+    // comma-joined multi-select (godownIds), mirroring the pattern used
+    // by the bill report controllers.
+    if (req.query.godownId) {
+      filter.godownId = req.query.godownId;
+    } else if (req.query.godownIds) {
+      const godownIds = req.query.godownIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      if (godownIds.length > 0) {
+        filter.godownId = { $in: godownIds };
+      }
+    }
+
     let brandProductIds = [];
 
     if (req.query.brandIds) {
@@ -119,6 +134,8 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
         ],
       },
       { path: "lineItems.plant", select: "" },
+      // NEW: pull godown details for the CSV output
+      { path: "godownId", select: "godownCode godownName" },
     ];
 
     const headers = [
@@ -127,6 +144,8 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
       // "Distributor's Zone",
       "Distributor's State",
       "Distributor's City",
+      "Godown Code", // NEW
+      "Godown Name", // NEW
       "Invoice No",
       "Invoice Date",
       "PO No",
@@ -184,9 +203,9 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
 
         const basePoint = isRBPSchemed
           ? Number(
-            Number(item?.usedBasePoint ?? item?.product?.base_point ?? 0) *
-            Number(item?.receivedQty ?? 0)
-          )
+              Number(item?.usedBasePoint ?? item?.product?.base_point ?? 0) *
+                Number(item?.receivedQty ?? 0)
+            )
           : 0;
 
         csvStream.write({
@@ -195,6 +214,8 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
           // "Distributor's Zone": invoice?.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": invoice?.distributorId?.stateId?.name || "",
           "Distributor's City": invoice?.distributorId?.city || "",
+          "Godown Code": invoice?.godownId?.godownCode || "", // NEW
+          "Godown Name": invoice?.godownId?.godownName || "", // NEW
           "Invoice No": invoice?.invoiceNo || "",
           "Invoice Date": invoice?.date
             ? moment(invoice.date).tz("Asia/Kolkata").format("DD-MM-YYYY")
