@@ -2,8 +2,8 @@ const asyncHandler = require("express-async-handler");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
 const Transaction = require("../../models/transaction.model");
-const Distributor = require("../../models/distributor.model"); // **NEW: Added distributor import**
-const DistributorTransaction = require("../../models/distributorTransaction.model"); // **NEW: Added DistributorTransaction import**
+const Distributor = require("../../models/distributor.model");
+const DistributorTransaction = require("../../models/distributorTransaction.model");
 const { transactionCode } = require("../../utils/codeGenerator");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
@@ -11,35 +11,101 @@ const {
   createBulkStockLedgerEntries,
 } = require("../../controllers/transction/createStockLedgerEntry");
 
+// Which Inventory fields a given stockType bucket maps to, for the purpose
+// of a godown-wise adjustment. Mirrors the map used in stockTransfer.js so
+// both controllers stay in sync if the Inventory schema changes.
+const STOCK_FIELD_MAP = {
+  salable: {
+    qtyField: "availableQty",
+    dlpField: "totalStockamtDlp",
+    rlpField: "totalStockamtRlp",
+  },
+  unsalable: {
+    qtyField: "unsalableQty",
+    dlpField: "totalUnsalableamtDlp",
+    rlpField: "totalUnsalableStockamtRlp",
+  },
+  reserve: {
+    qtyField: "reservedQty",
+    dlpField: null,
+    rlpField: null,
+  },
+  offer: {
+    qtyField: "offerQty",
+    dlpField: null,
+    rlpField: null,
+  },
+};
+
+const recalcTotalQty = (inv) =>
+  (inv.availableQty || 0) +
+  (inv.unsalableQty || 0) +
+  (inv.offerQty || 0) +
+  (inv.reservedQty || 0);
+
+/**
+ * Godown-wise bulk stock adjustment (Add / Reduce).
+ *
+ * Expected req.body:
+ * {
+ *   data: [
+ *     {
+ *       product_code: "3100000001",
+ *       product_name: "...",              // optional, informational only
+ *       adjustment: "Add" | "Reduce",
+ *       stockType: "salable" | "unsalable" | "reserve" | "offer",
+ *       godownId: "<ObjectId>",            // REQUIRED - which godown's stock to adjust
+ *       qty: 10,
+ *       remarks: "optional free text",
+ *     },
+ *     ...
+ *   ]
+ * }
+ *
+ * IMPORTANT DIFFERENCE from the earlier version of this controller:
+ * Inventory is now looked up by (productId + distributorId + godownId)
+ * instead of just (productId + distributorId). A distributor can hold the
+ * same product across several godowns, so scoping by godownId ensures an
+ * adjustment made against "Godown A" never touches "Godown B"'s stock.
+ */
 const bulkAdjustment = asyncHandler(async (req, res) => {
   try {
     const { data } = req.body;
     const distributorId = req.user.id;
 
-    // console.log("i was called")
-
-    // console.log(distributorId, "distributorId in bulk adjustment");
-
     if (!data || !Array.isArray(data)) {
       return res
         .status(400)
-        .json({ message: "Test data is required and must be an array" });
+        .json({ message: "Data is required and must be an array" });
     }
 
     const transactions = [];
     const skippedRows = [];
     const stockId = await transactionCode("LXSTA");
 
-    // **NEW: Initialize points tracking variables**
     let totalAdjustmentPoints = 0;
-    const processedProducts = []; // Track processed products for logging
+    const processedProducts = [];
 
     await Promise.all(
       data.map(async (row, index) => {
-        const productCode = row.product_code.trim();
+        const productCode = row.product_code?.trim();
         const qty = parseInt(row.qty, 10);
-        const adjustmentType = row.adjustment.trim().toLowerCase();
-        const stockType = row.stockType.trim().toLowerCase();
+        const adjustmentType = row.adjustment?.trim().toLowerCase();
+        const stockType = row.stockType?.trim().toLowerCase();
+        const godownId = row.godownId;
+        const remarks = row.remarks?.length > 0 ? row.remarks : "adjustment";
+
+        if (!productCode) {
+          row.reason = `Product code is required at row ${index + 1}`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        if (!godownId) {
+          row.reason = `Godown is required for Product code: ${productCode}`;
+          skippedRows.push({ ...row });
+          return;
+        }
 
         if (isNaN(qty) || qty <= 0) {
           row.reason = `Invalid quantity for Product code: ${productCode}`;
@@ -49,6 +115,14 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
 
         if (!["add", "reduce"].includes(adjustmentType)) {
           row.reason = `Invalid adjustment type for Product code: ${productCode}. Must be 'Add' or 'Reduce'`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        const fieldMap = STOCK_FIELD_MAP[stockType];
+
+        if (!fieldMap) {
+          row.reason = `Unknown or unsupported stock type "${row.stockType}" for Product code: ${productCode}`;
           skippedRows.push({ ...row });
           return;
         }
@@ -93,33 +167,41 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
           return;
         }
 
-        let inventory = await Inventory.findOne({
+        // Godown-wise lookup - the key fix versus the old controller, which
+        // matched on productId + distributorId only and could silently
+        // adjust the wrong godown's stock when a product existed in more
+        // than one godown for the same distributor.
+        const inventory = await Inventory.findOne({
           productId: product._id,
           distributorId,
+          godownId,
         });
 
         if (!inventory) {
-          row.reason = `No existing inventory found for Product ID ${productCode} and Distributor ID ${distributorId}`;
+          row.reason = `No existing inventory found for Product code ${productCode} in the selected godown`;
           skippedRows.push({ ...row });
           return;
         }
 
-        let initialTotalQty = inventory.totalQty || 0;
+        const currentQty = inventory[fieldMap.qtyField] || 0;
 
-        // **NEW: Calculate adjustment points before inventory update**
+        if (adjustmentType === "reduce" && currentQty < qty) {
+          row.reason = `Insufficient ${stockType} stock for Product code: ${productCode}. Available: ${currentQty}, Requested: ${qty}`;
+          skippedRows.push({ ...row });
+          return;
+        }
+
+        // Points calculation (unchanged from the previous controller) -
+        // driven purely by qty moved, independent of which godown it's in.
         const basePoint = Number(product.base_point) || 0;
-        if (basePoint > 0) {
-          let productAdjustmentPoints = 0;
+        let productAdjustmentPoints = 0;
 
-          if (adjustmentType === "add") {
-            // For add adjustment, credit points
-            productAdjustmentPoints = basePoint * qty;
-            totalAdjustmentPoints += productAdjustmentPoints;
-          } else if (adjustmentType === "reduce") {
-            // For reduce adjustment, debit points
-            productAdjustmentPoints = basePoint * qty;
-            totalAdjustmentPoints -= productAdjustmentPoints;
-          }
+        if (basePoint > 0) {
+          productAdjustmentPoints = basePoint * qty;
+          totalAdjustmentPoints +=
+            adjustmentType === "add"
+              ? productAdjustmentPoints
+              : -productAdjustmentPoints;
 
           processedProducts.push({
             productCode,
@@ -130,101 +212,28 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
           });
         }
 
-        if (adjustmentType === "reduce") {
-          let currentStock;
+        const sign = adjustmentType === "add" ? 1 : -1;
 
-          if (stockType === "salable") {
-            currentStock = inventory.availableQty || 0;
-          } else if (stockType === "unsalable") {
-            currentStock = inventory.unsalableQty || 0;
-          } else if (stockType === "reserve") {
-            currentStock = inventory.reservedQty || 0;
-          }
-          // else if (stockType === "offer") {
-          //   currentStock = inventory.offerQty || 0;
-          // }
+        inventory[fieldMap.qtyField] = Math.max(currentQty + sign * qty, 0);
 
-          if (currentStock < qty) {
-            row.reason = `Insufficient ${stockType} stock for Product code: ${productCode}. Available: ${currentStock}, Requested: ${qty}`;
-            skippedRows.push({ ...row });
-            return;
-          }
+        if (fieldMap.dlpField && fieldMap.rlpField) {
+          inventory[fieldMap.dlpField] = Math.max(
+            (inventory[fieldMap.dlpField] || 0) + sign * dlpbyPcs * qty,
+            0,
+          );
+          inventory[fieldMap.rlpField] = Math.max(
+            (inventory[fieldMap.rlpField] || 0) + sign * rlpbyPcs * qty,
+            0,
+          );
         }
 
-        if (adjustmentType === "add") {
-          if (stockType === "salable") {
-            inventory.availableQty = (inventory.availableQty || 0) + qty;
-            inventory.totalStockamtDlp =
-              (inventory.totalStockamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalStockamtRlp =
-              (inventory.totalStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (stockType === "unsalable") {
-            inventory.unsalableQty = (inventory.unsalableQty || 0) + qty;
-            inventory.totalUnsalableamtDlp =
-              (inventory.totalUnsalableamtDlp || 0) + dlpbyPcs * qty;
-            inventory.totalUnsalableStockamtRlp =
-              (inventory.totalUnsalableStockamtRlp || 0) + rlpbyPcs * qty;
-          } else if (stockType === "reserve") {
-            inventory.reservedQty = (inventory.reservedQty || 0) + qty;
-          }
-          // else if (stockType === "offer") {
-          //   inventory.offerQty = (inventory.offerQty || 0) + qty;
-          // }
-        } else if (adjustmentType === "reduce") {
-          if (stockType === "salable") {
-            inventory.availableQty = Math.max(
-              (inventory.availableQty || 0) - qty,
-              0,
-            );
-            inventory.totalStockamtDlp = Math.max(
-              (inventory.totalStockamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalStockamtRlp = Math.max(
-              (inventory.totalStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          } else if (stockType === "unsalable") {
-            inventory.unsalableQty = Math.max(
-              (inventory.unsalableQty || 0) - qty,
-              0,
-            );
-            inventory.totalUnsalableamtDlp = Math.max(
-              (inventory.totalUnsalableamtDlp || 0) - dlpbyPcs * qty,
-              0,
-            );
-            inventory.totalUnsalableStockamtRlp = Math.max(
-              (inventory.totalUnsalableStockamtRlp || 0) - rlpbyPcs * qty,
-              0,
-            );
-          } else if (stockType === "reserve") {
-            inventory.reservedQty = Math.max(
-              (inventory.reservedQty || 0) - qty,
-              0,
-            );
-          }
-          // else if (stockType === "offer") {
-          //   inventory.offerQty = Math.max((inventory.offerQty || 0) - qty, 0);
-          // }
-        }
-
-        // Update totalQty based on stock adjustments
-        inventory.totalQty =
-          (inventory.availableQty || 0) +
-          (inventory.unsalableQty || 0) +
-          (inventory.reservedQty || 0);
-        // (inventory.offerQty || 0);
+        inventory.totalQty = recalcTotalQty(inventory);
 
         if (
-          isNaN(inventory.availableQty) ||
-          isNaN(inventory.totalStockamtDlp) ||
-          isNaN(inventory.totalStockamtRlp) ||
-          isNaN(inventory.unsalableQty) ||
-          isNaN(inventory.totalUnsalableamtDlp) ||
-          isNaN(inventory.totalUnsalableStockamtRlp) ||
-          // isNaN(inventory.offerQty) ||
-          isNaN(inventory.reservedQty) ||
-          isNaN(inventory.totalQty)
+          isNaN(inventory[fieldMap.qtyField]) ||
+          isNaN(inventory.totalQty) ||
+          (fieldMap.dlpField && isNaN(inventory[fieldMap.dlpField])) ||
+          (fieldMap.rlpField && isNaN(inventory[fieldMap.rlpField]))
         ) {
           row.reason = `Invalid inventory calculations for Product code: ${productCode}`;
           skippedRows.push({ ...row });
@@ -233,7 +242,6 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
 
         await inventory.save();
 
-        //causing the issue
         transactions.push({
           distributorId,
           transactionId: stockId,
@@ -242,90 +250,55 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
           qty,
           date: new Date(),
           type: adjustmentType === "add" ? "In" : "Out",
-          description: row.remarks,
-          balanceCount:
-            stockType === "salable"
-              ? inventory.availableQty
-              : stockType === "unsalable"
-                ? inventory.unsalableQty
-                : stockType === "reserve"
-                  ? inventory.reservedQty
-                  : inventory.offerQty,
+          description: remarks,
+          balanceCount: inventory[fieldMap.qtyField],
           transactionType: "stockadjustment",
-          stockType: stockType,
+          stockType,
+          godownId,
         });
       }),
     );
 
-    // if (transactions.length > 0) {
-    //   await Transaction.insertMany(transactions);
-    // }
-
     if (transactions.length > 0) {
       const createdTransactions = await Transaction.insertMany(transactions);
 
-      // Create stock ledger entries in bulk
       try {
         await createBulkStockLedgerEntries(createdTransactions);
       } catch (error) {
         console.error("Bulk stock ledger creation failed:", error.message);
-        // Don't throw - allow adjustment to continue
+        // Don't throw - allow the adjustment response to still succeed
       }
     }
 
-    // **NEW: Create DistributorTransaction for adjustment points if applicable**
-    if (processedProducts?.length > 0 && totalAdjustmentPoints !== 0) {
+    if (processedProducts.length > 0 && totalAdjustmentPoints !== 0) {
       try {
-        console.log(
-          `Processing ${processedProducts.length} products for adjustment points calculation...`,
-        );
-
-        // **NEW: Fetch distributor details to check RBP scheme mapping**
         const distributor = await Distributor.findById(distributorId).lean();
-
-        // console.log("fetched distributor details", distributor);
 
         if (!distributor) {
           console.log(`Distributor not found for ID: ${distributorId}`);
         } else if (distributor?.RBPSchemeMapped !== "yes") {
           console.log(
-            `Skipping adjustment points calculation - RBP scheme not mapped for distributor ${distributor.dbCode} (RBPSchemeMapped: ${distributor.RBPSchemeMapped})`,
+            `Skipping adjustment points calculation - RBP scheme not mapped for distributor ${distributor.dbCode}`,
           );
         } else {
-          console.log(
-            `Creating distributor transaction for ${Math.abs(
-              totalAdjustmentPoints,
-            )} adjustment points for distributor ${distributor.dbCode}...`,
-          );
-
-          // Get the latest distributor transaction to calculate new balance
           const latestTransaction = await DistributorTransaction.findOne({
-            distributorId: distributorId,
+            distributorId,
           }).sort({ createdAt: -1 });
 
           const currentBalance = latestTransaction
             ? Number(latestTransaction.balance)
             : 0;
 
-          // Determine transaction type and ensure we have positive points for transaction
           const transactionType =
             totalAdjustmentPoints > 0 ? "credit" : "debit";
           const pointsToRecord = Math.abs(totalAdjustmentPoints);
           const newBalance =
             transactionType === "credit"
               ? currentBalance + pointsToRecord
-              : Math.max(currentBalance - pointsToRecord, 0); // Prevent negative balance
+              : Math.max(currentBalance - pointsToRecord, 0);
 
-          // Check if debit would cause negative balance
-          if (transactionType === "debit" && currentBalance < pointsToRecord) {
-            console.log(
-              `Warning: Adjustment would cause negative balance. Current: ${currentBalance}, Attempting to debit: ${pointsToRecord}. Setting balance to 0.`,
-            );
-          }
-
-          // Create the distributor transaction
           const distributorTransaction = new DistributorTransaction({
-            distributorId: distributorId,
+            distributorId,
             transactionType,
             transactionFor: "Adjustment Point",
             point: Math.round(pointsToRecord),
@@ -335,14 +308,6 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
           });
 
           await distributorTransaction.save();
-
-          console.log(
-            `Successfully created distributor transaction: ${transactionType} ${Math.round(
-              pointsToRecord,
-            )} points for distributor ${
-              distributor.dbCode
-            }. New balance: ${newBalance}`,
-          );
         }
       } catch (pointsError) {
         console.error("Error creating distributor transaction:", pointsError);
@@ -354,17 +319,10 @@ const bulkAdjustment = asyncHandler(async (req, res) => {
       message: "Stock adjustment processed successfully",
       transactions,
       skippedRows,
-      // **NEW: Add adjustment points summary to response**
       adjustmentSummary: {
         totalProcessedProducts: processedProducts.length,
         totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
-        processedProducts: processedProducts.map((product) => ({
-          productCode: product.productCode,
-          adjustmentType: product.adjustmentType,
-          qty: product.qty,
-          basePoint: product.basePoint,
-          points: product.points,
-        })),
+        processedProducts,
       },
     });
   } catch (error) {

@@ -5,15 +5,19 @@ const detailDraft = asyncHandler(async (req, res) => {
   try {
     // Find the transaction by transactionId and distributorId
     const transactionDraft = await TransactionDraft.findOne({
-      _id: req.params.transactionDraftId,
+      transactionDraftId: req.params.transactionDraftId,
     }).populate([
       {
         path: "draft_data.distributorId",
-        select: "name email", // Adjust as per your Distributor model fields
+        select: "name email",
       },
       {
         path: "draft_data.productId",
-        select: "name product_code", // Adjust as per your Product model fields
+        select: "name product_code",
+      },
+      {
+        path: "draft_data.godownId",
+        select: "godownName godownCode",
       },
     ]);
 

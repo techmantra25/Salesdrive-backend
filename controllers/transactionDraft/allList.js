@@ -9,11 +9,15 @@ const allDraftList = asyncHandler(async (req, res) => {
     }).populate([
       {
         path: "draft_data.distributorId",
-        select: " ",
+        select: "name email",
       },
       {
         path: "draft_data.productId",
         select: "name product_code",
+      },
+      {
+        path: "draft_data.godownId",
+        select: "godownName godownCode",
       },
     ]);
 

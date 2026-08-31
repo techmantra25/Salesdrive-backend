@@ -35,7 +35,7 @@ transactionDraftRoutes
   .route("/update/:transactionDraftId")
   .patch(protectDisRoute, updateTransactionDraft);
 
-transactionDraftRoutes.route("/all-list").get(protect, allDraftList);
+transactionDraftRoutes.route("/all-list").get(protectDisRoute, allDraftList);
 
 transactionDraftRoutes
   .route("/delete/:transactionDraftId")

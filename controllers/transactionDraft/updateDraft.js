@@ -26,6 +26,10 @@ const updateTransactionDraft = asyncHandler(async (req, res) => {
           item.type = "Out";
         }
 
+        if (!item.godownId) {
+          return null;
+        }
+
         // Fetch productId from product_code
         const product = await Product.findOne({
           product_code: item.product_code,
@@ -37,12 +41,14 @@ const updateTransactionDraft = asyncHandler(async (req, res) => {
         const inventory = await Inventory.findOne({
           productId: product._id,
           distributorId,
+          godownId: item.godownId,
         });
 
         return {
           ...item,
           productId: product._id, // Add productId to the item
           distributorId, // Add distributorId from auth
+          godownId: item.godownId, // Preserve which godown this row is for
           invItemId: inventory ? inventory._id : null, // Set invItemId from inventory if available
           description: item.description || null, // Ensure description is set
         };
@@ -52,15 +58,23 @@ const updateTransactionDraft = asyncHandler(async (req, res) => {
     // Filter out any null items
     const filteredMappedData = mappedData.filter((item) => item !== null);
 
+    if (filteredMappedData.length === 0) {
+      return res.status(400).json({
+        error: true,
+        message:
+          "No valid rows to update - each row needs a valid product_code and godownId",
+      });
+    }
+
     // Replace the draft_data array with filteredMappedData
-    const updatedTransactionDraft = await TransactionDraft.findByIdAndUpdate(
-      transactionDraftId,
+    const updatedTransactionDraft = await TransactionDraft.findOneAndUpdate(
+      { transactionDraftId },
       {
         $set: {
-          draft_data: filteredMappedData, // Completely replace the draft_data array with filteredMappedData
+          draft_data: filteredMappedData,
         },
       },
-      { new: true, runValidators: true } // Return the updated document and validate
+      { new: true, runValidators: true }
     );
 
     // Check if the draft was found and updated
