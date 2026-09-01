@@ -6,6 +6,10 @@ const numberToWords = require("./numberToWords");
 // header, retailer/details block, items table, summary, note/signature and
 // channel-partners footer as a Sales Order — and, on multi-page bills, that
 // entire block repeats on every page the same way it does for orders.
+//
+// DIFFERENCE FROM generateSalesOrderHTML.js: line items are always sorted
+// by Product Type first, then Product Name, both A-Z, before pagination.
+// See `sortLineItemsByTypeAndName` below.
 // ---------------------------------------------------------------------------
 
 const escapeHtml = (value) => {
@@ -59,6 +63,53 @@ const getStatusLabel = (status) => {
   if (status === "Completed_Billed") return "Completely Billed";
   if (status === "Partially_Billed") return "Partially Billed";
   return status || "";
+};
+
+// ---------------------------------------------------------------------------
+// SORTING — line items are always ordered by Product Type (A-Z) first, then
+// Product Name (A-Z) within each type. This runs once, right after the
+// zero-qty items are filtered out and before pagination, so it applies
+// uniformly across every page of a multi-page bill.
+//
+// Falls back gracefully if a product has no explicit "type" field: it tries
+// a few common field names, and items with no type sort after typed items
+// but are still ordered by name among themselves.
+// ---------------------------------------------------------------------------
+const getProductType = (item) => {
+  const product = item?.product || {};
+  return (
+    product?.type ||
+    product?.productType ||
+    product?.product_type ||
+    product?.category ||
+    product?.categoryName ||
+    ""
+  );
+};
+
+const getProductName = (item) => item?.product?.name || "";
+
+const sortLineItemsByTypeAndName = (items) => {
+  return items.slice().sort((a, b) => {
+    const typeA = getProductType(a);
+    const typeB = getProductType(b);
+
+    // Items with no type are pushed after items that do have a type.
+    if (!typeA && typeB) return 1;
+    if (typeA && !typeB) return -1;
+
+    const typeCompare = String(typeA).localeCompare(String(typeB), "en", {
+      sensitivity: "base",
+      numeric: true,
+    });
+
+    if (typeCompare !== 0) return typeCompare;
+
+    return String(getProductName(a)).localeCompare(String(getProductName(b)), "en", {
+      sensitivity: "base",
+      numeric: true,
+    });
+  });
 };
 
 // Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
@@ -299,7 +350,7 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
   const blankRowsNeeded = Math.max(0, minRows - itemsForPage.length);
 
   return `
-          <!-- LINE ITEMS TABLE -->
+          <!-- LINE ITEMS TABLE (sorted by Product Type, then Product Name, A-Z) -->
           <table class="items-table">
             <thead>
               <tr>
@@ -607,10 +658,15 @@ const generateBillHTML = (bill, options = {}) => {
     ? bill.lineItems.filter((item) => (Number(item?.billQty) || 0) > 0)
     : [];
 
+  // Always sort by Product Type then Product Name, A-Z, before doing any
+  // amount calculations or pagination — so totals/pagination operate on
+  // the same final ordering that gets printed.
+  const sortedLineItems = sortLineItemsByTypeAndName(validLineItems);
+
   // Gross Amount is now derived the same way as the Sales Order generator:
   // the sum of each line item's taxableAmt (falling back to netAmt), rather
   // than the bill's standalone grossAmount field.
-  const grossAmount = validLineItems.reduce((total, item) => {
+  const grossAmount = sortedLineItems.reduce((total, item) => {
     return total + (Number(item?.taxableAmt || item?.netAmt) || 0);
   }, 0);
 
@@ -641,7 +697,7 @@ const generateBillHTML = (bill, options = {}) => {
   // The full header/details/summary/note/signature/footer block repeats on
   // every page, same as the Sales Order generator.
   // ---------------------------------------------------------------------
-  const pages = paginateLineItems(validLineItems);
+  const pages = paginateLineItems(sortedLineItems);
   const totalPages = pages.length;
 
   const pagesHtml = pages

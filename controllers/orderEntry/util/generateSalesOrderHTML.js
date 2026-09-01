@@ -53,6 +53,46 @@ const getStatusLabel = (status) => {
   return status || "Pending";
 };
 
+// ---------------------------------------------------------------------------
+// LINE ITEM SORTING
+// ---------------------------------------------------------------------------
+// Line items are always sorted alphabetically (A-Z) by product type first,
+// then by product name, regardless of the order they were entered/saved in.
+// Multiple possible field names are checked for "type" since different
+// product records may use different keys (product_type / type / category).
+const getProductTypeKey = (product) =>
+  String(
+    product?.product_type ||
+      product?.productType ||
+      product?.type ||
+      product?.category ||
+      "",
+  ).trim().toLowerCase();
+
+const getProductNameKey = (product) =>
+  String(product?.name || "").trim().toLowerCase();
+
+const sortLineItemsByTypeAndName = (items) => {
+  return [...items].sort((a, b) => {
+    const typeA = getProductTypeKey(a?.product);
+    const typeB = getProductTypeKey(b?.product);
+
+    const typeCompare = typeA.localeCompare(typeB, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+    if (typeCompare !== 0) return typeCompare;
+
+    const nameA = getProductNameKey(a?.product);
+    const nameB = getProductNameKey(b?.product);
+
+    return nameA.localeCompare(nameB, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+  });
+};
+
 // Channel partner logos stored in Firebase — kept as constants so escapeHtml can be applied at render time
 const CHANNEL_PARTNER_LOGOS = [
   {
@@ -130,10 +170,10 @@ const renderCompanyHeader = (distributor, options) => `
            <div style="flex:0 0 105px; height:105px; display:flex; align-items:center; justify-content:center;">
   <img
     src="${escapeHtml(
-  options?.logoBase64 ||
-  options?.logoUrl ||
-  "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
-)}"
+      options?.logoBase64 ||
+        options?.logoUrl ||
+        "https://firebasestorage.googleapis.com/v0/b/lux-file-storage.appspot.com/o/dms%2Fdms_1775744543343.png?alt=media",
+    )}"
     alt="Company Logo"
     style="width:100%; height:100%; object-fit:contain; display:block;"
     onerror="this.style.display='none'"
@@ -143,16 +183,18 @@ const renderCompanyHeader = (distributor, options) => `
   <div style="font-size:20px; font-weight:bold; letter-spacing:0.5px;">
     ${escapeHtml(distributor?.name || "Company Name")}
   </div>
-              ${distributor?.address1
-    ? `<div style="font-size:9px; margin-top:2px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
-    : ""
-  }
+              ${
+                distributor?.address1
+                  ? `<div style="font-size:9px; margin-top:2px;">${escapeHtml(distributor.address1)}${distributor?.address2 ? `, ${escapeHtml(distributor.address2)}` : ""}</div>`
+                  : ""
+              }
               <div style="font-size:9px; margin-top:1px;">
 ${distributor?.email ? `Email : ${escapeHtml(distributor.email)}` : ""}${distributor?.email && distributor?.phone ? ", " : ""}${distributor?.phone ? `Phone : ${escapeHtml(distributor.phone)}` : ""}              </div>
-              ${distributor?.gst_no || distributor?.stateId?.name
-    ? `<div style="font-size:9px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
-    : ""
-  }
+              ${
+                distributor?.gst_no || distributor?.stateId?.name
+                  ? `<div style="font-size:9px; margin-top:1px;">${distributor?.gst_no ? `GSTIN: <strong>${escapeHtml(distributor.gst_no)}</strong>` : ""}${distributor?.gst_no && distributor?.stateId?.name ? " &nbsp;&nbsp; " : ""}${distributor?.stateId?.name ? `State: ${escapeHtml(distributor.stateId.name)}` : ""}</div>`
+                  : ""
+              }
             </div>
           </div>
 
@@ -216,13 +258,14 @@ const renderRetailerAndOrderDetails = (
                         <td style="width: 38%; font-size:9px;">Order No.</td>
                         <td style="font-size:9px;">: <strong>${escapeHtml(orderEntry?.orderNo || "")}</strong></td>
                       </tr>
-                      ${orderEntry?.orderId
-    ? `<tr>
+                      ${
+                        orderEntry?.orderId
+                          ? `<tr>
                         <td style="font-size:9px;">External Order ID</td>
                         <td style="font-size:9px;">: ${escapeHtml(orderEntry.orderId)}</td>
                       </tr>`
-    : ""
-  }
+                          : ""
+                      }
                       <tr>
                         <td style="font-size:9px;">Order Date</td>
                         <td style="font-size:9px;">: ${escapeHtml(formatDate(orderEntry?.createdAt))}</td>
@@ -288,7 +331,7 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
   const blankRowsNeeded = Math.max(0, minRows - itemsForPage.length);
 
   return `
-          <!-- LINE ITEMS TABLE -->
+          <!-- LINE ITEMS TABLE (sorted A-Z by product type, then product name) -->
           <table class="items-table">
             <thead>
               <tr>
@@ -304,21 +347,23 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
             </thead>
             <tbody>
               ${itemsForPage
-      .map((item, index) => {
-        const product = item?.product || {};
+                .map((item, index) => {
+                  const product = item?.product || {};
 
-        const discPct = Number(item?.totalDiscountPercentage || 0);
-        const qty = Number(item?.oderQty || 0);
+                  const discPct = Number(item?.totalDiscountPercentage || 0);
+                  const qty = Number(item?.oderQty || 0);
 
-        const mrp = Number(
-          item?.price?.mrp_price || item?.price?.rlp_price || 0
-        );
+                  const mrp = Number(
+                    item?.price?.mrp_price || item?.price?.rlp_price || 0,
+                  );
 
-        const effectiveAmount = Number(item?.taxableAmt || item?.netAmt || 0);
+                  const effectiveAmount = Number(
+                    item?.taxableAmt || item?.netAmt || 0,
+                  );
 
-        const effectivePrice = qty > 0 ? effectiveAmount / qty : 0;
+                  const effectivePrice = qty > 0 ? effectiveAmount / qty : 0;
 
-        return `
+                  return `
               <tr>
                 <td class="text-center" style="font-size:9px;">${startIndex + index + 1}</td>
                 <td class="text-left" style="font-size:9px;">${escapeHtml(product?.name || "")}</td>
@@ -329,8 +374,8 @@ const renderItemsTable = (itemsForPage, startIndex, minRows = MIN_TABLE_ROWS) =>
                 <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectivePrice))}</td>
                  <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(effectiveAmount))}</td>
               </tr>`;
-      })
-      .join("")}
+                })
+                .join("")}
               ${Array.from({ length: blankRowsNeeded }, renderBlankItemsRow).join("")}
             </tbody>
           </table>`;
@@ -353,13 +398,14 @@ const renderSummarySection = (
                         <td colspan="3" class="bold" style="font-size:9px;">E &amp; O.E</td>
                       </tr>
 
-                      ${Number(orderEntry?.totalBasePoints) > 0
-    ? `<tr>
+                      ${
+                        Number(orderEntry?.totalBasePoints) > 0
+                          ? `<tr>
                         <td colspan="2" style="font-size:9px;">Base Points</td>
                         <td style="font-size:9px;">: ${Number(orderEntry.totalBasePoints) || 0}</td>
                       </tr>`
-    : ""
-  }
+                          : ""
+                      }
                       <tr>
                         <td colspan="3" style="padding-top:6px; font-size:9px;">
                           <strong>Amount In Words:</strong>
@@ -373,8 +419,9 @@ const renderSummarySection = (
 
 <tr>
   <td colspan="3" style="padding:6px 0 0 0;">
-    ${bankData?.bankName || upiData?.upiId
-    ? `
+    ${
+      bankData?.bankName || upiData?.upiId
+        ? `
         <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
           <tbody>
             <tr>
@@ -385,8 +432,9 @@ const renderSummarySection = (
                       <td colspan="2" class="bold" style="font-size:11px;">Bank Details</td>
                     </tr>
 
-                    ${bankData?.bankName
-      ? `
+                    ${
+                      bankData?.bankName
+                        ? `
                     <tr>
                       <td style="width:35%; font-size:9px;">Bank Name</td>
                       <td style="font-size:9px;">: ${escapeHtml(bankData.bankName)}</td>
@@ -408,13 +456,13 @@ const renderSummarySection = (
                       <td style="font-size:9px;">: ${escapeHtml(bankData.accountNumber || "")}</td>
                     </tr>
                     `
-      : `
+                        : `
                     <tr>
                       <td colspan="2" style="font-size:9px;">
                         Bank details are not available.
                       </td>
                     </tr>`
-    }
+                    }
 
                   </tbody>
                 </table>
@@ -428,10 +476,11 @@ const renderSummarySection = (
                     </tr>
                     <tr>
                       <td style="font-size:9px;">
-                        ${upiData?.upiId
-      ? escapeHtml(`UPI ID: ${upiData.upiId}`)
-      : "UPI details are not available."
-    }
+                        ${
+                          upiData?.upiId
+                            ? escapeHtml(`UPI ID: ${upiData.upiId}`)
+                            : "UPI details are not available."
+                        }
                       </td>
                     </tr>
                   </tbody>
@@ -442,7 +491,7 @@ const renderSummarySection = (
           </tbody>
         </table>
         `
-    : `
+        : `
         <table style="width:100%; border-collapse:collapse; border:1px solid #000;">
           <tbody>
             <tr>
@@ -459,7 +508,7 @@ const renderSummarySection = (
           </tbody>
         </table>
         `
-  }
+    }
   </td>
 </tr>
                     </tbody>
@@ -495,14 +544,15 @@ const renderSummarySection = (
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEntry?.sgst))}</td>
                       </tr>
-                      ${Number(orderEntry?.igst) > 0
-    ? `<tr>
+                      ${
+                        Number(orderEntry?.igst) > 0
+                          ? `<tr>
                         <td style="font-size:9px;">IGST</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEntry?.igst))}</td>
                       </tr>`
-    : ""
-  }
+                          : ""
+                      }
                       <tr>
                         <td style="font-size:9px;">Invoice Amount</td>
                         <td class="text-center" style="font-size:9px;">:</td>
@@ -513,23 +563,25 @@ const renderSummarySection = (
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEntry?.roundOffAmount))}</td>
                       </tr>
-                      ${Number(orderEntry?.cashDiscount) > 0 ||
-    orderEntry?.cashDiscountApplied
-    ? `<tr>
+                      ${
+                        Number(orderEntry?.cashDiscount) > 0 ||
+                        orderEntry?.cashDiscountApplied
+                          ? `<tr>
                         <td style="font-size:9px;">Cash Discount</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEntry?.cashDiscount))}</td>
                       </tr>`
-    : ""
-  }
-                      ${Number(orderEntry?.creditAmount) > 0
-    ? `<tr>
+                          : ""
+                      }
+                      ${
+                        Number(orderEntry?.creditAmount) > 0
+                          ? `<tr>
                         <td style="font-size:9px;">Credit Note Adjustment</td>
                         <td class="text-center" style="font-size:9px;">:</td>
                         <td class="text-right" style="font-size:9px;">&#8377;${escapeHtml(formatCurrency(orderEntry?.creditAmount))}</td>
                       </tr>`
-    : ""
-  }
+                          : ""
+                      }
                       <tr class="bold border-top-bold" style="font-weight:bold;">
                         <td style="padding-top:4px; font-size:9px;">Net Amount</td>
                         <td class="text-center" style="padding-top:4px; font-size:9px;">:</td>
@@ -590,10 +642,11 @@ const renderChannelPartnersFooter = () => `
 const renderPageFooter = (pageNumber, totalPages, isLastPage) => `
           <!-- PAGE NUMBER / CONTINUATION NOTICE AT BOTTOM -->
           <div style="padding:3px 8px; text-align:center; font-size:9px; color:#555; border-top:1px solid #000;">
-            ${isLastPage
-    ? `Page ${pageNumber} of ${totalPages}`
-    : `Continue to Page No. ${pageNumber + 1}`
-  }
+            ${
+              isLastPage
+                ? `Page ${pageNumber} of ${totalPages}`
+                : `Continue to Page No. ${pageNumber + 1}`
+            }
           </div>`;
 
 const generateSalesOrderHTML = (orderEntry, options = {}) => {
@@ -606,22 +659,27 @@ const generateSalesOrderHTML = (orderEntry, options = {}) => {
   const termConditions = Array.isArray(orderEntry?.termConditions)
     ? orderEntry.termConditions
     : [];
-  const validLineItems = Array.isArray(orderEntry?.lineItems)
+  const filteredLineItems = Array.isArray(orderEntry?.lineItems)
     ? orderEntry.lineItems.filter(
-      (item) =>
-        item?.product &&
-        ((Number(item?.oderQty) || 0) > 0 ||
-          (Number(item?.boxOrderQty) || 0) > 0 ||
-          (Number(item?.netAmt) || 0) > 0),
-    )
+        (item) =>
+          item?.product &&
+          ((Number(item?.oderQty) || 0) > 0 ||
+            (Number(item?.boxOrderQty) || 0) > 0 ||
+            (Number(item?.netAmt) || 0) > 0),
+      )
     : [];
+
+  // Always sort line items A-Z by product type, then product name — this
+  // sorting is unconditional and does not depend on any input flag/option.
+  const validLineItems = sortLineItemsByTypeAndName(filteredLineItems);
+
   const grossAmount = validLineItems.reduce((total, item) => {
     return total + (Number(item?.taxableAmt || item?.netAmt) || 0);
   }, 0);
   const linkedBills = Array.isArray(orderEntry?.billIds)
     ? orderEntry.billIds
-      .map((bill) => bill?.new_billno || bill?.billNo)
-      .filter(Boolean)
+        .map((bill) => bill?.new_billno || bill?.billNo)
+        .filter(Boolean)
     : [];
 
   // ---------------------------------------------------------------------
