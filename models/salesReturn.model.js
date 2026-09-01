@@ -129,8 +129,8 @@ const SalesReturn = new mongoose.Schema(
       type: String,
       required: true,
       unique: true, // NEW — DB-level guarantee: two documents can never share a salesReturnNo,
-                    // even if generateCodeForSalesReturn races under concurrent requests. The
-                    // controller retries with a fresh code if this constraint is hit.
+      // even if generateCodeForSalesReturn races under concurrent requests. The
+      // controller retries with a fresh code if this constraint is hit.
     },
     billId: [
       {
@@ -151,6 +151,11 @@ const SalesReturn = new mongoose.Schema(
     retailerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "OutletApproved",
+      required: true,
+    },
+    godownId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Godown",
       required: true,
     },
     goodsType: {
@@ -221,7 +226,7 @@ const SalesReturn = new mongoose.Schema(
       type: Date,
       default: null,
     },
-  
+
     enabledBackDate: {
       type: Boolean,
       default: false,

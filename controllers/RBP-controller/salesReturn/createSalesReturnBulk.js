@@ -38,6 +38,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId, // NEW — the godown selected on the Sales Return Entry screen; stock goes back here
       goodsType,
       collectionStatus,
       remarks,
@@ -60,6 +61,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
     const missingFields = [
       !routeId && "routeId",
       !retailerId && "retailerId",
+      !godownId && "godownId", // NEW — required, since inventory is godown-wise now
       !goodsType && "goodsType",
       (!lineItems || !lineItems.length) && "lineItems",
     ].filter(Boolean);
@@ -136,7 +138,6 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       });
     }
 
-    // 90-day check — per bill, since a batch can mix bills from different dates
     // 90-day check — per bill, since a batch can mix bills from different dates
     for (const bill of bills) {
       const billCreationDate = moment.tz(bill.createdAt, "Asia/Kolkata");
@@ -304,6 +305,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
+      godownId, // NEW — which godown this return's stock was credited back to
       goodsType,
       collectionStatus,
       totalReturnQty,
@@ -394,12 +396,23 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
 
     for (const item of lineItems) {
       const itemBill = billMap.get(String(item.billId));
-      const inventory = await Inventory.findById(item.inventoryId);
+
+      // CHANGED — stock now goes back to whichever godown was selected on
+      // the return entry screen (req.body.godownId), NOT necessarily the
+      // godown of the original bill's inventory record. Inventory is
+      // looked up by product + selected godown instead of by the bill's
+      // stored inventoryId.
+      const inventory = await Inventory.findOne({
+        distributorId: req.user._id,
+        productId: item.product,
+        godownId: godownId,
+      });
+
       const stockId = await transactionCode("LXSTA");
       if (!inventory) {
         return res.status(404).json({
           status: 404,
-          message: `Inventory item not found: ${item.inventoryId}`,
+          message: `Inventory not found for product ${item.product} in the selected godown`,
         });
       }
 
@@ -426,7 +439,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       const transactionData = {
         distributorId: req.user._id,
         transactionId: stockId,
-        invItemId: item.inventoryId,
+        invItemId: inventory._id, // CHANGED — the godown-resolved inventory doc, not item.inventoryId
         productId: inventory.productId,
         billId: itemBill?._id,
         billLineItemId: item._id,
