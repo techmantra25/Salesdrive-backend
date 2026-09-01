@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   allTransactionList,
+  searchPartyOptions, 
 } = require("../../controllers/transction/allTransactionList");
 
 const {
@@ -81,6 +82,8 @@ transactionRoutes
 
 transactionRoutes.route("/all-list").get(protectDisRoute, allTransactionList);
 transactionRoutes.route("/alllist-admins").post(adminAllTransactionList);
+
+transactionRoutes.route("/party-options").get(protectDisRoute, searchPartyOptions);
 
 transactionRoutes.route("/all-list-report").get(protect, allTransactionListReport);
 
