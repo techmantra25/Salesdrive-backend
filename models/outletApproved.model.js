@@ -171,7 +171,7 @@ const outletApprovedSchema = new mongoose.Schema(
     },
     categoryOfOutlet: {
       type: [String],
-      enum: ["Retail", "Wholesale", "Project", "Consumer", "Survey"],
+      enum: ["Retail", "Wholesale", "Project", "Consumer", "Survey","RETAILER"],
       default: [],
     },
     // NEW: potential business value bracket for the outlet
