@@ -15,8 +15,10 @@ const {
 } = require("../../utils/codeGenerator");
 const { SERVER_URL } = require("../../config/server.config");
 
-
-const REQUIRED_ROW_FIELDS = ["brand", "product_code", "uom_qty", "so_number", "godown_code"];
+// NOTE: uom_qty is no longer unconditionally required here — a row is
+// valid as long as it supplies at least one of uom_qty / pcs_qty (see
+// validateRows below).
+const REQUIRED_ROW_FIELDS = ["brand", "product_code", "so_number", "godown_code"];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -47,6 +49,13 @@ function validateRows(rows) {
   const missingKeys = REQUIRED_ROW_FIELDS.filter((f) => !(f in sample));
   if (missingKeys.length) {
     throw new Error(`Row objects are missing required key(s): ${missingKeys.join(", ")}`);
+  }
+
+  // A row must supply at least one of uom_qty / pcs_qty — checked at the
+  // batch level (against the first row's keys) so a CSV missing both
+  // columns entirely fails fast with a clear message.
+  if (!("uom_qty" in sample) && !("pcs_qty" in sample)) {
+    throw new Error(`Row objects must include at least one of: uom_qty, pcs_qty`);
   }
 
   return rows.map((row, idx) => ({ ...row, __rowIndex: idx + 1 }));
@@ -115,6 +124,20 @@ async function resolveGodownForCode(godownCode, distributor) {
  * Resolve one row object into a lineItem object, or throw with a
  * descriptive message (caller attaches row number for context).
  *
+ * QUANTITY INPUT: a row may supply EITHER `uom_qty` OR `pcs_qty` (or
+ * both, in which case `uom_qty` wins and `pcs_qty` is ignored — see the
+ * `hasUomQty` check below).
+ *   - `uom_qty` is a count in the product's own uom (e.g. 1 bundle, 2
+ *     boxes). For a "pcs" uom product it's treated the same as pcs_qty.
+ *     For a boxed/bundled uom it always represents WHOLE units and is
+ *     multiplied by the product's pieces-per-unit to get orderQty.
+ *   - `pcs_qty` is an exact PIECE count, independent of the product's
+ *     packaging. For a boxed/bundled uom this allows ordering less than
+ *     a full box/bundle: orderQty is taken as-is, and boxOrderQty is
+ *     derived (pcs_qty / piecesPerUnit) purely for box-count reporting —
+ *     it may come out fractional (e.g. 20 pcs of a 25-pcs bundle -> 0.8),
+ *     which correctly reflects a partial unit rather than rounding up.
+ *
  * GST type (IGST vs CGST/SGST) is decided by the AUTHORITATIVE state
  * comparison between distributor and supplier (isInterState), same as
  * the single-PO controller — never inferred from a product's static
@@ -132,16 +155,34 @@ async function resolveGodownForCode(godownCode, distributor) {
  * Price resolution date: prefers this row's own `po_date`, falls back
  * to the group's `groupPoDate` (the so_number group's manualDate), and
  * finally falls back to "now" if neither is present/parseable.
+ * Pricing itself is resolved by productId + date only, so it is
+ * completely independent of whether uom_qty or pcs_qty was supplied.
  */
 async function buildLineItemFromRow(row, distributor, isInterState, godownId, groupPoDate) {
   const brandName = String(row.brand || "").trim();
   const productCode = String(row.product_code || "").trim();
-  const uomQty = Number(row.uom_qty);
   const soNumber = String(row.so_number || "").trim();
+
+  const uomQty = Number(row.uom_qty);
+  const pcsQty = Number(row.pcs_qty);
+
+  const hasUomQty =
+    row.uom_qty !== undefined &&
+    row.uom_qty !== null &&
+    String(row.uom_qty).trim() !== "" &&
+    uomQty > 0;
+
+  const hasPcsQty =
+    row.pcs_qty !== undefined &&
+    row.pcs_qty !== null &&
+    String(row.pcs_qty).trim() !== "" &&
+    pcsQty > 0;
 
   if (!brandName) throw new Error("Missing brand");
   if (!productCode) throw new Error("Missing product_code");
-  if (!uomQty || uomQty <= 0) throw new Error(`Invalid uom_qty "${row.uom_qty}"`);
+  if (!hasUomQty && !hasPcsQty) {
+    throw new Error(`Missing/invalid quantity: provide a positive "uom_qty" or "pcs_qty"`);
+  }
   if (!soNumber) throw new Error("Missing so_number");
 
   const brand = await Brand.findOne({
@@ -182,14 +223,17 @@ async function buildLineItemFromRow(row, distributor, isInterState, godownId, gr
     godownId,
   });
 
-  // --- uom_qty -> orderQty (pcs) / boxOrderQty, driven by the PRODUCT's
-  //     own uom + pieces-per-unit ---
+  // --- uom_qty / pcs_qty -> orderQty (pcs) / boxOrderQty, driven by the
+  //     PRODUCT's own uom + pieces-per-unit ---
   const piecesPerUnit = Number(product.no_of_pieces_in_a_box || 0);
   let orderQty;
   let boxOrderQty;
 
   if (uom === "pcs") {
-    orderQty = uomQty;
+    // Product itself is sold in pieces — uom_qty and pcs_qty mean the
+    // same thing here, so just take whichever was given (uom_qty wins
+    // if both are present).
+    orderQty = hasUomQty ? uomQty : pcsQty;
     boxOrderQty = 0;
   } else {
     if (!piecesPerUnit || piecesPerUnit <= 0) {
@@ -197,8 +241,16 @@ async function buildLineItemFromRow(row, distributor, isInterState, godownId, gr
         `Product "${productCode}" has uom "${uom}" but no valid pieces-per-unit configured`
       );
     }
-    boxOrderQty = uomQty;
-    orderQty = uomQty * piecesPerUnit;
+
+    if (hasUomQty) {
+      // uom_qty is a whole box/bndl/coil count (existing behavior).
+      boxOrderQty = uomQty;
+      orderQty = uomQty * piecesPerUnit;
+    } else {
+      // pcs_qty is an exact piece count — allows a partial box/bundle.
+      orderQty = pcsQty;
+      boxOrderQty = pcsQty / piecesPerUnit;
+    }
   }
 
   // --- basicAmt (Basic Rate) derived like the UI, from resolved price:

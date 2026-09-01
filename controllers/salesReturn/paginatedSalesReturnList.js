@@ -21,6 +21,7 @@ const paginatedSalesReturnList = asyncHandler(async (req, res) => {
       billStatus,
       goodsType,
       distributorId,
+      godownId, // NEW — Godown filter from the Sales Return List screen
     } = req.query;
 
     // Build search query object
@@ -37,7 +38,15 @@ const paginatedSalesReturnList = asyncHandler(async (req, res) => {
     if (billStatus) query.status = billStatus;
     if (distributorId) query.distributorId = distributorId;
     if (salesReturnNo) query.salesReturnNo = { $regex: salesReturnNo, $options: "i" };
-    
+
+    // NEW — Godown filter. Supports a single id or a comma-separated list
+    // (matching how the frontend's other multi-value filters, e.g.
+    // orderStatus/outletCode, are sent as comma-joined strings).
+    if (godownId) {
+      const godownIds = godownId.split(",").map((id) => id.trim()).filter(Boolean);
+      query.godownId = godownIds.length > 1 ? { $in: godownIds } : godownIds[0];
+    }
+
     // ----------------------------------
 // Retailer Phone & Outlet Code filter
 // ----------------------------------
@@ -106,6 +115,7 @@ if (retailerPhone || outletCode) {
       { path: "routeId", select: "" },
       { path: "billId", select: "" }, // Fetching billNo and orderNo
       { path: "retailerId", select: "" },
+      { path: "godownId", select: "godownName godownCode godownType location" }, // NEW — so the list table can show Godown name/code
       { path: "lineItems.product", select: "" },
       { path: "lineItems.price", select: "" },
       { path: "lineItems.inventoryId", select: "" },
