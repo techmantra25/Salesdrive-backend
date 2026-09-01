@@ -92,7 +92,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
     { path: "lineItems.price", select: "mrp_price rlp_price" },
     {
       path: "lineItems",
-      select: "oderQty grossAmt schemeDisc distributorDisc netAmt",
+      select: "oderQty grossAmt taxableAmt schemeDisc distributorDisc netAmt",
     },
   ];
 
@@ -166,7 +166,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
       const qtyPcs = item?.oderQty || 0;
       const piecesPerBox = Number(item?.product?.no_of_pieces_in_a_box || 1);
       const grossAmt = item?.grossAmt || 0;
-
+      const taxableAmt = item?.taxableAmt || 0;
       return {
         rowId: `${order._id}-${idx}`,
         orderNo: order.orderNo || "",
@@ -197,7 +197,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
         totalDiscPercent: item?.totalDiscountPercentage
           ? Number(Number(item.totalDiscountPercentage).toFixed(2))
           : 0,
-        basicAmt: Number(grossAmt.toFixed ? grossAmt.toFixed(2) : grossAmt),
+        basicAmt: Number(taxableAmt.toFixed ? taxableAmt.toFixed(2) : taxableAmt),
         netAmt: Number(item?.netAmt || 0).toFixed(2),
         statusLabel,
       };

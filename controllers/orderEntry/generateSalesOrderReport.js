@@ -196,7 +196,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       "Scheme Discount",
       "Special Disc Amount",
       "Total Disc %",
-      "Basic Amount",
+      "Basic Value",
       "Net Amount (Incl. Amt)",
       "Order to Bill Status",
     ];
@@ -268,7 +268,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Total Disc %": item?.totalDiscountPercentage
             ? `${Number(item.totalDiscountPercentage).toFixed(2)}%`
             : "0.00%",
-          "Basic Amount": Number(item?.grossAmt || 0).toFixed(2),
+          "Basic Value": Number(item?.taxableAmt || 0).toFixed(2),
           "Net Amount (Incl. Amt)": Number(item?.netAmt || 0).toFixed(2),
           "Order to Bill Status": statusLabel,
         });
