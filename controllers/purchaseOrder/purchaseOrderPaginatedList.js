@@ -12,7 +12,7 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       fromDate,
       toDate,
       distributorId,
-      approvedStatus,
+      orderStatus,
       search,
       godownId
     } = req.query;
@@ -22,8 +22,31 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
     // Filter by status
     if (status) query.status = status;
 
-    if (approvedStatus) {
-      query.approvedStatus = approvedStatus;
+    // ✅ Order Status filter — mirrors the same label shown on the
+    // frontend (PurchaseOrderList.jsx / PurchaseOrderDetails.jsx):
+    //   Draft      -> PO is still status: "Draft"
+    //   Cancelled  -> PO status: "Cancelled"
+    //   Complete   -> not Draft/Cancelled AND invoicestatus is
+    //                 "Complete-Invoiced"
+    //   Pending    -> not Draft/Cancelled AND invoicestatus is NOT
+    //                 "Complete-Invoiced" (covers both "Pending" and
+    //                 "Partially-Invoiced", same as the frontend's
+    //                 Pending/Partial bucket)
+    // Replaces the old approvedStatus (Approved/Not Approved/Rejected)
+    // filter, which didn't reflect where the PO actually sat in its
+    // Draft -> Confirmed -> GRN lifecycle.
+    if (orderStatus) {
+      if (orderStatus === "Draft") {
+        query.status = "Draft";
+      } else if (orderStatus === "Cancelled") {
+        query.status = "Cancelled";
+      } else if (orderStatus === "Complete") {
+        query.status = { $nin: ["Draft", "Cancelled"] };
+        query.invoicestatus = "Complete-Invoiced";
+      } else if (orderStatus === "Pending") {
+        query.status = { $nin: ["Draft", "Cancelled"] };
+        query.invoicestatus = { $ne: "Complete-Invoiced" };
+      }
     }
 
     if (search) {
