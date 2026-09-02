@@ -10,6 +10,7 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
     paymentMode,
     fromDate,
     toDate,
+    salesmanName,
     routeId,
     retailerId,
     godownId,
@@ -23,6 +24,9 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
 
   if (distributorIds) {
     filter.distributorId = { $in: distributorIds.split(",") };
+  }
+  if (salesmanName) {
+    filter.salesmanName = { $in: salesmanName.split(",") };
   }
   if (routeId) {
     filter.routeId = { $in: routeId.split(",") };
@@ -80,6 +84,18 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
       },
     },
     { path: "godownId", select: "godownCode godownName" },
+    {
+      path: "salesmanName",
+      select: "empId name empMappingId",
+      populate: {
+        path: "empMappingId",
+        select: "rmEmpId",
+        populate: {
+          path: "rmEmpId",
+          select: "empId name",
+        },
+      },
+    },
     { path: "routeId", select: "code name" },
     { path: "retailerId", select: "outletCode outletName" },
     {
@@ -112,12 +128,13 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
 
   // -------------------- SHAPE — ONE ROW PER PRODUCT LINE ITEM --------------------
   // Matches the requested table columns exactly: Enquiry Number, Enquiry Date,
-  // Order Source, Godown Code, Godown Name, Beat Code, Beat, Retailer Code,
-  // Retailer, Brand, Product Type, Category, Product Code, Product Name,
-  // Order Qty (Pcs), Order Qty (BOX), MRP, RLP, Gross Amount,
-  // Freight And Delivery Charges, Handling Charges, Scheme Discount,
-  // Special Disc Amount, Total Disc %, Net Amount (Incl. Amt),
-  // Enquiry to Order Status, Converted Order No.
+  // Order Source, Godown Code, Godown Name, Salesman Code, Salesman Name,
+  // Reporting Manager, Beat Code, Beat, Retailer Code, Retailer, Brand,
+  // Product Type, Category, Product Code, Product Name, Order Qty (Pcs),
+  // Order Qty (BOX), MRP, RLP, Gross Amount, Freight And Delivery Charges,
+  // Handling Charges, Scheme Discount, Special Disc Amount, Total Disc %,
+  // Basic Value, Net Amount (Incl. Amt), Enquiry to Order Status,
+  // Converted Order No.
   const data = enquiries.flatMap((enquiry) => {
     const lineItems = enquiry.lineItems || [];
 
@@ -127,6 +144,11 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         : enquiry.status === "Closed"
           ? "Closed"
           : enquiry.status;
+
+    const salesmanCode = enquiry.salesmanName?.empId || "";
+    const salesmanDisplayName = enquiry.salesmanName?.name || "";
+    const reportingManager =
+      enquiry.salesmanName?.empMappingId?.rmEmpId?.name || "";
 
     if (lineItems.length === 0) {
       // Still surface the enquiry even if it has no line items yet.
@@ -138,6 +160,9 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
           orderSource: enquiry.orderSource || "",
           godownCode: enquiry.godownId?.godownCode || "",
           godownName: enquiry.godownId?.godownName || "",
+          salesmanCode,
+          salesmanName: salesmanDisplayName,
+          reportingManager,
           beatCode: enquiry.routeId?.code || "",
           beatName: enquiry.routeId?.name || "",
           retailerCode: enquiry.retailerId?.outletCode || "",
@@ -157,6 +182,7 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
           schemeDisc: 0,
           distributorDisc: 0,
           totalDiscPercent: 0,
+          basicValue: 0,
           netAmt: 0,
           statusLabel,
           convertedOrderNo: enquiry.convertedOrderEntryId?.orderNo || "",
@@ -175,6 +201,9 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         orderSource: enquiry.orderSource || "",
         godownCode: enquiry.godownId?.godownCode || "",
         godownName: enquiry.godownId?.godownName || "",
+        salesmanCode,
+        salesmanName: salesmanDisplayName,
+        reportingManager,
         beatCode: enquiry.routeId?.code || "",
         beatName: enquiry.routeId?.name || "",
         retailerCode: enquiry.retailerId?.outletCode || "",
@@ -196,6 +225,7 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         totalDiscPercent: item?.totalDiscountPercentage
           ? Number(Number(item.totalDiscountPercentage).toFixed(2))
           : 0,
+        basicValue: Number(Number(item?.taxableAmt || 0).toFixed(2)),
         netAmt: item?.netAmt || 0,
         statusLabel,
         convertedOrderNo: enquiry.convertedOrderEntryId?.orderNo || "",

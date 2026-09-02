@@ -35,7 +35,7 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
       paymentMode,
       fromDate,
       toDate,
-    //   salesmanName,
+      salesmanName,
       routeId,
       retailerId,
       godownId,
@@ -47,11 +47,11 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
     if (distributorIds) {
       filter.distributorId = { $in: distributorIds.split(",") };
     }
-    // if (salesmanName) {
-    //   filter.salesmanName = {
-    //     $in: salesmanName.split(","),
-    //   };
-    // }
+    if (salesmanName) {
+      filter.salesmanName = {
+        $in: salesmanName.split(","),
+      };
+    }
 
     if (routeId) {
       filter.routeId = {
@@ -118,18 +118,18 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
         },
       },
       { path: "godownId", select: "godownCode godownName" },
-    //   {
-    //     path: "salesmanName",
-    //     select: "empId name empMappingId",
-    //     populate: {
-    //       path: "empMappingId",
-    //       select: "rmEmpId",
-    //       populate: {
-    //         path: "rmEmpId",
-    //         select: "empId name",
-    //       },
-    //     },
-    //   },
+      {
+        path: "salesmanName",
+        select: "empId name empMappingId",
+        populate: {
+          path: "empMappingId",
+          select: "rmEmpId",
+          populate: {
+            path: "rmEmpId",
+            select: "empId name",
+          },
+        },
+      },
       { path: "routeId", select: "code name" },
       {
         path: "retailerId",
@@ -171,9 +171,9 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
       "Enquiry Number",
       "Enquiry Date",
       "Order Source",
-    //   "Salesman Code",
-    //   "Salesman Name",
-    //   "Reporting Manager",
+      "Salesman Code",
+      "Salesman Name",
+      "Reporting Manager",
       "Beat Code",
       "Beat",
       "Retailer Code",
@@ -197,6 +197,7 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
       "Scheme Discount",
       "Special Disc Amount",
       "Total Disc %",
+      "Basic Value",
       "Net Amount (Incl. Amt)",
       "Enquiry to Order Status",
       "Converted Order No",
@@ -240,10 +241,10 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
             .tz("Asia/Kolkata")
             .format("DD-MM-YYYY"),
           "Order Source": enquiry.orderSource || "",
-        //   "Salesman Code": enquiry.salesmanName?.empId || "",
-        //   "Salesman Name": enquiry.salesmanName?.name || "",
-        //   "Reporting Manager":
-        //     enquiry.salesmanName?.empMappingId?.rmEmpId?.name || "",
+          "Salesman Code": enquiry.salesmanName?.empId || "",
+          "Salesman Name": enquiry.salesmanName?.name || "",
+          "Reporting Manager":
+            enquiry.salesmanName?.empMappingId?.rmEmpId?.name || "",
           "Beat Code": enquiry.routeId?.code || "",
           Beat: enquiry.routeId?.name || "",
           "Retailer Code": enquiry.retailerId?.outletCode || "",
@@ -269,6 +270,7 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
           "Total Disc %": item?.totalDiscountPercentage
             ? `${Number(item.totalDiscountPercentage).toFixed(2)}%`
             : "0.00%",
+          "Basic Value": Number(item?.taxableAmt || 0).toFixed(2),
           "Net Amount (Incl. Amt)": item?.netAmt || 0,
           "Enquiry to Order Status": statusLabel,
           "Converted Order No": enquiry.convertedOrderEntryId?.orderNo || "",
