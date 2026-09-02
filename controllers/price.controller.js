@@ -754,7 +754,449 @@ const PriceALListPaginated = asyncHandler(async (req, res) => {
     throw new Error(error?.message || "Something went wrong");
   }
 });
+const PriceCategoryDateWiseMatrix = asyncHandler(async (req, res) => {
+  try {
+    const {
+      selectedCategory,
+      selectedBrand,
+      selectedCollection,
+      selectedRegion,
+      selectDistributor,
+      selectedPriceType,
+      selectedStatus,
+      selectedProduct,
+      dateRange,
+      createdAtRange,
+      expiresAtRange,
+      productCode,
+      priceCode,
+    } = req.query;
 
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; // categories per page
+    const TIMEZONE = "Asia/Kolkata";
+
+    const query = {};
+    const productQuery = {};
+
+    if (selectedCategory && selectedCategory !== "default") {
+      productQuery.cat_id = selectedCategory;
+    }
+    if (selectedBrand && selectedBrand !== "default") {
+      productQuery.brand = selectedBrand;
+    }
+    if (selectedCollection && selectedCollection !== "default") {
+      productQuery.collection_id = selectedCollection;
+    }
+    if (selectedProduct && selectedProduct !== "default") {
+      productQuery._id = selectedProduct;
+    }
+    if (productCode && productCode !== "default") {
+      const searchRegex = new RegExp(productCode, "i");
+      productQuery.$or = [
+        { product_code: searchRegex },
+        { name: searchRegex },
+        { sku_group_id: searchRegex },
+        { sku_group__name: searchRegex },
+        { product_hsn_code: searchRegex },
+      ];
+    }
+
+    let productIds = null;
+    if (Object.keys(productQuery).length > 0) {
+      const products = await Product.find(productQuery).select("_id");
+      if (!products.length) {
+        return res.status(200).json({
+          status: 200,
+          message: "No products found for the given filters",
+          data: { dates: [], rows: [] },
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalCategories: 0,
+            totalPriceRows: 0,
+          },
+        });
+      }
+      productIds = products.map((p) => p._id);
+      query.productId = { $in: productIds };
+    }
+
+    if (selectedRegion && selectedRegion !== "default") {
+      query.regionId = selectedRegion;
+    }
+    if (selectDistributor && selectDistributor !== "default") {
+      query.distributorId = selectDistributor;
+    }
+    if (selectedPriceType && selectedPriceType !== "default") {
+      query.price_type = selectedPriceType;
+    }
+    if (selectedStatus && selectedStatus !== "default") {
+      query.status = selectedStatus;
+    }
+    if (priceCode && priceCode !== "default") {
+      query.code = priceCode;
+    }
+
+    if (dateRange) {
+      const { startDate, endDate } = dateRange;
+      if (startDate && endDate) {
+        query.effective_date = {
+          $gte: moment.tz(startDate, TIMEZONE).startOf("day").toDate(),
+          $lte: moment.tz(endDate, TIMEZONE).endOf("day").toDate(),
+        };
+      }
+    }
+    if (createdAtRange) {
+      const { startDate, endDate } = createdAtRange;
+      if (startDate && endDate) {
+        query.createdAt = {
+          $gte: moment.tz(startDate, TIMEZONE).startOf("day").toDate(),
+          $lte: moment.tz(endDate, TIMEZONE).endOf("day").toDate(),
+        };
+      }
+    }
+    if (expiresAtRange) {
+      const { startDate, endDate } = expiresAtRange;
+      if (startDate && endDate) {
+        query.expiresAt = {
+          $gte: moment.tz(startDate, TIMEZONE).startOf("day").toDate(),
+          $lte: moment.tz(endDate, TIMEZONE).endOf("day").toDate(),
+        };
+      }
+    }
+
+    // Pull every matching price row, oldest first — we need each category's
+    // full history to build the forward-filled date columns below.
+    const priceRows = await Price.find(query)
+      .populate([
+        { path: "createdBy", select: "name role" },
+        { path: "distributorId", select: "" },
+        { path: "regionId", select: "" },
+        {
+          path: "productId",
+          select: "",
+          populate: [
+            { path: "cat_id", select: "" },
+            { path: "collection_id", select: "" },
+            { path: "brand", select: "" },
+          ],
+        },
+      ])
+      .sort({ effective_date: 1 })
+      .lean();
+
+    const totalPriceRows = priceRows.length;
+
+    // --- Distinct sorted date columns (Asia/Kolkata calendar days) ---
+    const dateSet = new Set();
+    for (const p of priceRows) {
+      if (p.effective_date) {
+        dateSet.add(
+          moment(p.effective_date).tz(TIMEZONE).format("YYYY-MM-DD")
+        );
+      }
+    }
+    const dateColumns = Array.from(dateSet).sort();
+
+    // --- Group price rows by category ---
+    const categoryMap = new Map();
+
+    for (const price of priceRows) {
+      const cat = price?.productId?.cat_id;
+      if (!cat) continue; // skip rows whose product/category failed to populate
+
+      const catId = String(cat._id);
+      if (!categoryMap.has(catId)) {
+        categoryMap.set(catId, { category: cat, series: [] });
+      }
+      categoryMap.get(catId).series.push(price);
+    }
+
+    // --- Build per-category forward-filled row across all date columns ---
+    const allRows = Array.from(categoryMap.values()).map(
+      ({ category, series }) => {
+        const sortedSeries = series
+          .filter((p) => p.effective_date)
+          .sort(
+            (a, b) => new Date(a.effective_date) - new Date(b.effective_date)
+          );
+
+        const pricesByDate = {};
+        let lastKnown = null;
+        let seriesIdx = 0;
+        let mixedWarning = false; // multiple distinct prices land on the same day within this category
+
+        for (const col of dateColumns) {
+          const colDate = moment
+            .tz(col, "YYYY-MM-DD", TIMEZONE)
+            .endOf("day")
+            .toDate();
+          let changedToday = false;
+
+          // Advance to the latest series entry effective on or before this column's date.
+          while (
+            seriesIdx < sortedSeries.length &&
+            new Date(sortedSeries[seriesIdx].effective_date) <= colDate
+          ) {
+            const candidate = sortedSeries[seriesIdx];
+            if (
+              lastKnown &&
+              moment(candidate.effective_date)
+                .tz(TIMEZONE)
+                .format("YYYY-MM-DD") ===
+                moment(lastKnown.effective_date)
+                  .tz(TIMEZONE)
+                  .format("YYYY-MM-DD") &&
+              (candidate.L1DiscountPercentage !==
+                lastKnown.L1DiscountPercentage ||
+                candidate.L2DiscountPercentage !==
+                  lastKnown.L2DiscountPercentage)
+            ) {
+              mixedWarning = true; // same day, different value from another product in this category
+            }
+            lastKnown = candidate;
+            changedToday = true;
+            seriesIdx++;
+          }
+
+          if (lastKnown) {
+            pricesByDate[col] = {
+              mrp_price: lastKnown.mrp_price,
+              dlp_price: lastKnown.dlp_price,
+              rlp_price: lastKnown.rlp_price,
+              L1DiscountPercentage: lastKnown.L1DiscountPercentage,
+              L2DiscountPercentage: lastKnown.L2DiscountPercentage,
+              price_type: lastKnown.price_type,
+              code: lastKnown.code,
+              effective_date: lastKnown.effective_date,
+              isCarried: !changedToday,
+            };
+          } else {
+            pricesByDate[col] = null; // no price exists yet as of this date
+          }
+        }
+
+        return { category, pricesByDate, mixedWarning };
+      }
+    );
+
+    allRows.sort((a, b) =>
+      (a.category?.name || "").localeCompare(b.category?.name || "")
+    );
+
+    const totalCategories = allRows.length;
+    const skip = (page - 1) * limit;
+    const paginatedRows = allRows.slice(skip, skip + limit);
+
+    return res.status(200).json({
+      status: 200,
+      message: "Category date wise price matrix",
+      data: { dates: dateColumns, rows: paginatedRows },
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalCategories / limit),
+        totalCategories,
+        totalPriceRows,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});
+// Add this function into price.controller.js (near PriceCategoryDateWiseMatrix)
+// and add "PriceProductDateWiseMatrix" to the module.exports object.
+// Also register a route for it, e.g.:
+//   router.get("/product-date-wise-matrix", protect, PriceProductDateWiseMatrix);
+
+const PriceProductDateWiseMatrix = asyncHandler(async (req, res) => {
+  try {
+    const { selectedCategory, productCode, dateRange } = req.query;
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; // products per page
+    const TIMEZONE = "Asia/Kolkata";
+
+    const query = {};
+    const productQuery = {};
+
+    if (selectedCategory && selectedCategory !== "default") {
+      productQuery.cat_id = selectedCategory;
+    }
+    if (productCode && productCode !== "default" && productCode.trim() !== "") {
+      const searchRegex = new RegExp(productCode, "i");
+      productQuery.$or = [
+        { product_code: searchRegex },
+        { name: searchRegex },
+        { sku_group_id: searchRegex },
+        { sku_group__name: searchRegex },
+        { product_hsn_code: searchRegex },
+      ];
+    }
+
+    let productIds = null;
+    if (Object.keys(productQuery).length > 0) {
+      const products = await Product.find(productQuery).select("_id");
+      if (!products.length) {
+        return res.status(200).json({
+          status: 200,
+          message: "No products found for the given filters",
+          data: { dates: [], rows: [] },
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalProducts: 0,
+            totalPriceRows: 0,
+          },
+        });
+      }
+      productIds = products.map((p) => p._id);
+      query.productId = { $in: productIds };
+    }
+
+    // --- Effective date range filter ---
+    if (dateRange) {
+      const { startDate, endDate } = dateRange;
+      if (startDate && endDate) {
+        query.effective_date = {
+          $gte: moment.tz(startDate, TIMEZONE).startOf("day").toDate(),
+          $lte: moment.tz(endDate, TIMEZONE).endOf("day").toDate(),
+        };
+      }
+    }
+
+    // Pull every matching price row, oldest first — need each product's
+    // full history to build the forward-filled date columns below.
+    const priceRows = await Price.find(query)
+      .populate([
+        {
+          path: "productId",
+          select: "name product_code",
+          populate: [{ path: "cat_id", select: "name code" }],
+        },
+      ])
+      .sort({ effective_date: 1 })
+      .lean();
+
+    const totalPriceRows = priceRows.length;
+
+    // --- Distinct sorted date columns (Asia/Kolkata calendar days) ---
+    const dateSet = new Set();
+    for (const p of priceRows) {
+      if (p.effective_date) {
+        dateSet.add(
+          moment(p.effective_date).tz(TIMEZONE).format("YYYY-MM-DD")
+        );
+      }
+    }
+    const dateColumns = Array.from(dateSet).sort();
+
+    // --- Group price rows by product ---
+    const productMap = new Map();
+
+    for (const price of priceRows) {
+      const prod = price?.productId;
+      if (!prod) continue; // skip rows whose product failed to populate
+
+      const prodId = String(prod._id);
+      if (!productMap.has(prodId)) {
+        productMap.set(prodId, { product: prod, series: [] });
+      }
+      productMap.get(prodId).series.push(price);
+    }
+
+    // --- Build per-product forward-filled row across all date columns ---
+    const allRows = Array.from(productMap.values()).map(
+      ({ product, series }) => {
+        const sortedSeries = series
+          .filter((p) => p.effective_date)
+          .sort(
+            (a, b) => new Date(a.effective_date) - new Date(b.effective_date)
+          );
+
+        const pricesByDate = {};
+        let lastKnown = null;
+        let seriesIdx = 0;
+        let mixedWarning = false; // multiple distinct prices land on the same day for this product
+
+        for (const col of dateColumns) {
+          const colDate = moment
+            .tz(col, "YYYY-MM-DD", TIMEZONE)
+            .endOf("day")
+            .toDate();
+          let changedToday = false;
+
+          // Advance to the latest series entry effective on or before this column's date.
+          while (
+            seriesIdx < sortedSeries.length &&
+            new Date(sortedSeries[seriesIdx].effective_date) <= colDate
+          ) {
+            const candidate = sortedSeries[seriesIdx];
+            if (
+              lastKnown &&
+              moment(candidate.effective_date)
+                .tz(TIMEZONE)
+                .format("YYYY-MM-DD") ===
+                moment(lastKnown.effective_date)
+                  .tz(TIMEZONE)
+                  .format("YYYY-MM-DD") &&
+              (candidate.mrp_price !== lastKnown.mrp_price ||
+                candidate.dlp_price !== lastKnown.dlp_price ||
+                candidate.rlp_price !== lastKnown.rlp_price)
+            ) {
+              mixedWarning = true; // same day, different price from another row (region/distributor) for this product
+            }
+            lastKnown = candidate;
+            changedToday = true;
+            seriesIdx++;
+          }
+
+          if (lastKnown) {
+            pricesByDate[col] = {
+              mrp_price: lastKnown.mrp_price,
+              dlp_price: lastKnown.dlp_price,
+              rlp_price: lastKnown.rlp_price,
+              L1DiscountPercentage: lastKnown.L1DiscountPercentage,
+              L2DiscountPercentage: lastKnown.L2DiscountPercentage,
+              price_type: lastKnown.price_type,
+              code: lastKnown.code,
+              effective_date: lastKnown.effective_date,
+              isCarried: !changedToday,
+            };
+          } else {
+            pricesByDate[col] = null; // no price exists yet as of this date
+          }
+        }
+
+        return { product, pricesByDate, mixedWarning };
+      }
+    );
+
+    allRows.sort((a, b) =>
+      (a.product?.name || "").localeCompare(b.product?.name || "")
+    );
+
+    const totalProducts = allRows.length;
+    const skip = (page - 1) * limit;
+    const paginatedRows = allRows.slice(skip, skip + limit);
+
+    return res.status(200).json({
+      status: 200,
+      message: "Product date wise price matrix",
+      data: { dates: dateColumns, rows: paginatedRows },
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalProducts / limit),
+        totalProducts,
+        totalPriceRows,
+      },
+    });
+  } catch (error) {
+    res.status(400);
+    throw new Error(error?.message || "Something went wrong");
+  }
+});
 const PricingAllListReport = asyncHandler(async (req, res) => {
   try {
     const {
@@ -1261,6 +1703,8 @@ module.exports = {
   PriceList,
   PriceALListPaginated,
   pricingStatusBulkUpdate,
+  PriceCategoryDateWiseMatrix,
+  PriceProductDateWiseMatrix ,
   InactivePriceByExpiredDate,
   PricingAllListReport,
   ProductPricing,

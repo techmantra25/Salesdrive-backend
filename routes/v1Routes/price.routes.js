@@ -6,6 +6,8 @@ const {
   PriceALList,
   PriceList,
   PriceALListPaginated,
+  PriceCategoryDateWiseMatrix, 
+  PriceProductDateWiseMatrix ,
   pricingStatusBulkUpdate,
   InactivePriceByExpiredDate,
   PricingAllListReport,
@@ -27,6 +29,10 @@ priceRoutes
   .route("/inactive-price-by-expired-date")
   .put(InactivePriceByExpiredDate);
 priceRoutes.route("/all-list-paginated").get(protect, PriceALListPaginated);
+priceRoutes
+  .route("/category-date-wise-matrix")
+  .get(protect, PriceCategoryDateWiseMatrix); // new
+priceRoutes.route("/product-date-wise-paginated").get(protect, PriceProductDateWiseMatrix);
 priceRoutes.route("/price-download").get(protect, priceDownload);
 
 priceRoutes.route("/list").get(protect, PriceList);
