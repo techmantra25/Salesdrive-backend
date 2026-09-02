@@ -193,6 +193,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔁 PROCESS LINE ITEMS
     // =========================
+    const resolvedSoNumbers = new Set();
+
     for (const item of lineItems) {
       const poItem = purchaseOrder.lineItems.find(
         (p) => String(p.product) === String(item.productId)
@@ -201,6 +203,10 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       if (!poItem) {
         console.log("⚠️ Not in PO:", item.productId);
         continue;
+      }
+
+      if (poItem.soNumber) {
+        resolvedSoNumbers.add(String(poItem.soNumber).trim());
       }
 
       // ✅ FETCH PRODUCT
@@ -422,7 +428,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         date: invoiceDate ? new Date(invoiceDate) : new Date(),
         status: "In-Transit",
         purchaseOrderId: purchaseOrder._id,
-        soNumber: purchaseOrder.soNumber || "",
+        soNumber: Array.from(resolvedSoNumbers).join(", "),
         invoiceDate: invoiceDate ? new Date(invoiceDate) : new Date(),
         grnDate: grnDate
           ? new Date(`${grnDate}T00:00:00.000Z`)
