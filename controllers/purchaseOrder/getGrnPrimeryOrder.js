@@ -71,9 +71,9 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
           const piecesPerBox =
             Number(item?.product?.no_of_pieces_in_a_box || 1);
 
-          const remainingBoxQty = Math.floor(
-            remainingQty / piecesPerBox
-          );
+          const remainingBoxQty = piecesPerBox > 0
+            ? Number((remainingQty / piecesPerBox).toFixed(4))
+            : 0;
 
           const inTransitInvoices = await Invoice.find({
             distributorId: distributorId,
@@ -92,9 +92,9 @@ const getGrnPrimeryOrder = asyncHandler(async (req, res) => {
             existorderqty: remainingQty,
             existboxorderqty: remainingBoxQty,
             grnQty: alreadyReceived,
-            grnBoxQty: Math.floor(
-              alreadyReceived / piecesPerBox
-            ),
+            grnBoxQty: piecesPerBox > 0
+              ? Number((alreadyReceived / piecesPerBox).toFixed(4))
+              : 0,
             forecloseUomQty: Number(item?.forecloseUom || 0),
 
             inventoryId: item?.inventoryId
