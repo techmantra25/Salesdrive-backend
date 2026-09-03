@@ -144,6 +144,7 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
           productId: { $first: "$productId" },
           distributorId: { $first: "$distributorId" },
           openingStock: { $first: "$openingStock" },
+          godownIds: { $addToSet: "$godownId" },
           availableQty: { $sum: "$availableQty" },
           unsalableQty: { $sum: "$unsalableQty" },
           intransitQty: { $sum: "$intransitQty" },
