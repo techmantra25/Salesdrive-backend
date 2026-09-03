@@ -6,8 +6,10 @@ const {
   PriceALList,
   PriceList,
   PriceALListPaginated,
-  PriceCategoryDateWiseMatrix, 
-  PriceProductDateWiseMatrix ,
+  PriceCategoryDateWiseMatrix,
+  PriceProductDateWiseMatrix,
+  PriceCategoryDateWiseMatrixExport,
+  PriceProductDateWiseMatrixExport,
   pricingStatusBulkUpdate,
   InactivePriceByExpiredDate,
   PricingAllListReport,
@@ -31,8 +33,19 @@ priceRoutes
 priceRoutes.route("/all-list-paginated").get(protect, PriceALListPaginated);
 priceRoutes
   .route("/category-date-wise-matrix")
-  .get(protect, PriceCategoryDateWiseMatrix); // new
+  .get(protect, PriceCategoryDateWiseMatrix);
 priceRoutes.route("/product-date-wise-paginated").get(protect, PriceProductDateWiseMatrix);
+
+// Date-wise matrix — full (unpaginated) Excel export, filtered the same way
+// as the paginated matrix endpoints above. Placed right next to them so the
+// filter/route shape stays easy to keep in sync.
+priceRoutes
+  .route("/category-date-wise-matrix/export")
+  .get(protect, PriceCategoryDateWiseMatrixExport);
+priceRoutes
+  .route("/product-date-wise-paginated/export")
+  .get(protect, PriceProductDateWiseMatrixExport);
+
 priceRoutes.route("/price-download").get(protect, priceDownload);
 
 priceRoutes.route("/list").get(protect, PriceList);
