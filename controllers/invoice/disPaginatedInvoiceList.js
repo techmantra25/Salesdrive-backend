@@ -67,21 +67,22 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
     // ============================
     // PREPARE REQUESTED DATE RANGE (if any)
     // ============================
-    let requestedDateRange = null;
-    if (fromDate || toDate) {
-      requestedDateRange = {};
-      if (fromDate) {
-        const start = new Date(fromDate);
-        start.setHours(0, 0, 0, 0);
-        requestedDateRange.date = requestedDateRange.date || {};
-        requestedDateRange.date.$gte = start;
-      }
-      if (toDate) {
-        const end = new Date(toDate);
-        end.setHours(23, 59, 59, 999);
-        requestedDateRange.date = requestedDateRange.date || {};
-        requestedDateRange.date.$lte = end;
-      }
+    // invoice date range
+let requestedDateRange = null;
+if (fromDate || toDate) {
+  requestedDateRange = {};
+  if (fromDate) {
+    const start = new Date(fromDate);
+    start.setUTCHours(0, 0, 0, 0);          // was setHours
+    requestedDateRange.date = requestedDateRange.date || {};
+    requestedDateRange.date.$gte = start;
+  }
+  if (toDate) {
+    const end = new Date(toDate);
+    end.setUTCHours(23, 59, 59, 999);       // was setHours
+    requestedDateRange.date = requestedDateRange.date || {};
+    requestedDateRange.date.$lte = end;
+  }
       console.log(
         "==================== REQUESTED DATE RANGE ====================",
       );
@@ -97,23 +98,20 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
     }
 
     // grn date range filter handel
-    let grnDateRange = null;
-
-    if (grnFromDate || grnToDate) {
-      grnDateRange = {};
-      // setting start date range
-      if (grnFromDate) {
-        const start = new Date(grnFromDate);
-        start.setHours(0, 0, 0, 0);
-        grnDateRange.$gte = start;
-      }
-      // setting the end date range
-      if (grnToDate) {
-        const end = new Date(grnToDate);
-        end.setHours(23, 59, 59, 999);
-        grnDateRange.$lte = end;
-      }
-    }
+let grnDateRange = null;
+if (grnFromDate || grnToDate) {
+  grnDateRange = {};
+  if (grnFromDate) {
+    const start = new Date(grnFromDate);
+    start.setUTCHours(0, 0, 0, 0);          // was setHours
+    grnDateRange.$gte = start;
+  }
+  if (grnToDate) {
+    const end = new Date(grnToDate);
+    end.setUTCHours(23, 59, 59, 999);       // was setHours
+    grnDateRange.$lte = end;
+  }
+}
 
     // ============================
     // BUILD BASE MATCH (applies to all branches)
