@@ -19,7 +19,7 @@ const escapeCSVValue = (value) => {
 
 const generateSalesOrderReport = asyncHandler(async (req, res) => {
   try {
-    // ✅ CSV headers
+    // CSV headers
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
@@ -65,6 +65,8 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
       };
     }
 
+    // Godown filter — supports a single id (godownId) or a comma-joined
+    // multi-select (godownIds), matching how the report screen sends it.
     if (godownId) {
       filter.godownId = godownId;
     } else if (godownIds && godownIds !== "all") {
@@ -117,6 +119,7 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           },
         },
       },
+      // Godown populate — pulls the display name/code shown in the report.
       {
         path: "godownId",
         select: "godownCode godownName",

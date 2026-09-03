@@ -253,9 +253,6 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
   try {
     console.time("⏱ Total Export Time");
 
-    // ==============================
-    // 1️⃣ CSV Response Setup
-    // ==============================
     const now = moment().tz("Asia/Kolkata");
     const fileName = `Current_Stock_Report_${now.format(
       "DD-MM-YYYY_hh-mm-ss-a"
@@ -264,41 +261,45 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 
-    // ==============================
-    // 2️⃣ Build Filter
-    // ==============================
     const filter = {};
     const {
       stockType,
       showZeroStock,
       distributorIds,
+      godownIds, // NEW
       search,
       startDate,
       endDate,
     } = req.query;
 
-    // Distributor filter
     if (distributorIds) {
       const ids = distributorIds
-      .split(",")
-      .map(id => id.trim())
-      .filter(Boolean)
-      .map(id => new mongoose.Types.ObjectId(id));
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .map((id) => new mongoose.Types.ObjectId(id));
       if (ids.length > 0) filter.distributorId = { $in: ids };
     }
 
-    // Search
+    // NEW: Godown filter
+    if (godownIds) {
+      const gIds = godownIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .map((id) => new mongoose.Types.ObjectId(id));
+      if (gIds.length > 0) filter.godownId = { $in: gIds };
+    }
+
     if (search) {
       const searchRegex = new RegExp(search, "i");
       filter.$or = [{ invitemId: searchRegex }];
     }
 
-    // Date range filter
     if (startDate && endDate) {
       filter.createdAt = { $gte: new Date(startDate), $lte: new Date(endDate) };
     }
 
-    // Handle zero stock filtering
     const showZeroStockBool =
       showZeroStock === true || showZeroStock === "true";
 
@@ -328,9 +329,6 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
 
     console.log("MongoDB Query:", JSON.stringify(filter, null, 2));
 
-    // ==============================
-    // 3️⃣ Prefetch Price Data
-    // ==============================
     console.time("💰 Load Prices");
     const priceDocs = await Price.find({
       status: true,
@@ -349,9 +347,7 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
     }
     console.timeEnd("💰 Load Prices");
     console.time("⏱ CSV Qeury execution");
-    // ==============================
-    // 4️⃣ Aggregation with Streaming Cursor
-    // ==============================
+
     const pipeline = [
       { $match: filter },
       {
@@ -372,6 +368,16 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
         },
       },
       { $unwind: { path: "$distributor", preserveNullAndEmptyArrays: true } },
+      // NEW: join godown
+      {
+        $lookup: {
+          from: "godowns",
+          localField: "godownId",
+          foreignField: "_id",
+          as: "godown",
+        },
+      },
+      { $unwind: { path: "$godown", preserveNullAndEmptyArrays: true } },
       {
         $lookup: {
           from: "brands",
@@ -405,6 +411,7 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
           productId: "$product._id",
           "Distributor Code": "$distributor.dbCode",
           "Distributor Name": "$distributor.name",
+          "Godown Name": "$godown.godownName",   // NEW
           "Brand Code": "$brand.code",
           Brand: "$brand.desc",
           "Sub Brand Code": "$subBrand.code",
@@ -419,17 +426,17 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
           offerQty: 1,
         },
       },
+      // NEW: godown-wise ordering
+      { $sort: { "Godown Name": 1, "Product Name": 1 } },
     ];
 
     const agg = Inventory.aggregate(pipeline).cursor({ batchSize: 1000 });
     const cursor = typeof agg.exec === "function" ? agg.exec() : agg;
 
-    // ==============================
-    // 5️⃣ CSV Stream Setup
-    // ==============================
     const headers = [
       "Distributor Code",
       "Distributor Name",
+      "Godown Name",   // NEW
       "Brand Code",
       "Brand",
       "Sub Brand Code",
@@ -450,15 +457,11 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
     const csvStream = format({ headers });
     csvStream.pipe(res);
 
-    // ==============================
-    // 6️⃣ Stream & Write CSV
-    // ==============================
     console.timeEnd("⏱ CSV Qeury execution");
     console.time("📤 Stream & Write CSV");
     let processed = 0;
 
     for await (const inv of cursor) {
-      // Get best price for product + distributor
       const productId = inv.productId?.toString();
       const distributorId = inv.distributorId?.toString();
 
@@ -470,6 +473,7 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
       csvStream.write({
         "Distributor Code": inv["Distributor Code"] || "",
         "Distributor Name": inv["Distributor Name"] || "",
+        "Godown Name": inv["Godown Name"] || "",     // NEW
         "Brand Code": inv["Brand Code"] || "",
         Brand: inv["Brand"] || "",
         "Sub Brand Code": inv["Sub Brand Code"] || "",
@@ -504,7 +508,6 @@ const allInventoriesPaginatedListReport = asyncHandler(async (req, res) => {
     res.status(500).send("Server Error: " + error.message);
   }
 });
-
 
 module.exports = {
   allInventoriesPaginatedListReport,

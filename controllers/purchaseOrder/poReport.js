@@ -7,32 +7,37 @@ const moment = require("moment-timezone");
 
 const poReport = asyncHandler(async (req, res) => {
   try {
-    // Generate filename with Asia/Kolkata timezone
     const now = moment().tz("Asia/Kolkata");
     const fileName = `Purchase_Order_Report_${now.format(
       "DD-MM-YYYY_hh-mm-ss-a",
     )}.csv`;
 
-    // Set headers for CSV download
     res.setHeader("Content-Type", "text/csv");
     res.setHeader(
       "Content-Disposition",
       `attachment; filename=\"${fileName}\"`,
     );
 
-    // Build filter object
     const filter = {};
 
-    // Multiple distributor filter (dbCode)
     if (req.query.distributorIds) {
       const dbIds = req.query.distributorIds.split(",");
-
       if (dbIds.length > 0) {
         filter.distributorId = { $in: dbIds };
       }
     }
 
-    // Date range filter
+    // NEW: Godown filter
+    if (req.query.godownIds) {
+      const gIds = req.query.godownIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      if (gIds.length > 0) {
+        filter.godownId = { $in: gIds };
+      }
+    }
+
     if (req.query.startDate && req.query.endDate) {
       const startOfDay = new Date(req.query.startDate);
       startOfDay.setHours(0, 0, 0, 0);
@@ -54,9 +59,6 @@ const poReport = asyncHandler(async (req, res) => {
       filter.createdAt = { $lte: endOfDay };
     }
 
-    // Fixed: was `orderQty / piecesPerBox` called with lineItem?.oderQty
-    // (typo, that field doesn't exist on the schema — it's `orderQty`),
-    // so boxQty was always NaN and the fallback silently produced "NaN".
     const ConvertToBox = (orderQty, product, uom) => {
       const piecesPerBox = Number(product?.no_of_pieces_in_a_box) || 1;
       const boxQty = orderQty / piecesPerBox;
@@ -76,14 +78,6 @@ const poReport = asyncHandler(async (req, res) => {
       return totalGst;
     };
 
-    // ---- Precompute GRN received qty per PO+product ------------------------
-    // grnQty / grnBoxQty are NOT stored on the PurchaseOrder document — they
-    // have to be derived from Invoice line items (same logic as
-    // getGrnPrimeryOrder / purchaseOrderExcelView). Since this endpoint
-    // streams via cursor for memory efficiency, we can't join on the fly per
-    // row, so: 1) grab just the _ids of POs matching the filter, 2) run a
-    // single aggregation over Invoice to sum received qty per PO+product,
-    // 3) build a lookup map used while streaming rows below.
     const matchingPoIds = await PurchaseOrder.find(filter).distinct("_id");
 
     const receivedMap = {};
@@ -109,9 +103,7 @@ const poReport = asyncHandler(async (req, res) => {
         receivedMap[key] = row.totalQty;
       }
     }
-    // -------------------------------------------------------------------------
 
-    // Populate fields - matching purchaseOrderExcelView exactly
     const populateFields = [
       {
         path: "distributorId",
@@ -121,11 +113,13 @@ const poReport = asyncHandler(async (req, res) => {
         path: "supplierId",
         select: "supplierName supplierCode",
       },
+      // NEW: populate godown
+      {
+        path: "godownId",
+        select: "godownName godownCode",
+      },
       {
         path: "lineItems.product",
-        // Added "uom" so the product's own base UOM (e.g. "bndl") is
-        // available for the report, separate from lineItemUOM (the UOM
-        // the order quantity was actually placed in, e.g. "box").
         select:
           "name product_code cat_id collection_id brand no_of_pieces_in_a_box uom",
         populate: [
@@ -158,16 +152,16 @@ const poReport = asyncHandler(async (req, res) => {
       },
     ];
 
-    // CSV headers
     const headers = [
       "PO No",
       "Distributor Code",
       "Distributor Name",
       "Supplier Code",
       "Supplier Name",
+      "Godown Code",   // NEW
+      "Godown Name",   // NEW
       "PO Created Date",
       "Expected Delivery Date",
-      // "Plant",
       "Product Code",
       "Product Name",
       "UOM",
@@ -185,16 +179,11 @@ const poReport = asyncHandler(async (req, res) => {
       "Net Amount (Line)",
       "Total Net Amount (PO)",
       "Order Status",
-      // "Quotation Status",
-      // "SAP Quotation No",
-      // "SAP Sales Order No",
     ];
 
-    // Create CSV stream
     const csvStream = format({ headers });
     csvStream.pipe(res);
 
-    // Use a cursor for streaming
     const cursor = PurchaseOrder.find(filter)
       .populate(populateFields)
       .sort({ createdAt: -1 })
@@ -202,7 +191,6 @@ const poReport = asyncHandler(async (req, res) => {
       .cursor();
 
     cursor.on("data", (po) => {
-      // If no line items, write one row with PO-level data
       if (!po.lineItems || po.lineItems.length === 0) {
         csvStream.write({
           "PO No": po?.purchaseOrderNo || "",
@@ -210,6 +198,8 @@ const poReport = asyncHandler(async (req, res) => {
           "Distributor Name": po?.distributorId?.name || "",
           "Supplier Code": po?.supplierId?.supplierCode || "",
           "Supplier Name": po?.supplierId?.supplierName || "",
+          "Godown Code": po?.godownId?.godownCode || "",   // NEW
+          "Godown Name": po?.godownId?.godownName || "",   // NEW
           "PO Created Date":
             po?.createdAt && moment(po?.createdAt).isValid()
               ? moment(po?.createdAt).tz("Asia/Kolkata").format("YYYY-MM-DD")
@@ -219,7 +209,6 @@ const poReport = asyncHandler(async (req, res) => {
                 .tz("Asia/Kolkata")
                 .format("YYYY-MM-DD")
             : "",
-          // Plant: "",
           "Product Code": "",
           "Product Name": "",
           UOM: "",
@@ -237,12 +226,8 @@ const poReport = asyncHandler(async (req, res) => {
           "Net Amount (Line)": "",
           "Total Net Amount (PO)": po?.netAmount || 0,
           "Order Status": po?.status || "",
-          // "Quotation Status": po?.sapStatus || "",
-          // "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
-          // "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
         });
       } else {
-        // Write one row per line item
         po.lineItems.forEach((lineItem) => {
           const productId = lineItem?.product?._id;
           const receivedKey = `${String(po._id)}_${String(productId)}`;
@@ -259,6 +244,8 @@ const poReport = asyncHandler(async (req, res) => {
             "Distributor Name": po?.distributorId?.name || "",
             "Supplier Code": po?.supplierId?.supplierCode || "",
             "Supplier Name": po?.supplierId?.supplierName || "",
+            "Godown Code": po?.godownId?.godownCode || "",   // NEW
+            "Godown Name": po?.godownId?.godownName || "",   // NEW
             "PO Created Date":
               po?.createdAt && moment(po?.createdAt).isValid()
                 ? moment(po?.createdAt).tz("Asia/Kolkata").format("YYYY-MM-DD")
@@ -268,11 +255,8 @@ const poReport = asyncHandler(async (req, res) => {
                   .tz("Asia/Kolkata")
                   .format("YYYY-MM-DD")
               : "",
-            // Plant: lineItem?.plant?.plantName || "",
             "Product Code": lineItem?.product?.product_code || "",
             "Product Name": lineItem?.product?.name || "",
-            // Fixed: now reads the product's own base UOM (e.g. "bndl")
-            // instead of lineItemUOM (the order-placement UOM, e.g. "box").
             UOM: lineItem?.product?.uom || "",
             "Order Qty (BOX)":
               lineItem?.boxOrderQty ||
@@ -281,13 +265,7 @@ const poReport = asyncHandler(async (req, res) => {
                 lineItem?.product,
                 lineItem?.lineItemUOM,
               ),
-            // Fixed typo: was lineItem?.oderQty (field doesn't exist on the
-            // schema), which meant this column was always blank.
             "Order Qty (PCS)": lineItem?.orderQty || "",
-            // Fixed: grnQty/grnBoxQty are never stored on the PurchaseOrder
-            // document itself (lineItem?.grnBoxQty / grnQty were always
-            // undefined -> 0 here). Now sourced from the Invoice-derived
-            // receivedMap built above, same formula as getGrnPrimeryOrder.
             "GRN Qty (BOX)": grnBoxQty,
             "GRN Qty (PCS)": grnQty,
             "Stock Qty": lineItem?.inventoryId?.availableQty || "",
@@ -300,9 +278,6 @@ const poReport = asyncHandler(async (req, res) => {
             "Net Amount (Line)": lineItem?.netAmt || "",
             "Total Net Amount (PO)": po?.netAmount || 0,
             "Order Status": po?.status || "",
-            // "Quotation Status": po?.sapStatus || "",
-            // "SAP Quotation No": po?.sapStatusData?.Vbeln || "",
-            // "SAP Sales Order No": po?.sapStatusData?.Vbelnso || "",
           });
         });
       }

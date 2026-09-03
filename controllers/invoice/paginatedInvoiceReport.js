@@ -1,6 +1,7 @@
 const asyncHandler = require("express-async-handler");
 const Invoice = require("../../models/invoice.model");
-const Product = require("../../models/product.model"); 
+const Product = require("../../models/product.model");
+const PurchaseOrder = require("../../models/purchaseOrder.model"); // NEW
 const { format } = require("fast-csv");
 const moment = require("moment-timezone");
 
@@ -19,7 +20,6 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
 
     const filter = {};
 
-    // Distributor filter
     if (req.query.distributorId) {
       filter.distributorId = req.query.distributorId;
     }
@@ -81,18 +81,28 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
       filter.invoiceNo = { $regex: req.query.invoiceNo, $options: "i" };
     }
 
-    // NEW: Godown filter — supports a single id (godownId) or a
-    // comma-joined multi-select (godownIds), mirroring the pattern used
-    // by the bill report controllers.
-    if (req.query.godownId) {
-      filter.godownId = req.query.godownId;
-    } else if (req.query.godownIds) {
-      const godownIds = req.query.godownIds
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean);
-      if (godownIds.length > 0) {
-        filter.godownId = { $in: godownIds };
+    // FIXED: Godown isn't stored on Invoice itself — it lives on the
+    // linked PurchaseOrder (invoice.purchaseOrderId -> PurchaseOrder.godownId).
+    // So filtering by godown means first resolving which PurchaseOrders
+    // belong to the selected godown(s), then filtering invoices by
+    // purchaseOrderId $in that set.
+    if (req.query.godownId || req.query.godownIds) {
+      let godownIdList = [];
+      if (req.query.godownId) {
+        godownIdList = [req.query.godownId];
+      } else if (req.query.godownIds) {
+        godownIdList = req.query.godownIds
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean);
+      }
+
+      if (godownIdList.length > 0) {
+        const matchingPoIds = await PurchaseOrder.find({
+          godownId: { $in: godownIdList },
+        }).distinct("_id");
+
+        filter.purchaseOrderId = { $in: matchingPoIds };
       }
     }
 
@@ -134,8 +144,13 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
         ],
       },
       { path: "lineItems.plant", select: "" },
-      // NEW: pull godown details for the CSV output
-      { path: "godownId", select: "godownCode godownName" },
+      // FIXED: godown is nested under purchaseOrderId, not a direct field
+      // on Invoice — populate through the PO to reach it.
+      {
+        path: "purchaseOrderId",
+        select: "purchaseOrderNo godownId",
+        populate: { path: "godownId", select: "godownCode godownName" },
+      },
     ];
 
     const headers = [
@@ -214,13 +229,15 @@ const paginatedInvoiceReport = asyncHandler(async (req, res) => {
           // "Distributor's Zone": invoice?.distributorId?.stateId?.zoneId?.name || "",
           "Distributor's State": invoice?.distributorId?.stateId?.name || "",
           "Distributor's City": invoice?.distributorId?.city || "",
-          "Godown Code": invoice?.godownId?.godownCode || "", // NEW
-          "Godown Name": invoice?.godownId?.godownName || "", // NEW
+          // FIXED: godown now sourced via purchaseOrderId -> godownId
+          "Godown Code": invoice?.purchaseOrderId?.godownId?.godownCode || "",
+          "Godown Name": invoice?.purchaseOrderId?.godownId?.godownName || "",
           "Invoice No": invoice?.invoiceNo || "",
           "Invoice Date": invoice?.date
             ? moment(invoice.date).tz("Asia/Kolkata").format("DD-MM-YYYY")
             : "",
-          "PO No": item?.poNumber || "",
+          "PO No":
+            item?.poNumber || invoice?.purchaseOrderId?.purchaseOrderNo || "",
           Status: invoice?.status || "",
           "GRN No": invoice?.grnNumber || "",
           "GRN Date": invoice?.grnDate
