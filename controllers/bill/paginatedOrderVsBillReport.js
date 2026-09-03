@@ -20,6 +20,8 @@ const escapeCSVValue = (value) => {
 const reportHeaders = [
   "DB Code",
   "DB Name",
+  "Godown Code", // NEW
+  "Godown Name", // NEW
   "Employee Code",
   "Employee Name",
   "Employee Deg",
@@ -73,6 +75,8 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
       status,
       search,
       orderSource,
+      godownId,   // NEW
+      godownIds,  // NEW
     } = req.query;
 
     let query = {};
@@ -83,6 +87,13 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
 
     if (status && status !== "all") {
       query.status = status;
+    }
+
+    // NEW: Godown filter — Bill has a direct godownId field
+    if (godownId) {
+      query.godownId = godownId;
+    } else if (godownIds && godownIds !== "all") {
+      query.godownId = { $in: godownIds.split(",").map((id) => id.trim()) };
     }
 
     if (fromDate || toDate) {
@@ -109,6 +120,8 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
     const bills = await Bill.find(query)
       .populate([
         { path: "distributorId", select: "dbCode name" },
+        // NEW: populate godown
+        { path: "godownId", select: "godownCode godownName" },
         {
           path: "salesmanName",
           select: "empId name desgId",
@@ -198,17 +211,14 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
         let specialDiscAmount = Number(orderItem?.distributorDisc || 0);
         const invoiceQty = Number(billItem.billQty || 0);
 
-        // 🔹 POINT 2: If invoice quantity exists but original order quantity is 0, that means those products have been added during bill creation, originally not in the order list
-        // make original order quantity same as invoice quantity for correct execution calculation
         if (invoiceQty > 0 && orderQty === 0) {
           orderQty = invoiceQty;
-          orderValue = Number(billItem.netAmt || 0); // Order value same as invoice value
-          grossAmount = Number(billItem.grossAmt || 0); // Gross amount same as invoice gross amount
+          orderValue = Number(billItem.netAmt || 0);
+          grossAmount = Number(billItem.grossAmt || 0);
           schemeDiscount = Number(billItem.schemeDisc || 0);
           specialDiscAmount = Number(billItem.distributorDisc || 0);
         }
 
-        // Sales Return calculation - filter by billId to ensure correct association
         const relatedSRs = (bill.salesReturnId || []).filter(
           (sr) =>
             sr.billId?.toString() === bill._id?.toString() &&
@@ -242,7 +252,6 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
 
         const row = {};
 
-        // Populate row with escaped values in exact header order
         reportHeaders.forEach((header) => {
           switch (header) {
             case "DB Code":
@@ -250,6 +259,12 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
               break;
             case "DB Name":
               row[header] = escapeCSVValue(bill.distributorId?.name);
+              break;
+            case "Godown Code": // NEW
+              row[header] = escapeCSVValue(bill.godownId?.godownCode);
+              break;
+            case "Godown Name": // NEW
+              row[header] = escapeCSVValue(bill.godownId?.godownName);
               break;
             case "Employee Code":
               row[header] = escapeCSVValue(bill.salesmanName?.empId);
@@ -260,9 +275,6 @@ const paginatedOrderVsBillReport = asyncHandler(async (req, res) => {
             case "Employee Deg":
               row[header] = escapeCSVValue(bill.salesmanName?.desgId?.name);
               break;
-            // case "Retailer UID":
-            //   row[header] = escapeCSVValue(bill.retailerId?.outletUID);
-            //   break;
             case "Retailer Code":
               row[header] = escapeCSVValue(bill.retailerId?.outletCode);
               break;
