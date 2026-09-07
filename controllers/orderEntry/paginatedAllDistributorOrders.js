@@ -9,6 +9,7 @@ const paginatedAllDistributorOrders = asyncHandler(async (req, res) => {
       limit = 10,
       distributorId,
       retailerId,
+      godownId,
       fromDate,
       toDate,
       search,
@@ -25,6 +26,11 @@ const paginatedAllDistributorOrders = asyncHandler(async (req, res) => {
     // Apply retailer filter
     if (retailerId) {
       query.retailerId = retailerId;
+    }
+
+    // Apply godown filter
+    if (godownId) {
+      query.godownId = godownId;
     }
 
     // Add date filter for createdAt field
@@ -70,6 +76,10 @@ const paginatedAllDistributorOrders = asyncHandler(async (req, res) => {
         {
           path: "retailerId",
           select: "",
+        },
+        {
+          path: "godownId",
+          select: "godownName",
         },
         {
           path: "lineItems.product",
