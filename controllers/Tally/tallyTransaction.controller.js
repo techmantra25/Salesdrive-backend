@@ -173,7 +173,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Sales",
-            godown: formatGodown(bill.godownId),
+            // godown: formatGodown(bill.godownId),
             invoiceNo: bill.billNo || "",
             invoiceDate: formatDate(bill.createdAt),
             refDocNo: "Calcutta Metal Corporation",
@@ -465,7 +465,7 @@ const generateExcelReport = async (reportData, distributorId) => {
   // Define columns based on the sample format
   worksheet.columns = [
     { header: "Transaction Type", key: "transactionType", width: 18 },
-    { header: "Godown", key: "godown", width: 20 },
+    // { header: "Godown", key: "godown", width: 20 },
     { header: "Invoice No", key: "invoiceNo", width: 15 },
     { header: "Invoice Date", key: "invoiceDate", width: 20 },
     { header: "Ref Doc No", key: "refDocNo", width: 15 },
@@ -540,7 +540,7 @@ const generateExcelReport = async (reportData, distributorId) => {
       gstCell.alignment = { vertical: "middle", horizontal: "right" };
 
       // Center align specific columns
-      ["transactionType", "uom", "godown"].forEach((key) => {
+      ["transactionType", "uom"].forEach((key) => {
         const cell = row.getCell(key);
         cell.alignment = { vertical: "middle", horizontal: "center" };
       });
