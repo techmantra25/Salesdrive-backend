@@ -5,7 +5,7 @@ const SalesReturn = require("../../models/salesReturn.model");
 
 const distributorSalesReturnReport = asyncHandler(async (req, res) => {
   try {
-    const { distributorId, retailerId, salesmanName, startDate, endDate } =
+    const { distributorId, retailerId, salesmanName, startDate, endDate, godownIds } =
       req.query;
 
     // Validate required distributorId
@@ -31,6 +31,17 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
     // Salesman filter
     if (salesmanName) {
       filter.salesmanName = salesmanName;
+    }
+
+    // Godown filter (multi-select, comma-separated ids from frontend)
+    if (godownIds) {
+      const godownIdArr = godownIds
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
+      if (godownIdArr.length > 0) {
+        filter.godownId = { $in: godownIdArr };
+      }
     }
 
     // Date range filter for Sales Return creation date
@@ -77,6 +88,7 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
         },
       },
       { path: "retailerId", select: "outletCode outletName" },
+      { path: "godownId", select: "godownName godownCode" },
       { path: "billId", select: " new_billno billNo dates orderNo" },
       {
         path: "lineItems.product",
@@ -110,6 +122,8 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
       "Distributor's City",
       "Retailer Code",
       "Retailer Name",
+      "Godown Code",
+      "Godown Name",
       "Product Code",
       "Product Name",
       "SKU Group Code",
@@ -174,6 +188,8 @@ const distributorSalesReturnReport = asyncHandler(async (req, res) => {
           "Distributor's City": salesReturn.distributorId?.city || "",
           "Retailer Code": salesReturn.retailerId?.outletCode || "",
           "Retailer Name": salesReturn.retailerId?.outletName || "",
+          "Godown Code": salesReturn.godownId?.godownCode || "",
+          "Godown Name": salesReturn.godownId?.godownName || "",
           "Product Code": item.product?.product_code || "",
           "Product Name": item.product?.name || "",
           "SKU Group Code": item.product?.sku_group_id || "",
