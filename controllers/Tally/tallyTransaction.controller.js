@@ -43,6 +43,18 @@ const formatRoundOff = (value) => {
 };
 
 /**
+ * Helper function to format a populated Godown doc for display, e.g.
+ * "Main Godown (GDN01)". Used only for the new Godown column below.
+ */
+const formatGodown = (godownDoc) => {
+  if (!godownDoc || typeof godownDoc !== "object") return "";
+  const name = godownDoc.godownName || "";
+  const code = godownDoc.godownCode || "";
+  if (name && code) return `${name} (${code})`;
+  return name || code || "";
+};
+
+/**
  * Helper function to calculate GST percentage
  */
 // const calculateGSTPercentage = (taxableAmount, totalTax) => {
@@ -86,7 +98,8 @@ const calculateDiscount = (lineItem, type) => {
 
 exports.generateTallyReport = async (req, res) => {
   try {
-    const { distributorId, startDate, endDate, transactionTypes } = req.body;
+    const { distributorId, startDate, endDate, transactionTypes, godownIds } =
+      req.body;
 
     // Validate required fields
     if (!distributorId) {
@@ -104,6 +117,14 @@ exports.generateTallyReport = async (req, res) => {
       if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
     }
 
+    // Build godown filter (Bill / SalesReturn / Invoice each carry a
+    // godownId field directly). PurchaseReturn has no godownId of its own —
+    // it's filtered separately below via its linked Invoice.
+    const hasGodownFilter = Array.isArray(godownIds) && godownIds.length > 0;
+    const godownFilter = hasGodownFilter
+      ? { godownId: { $in: godownIds } }
+      : {};
+
     // Prepare data containers
     const reportData = [];
 
@@ -120,6 +141,7 @@ exports.generateTallyReport = async (req, res) => {
       const bills = await Bill.find({
         distributorId,
         ...dateFilter,
+        ...godownFilter,
       })
         .populate({
           path: "retailerId",
@@ -131,6 +153,7 @@ exports.generateTallyReport = async (req, res) => {
         })
         .populate("lineItems.product", "name product_code product_hsn_code")
         .populate("lineItems.price", "mrp sellingPrice")
+        .populate("godownId", "godownName godownCode")
         .lean();
 
       for (const bill of bills) {
@@ -150,6 +173,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Sales",
+            godown: formatGodown(bill.godownId),
             invoiceNo: bill.billNo || "",
             invoiceDate: formatDate(bill.createdAt),
             refDocNo: "Calcutta Metal Corporation",
@@ -190,6 +214,7 @@ exports.generateTallyReport = async (req, res) => {
       const salesReturns = await SalesReturn.find({
         distributorId,
         ...dateFilter,
+        ...godownFilter,
       })
         .populate({
           path: "retailerId",
@@ -201,6 +226,7 @@ exports.generateTallyReport = async (req, res) => {
         })
         .populate("lineItems.product", "name product_code product_hsn_code")
         .populate("lineItems.price", "mrp sellingPrice")
+        .populate("godownId", "godownName godownCode")
         .lean();
 
       for (const salesReturn of salesReturns) {
@@ -219,6 +245,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Sales Return",
+            godown: formatGodown(salesReturn.godownId),
             invoiceNo: salesReturn.salesReturnNo || "",
             invoiceDate: formatDate(salesReturn.createdAt),
             refDocNo: "Calcutta Metal Corporation",
@@ -259,8 +286,10 @@ exports.generateTallyReport = async (req, res) => {
       const invoices = await Invoice.find({
         distributorId,
         ...dateFilter,
+        ...godownFilter,
       })
         .populate("lineItems.product", "name product_code product_hsn_code")
+        .populate("godownId", "godownName godownCode")
         .lean();
 
       for (const invoice of invoices) {
@@ -279,6 +308,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Purchase",
+            godown: formatGodown(invoice.godownId),
             invoiceNo: invoice.invoiceNo || "",
             invoiceDate: formatDate(invoice.date || invoice.createdAt),
             refDocNo: "Calcutta Metal Corporation",
@@ -315,13 +345,31 @@ exports.generateTallyReport = async (req, res) => {
 
     // Fetch Purchase Return data
     if (includeTypes.includes("purchaseReturn")) {
-      const purchaseReturns = await PurchaseReturn.find({
+      let purchaseReturns = await PurchaseReturn.find({
         distributorId,
         ...dateFilter,
       })
         .populate("lineItems.product", "name product_code product_hsn_code")
-        .populate("invoiceId", "invoiceNo supplierName")
+        .populate({
+          path: "invoiceId",
+          select: "invoiceNo supplierName godownId",
+          populate: {
+            path: "godownId",
+            select: "godownName godownCode",
+          },
+        })
         .lean();
+
+      // PurchaseReturn has no godownId of its own — it only reaches a
+      // godown through the Invoice it's linked to, so filter in-memory
+      // after populate rather than in the Mongo query.
+      if (hasGodownFilter) {
+        const allowed = new Set(godownIds.map(String));
+        purchaseReturns = purchaseReturns.filter((pr) => {
+          const gid = pr.invoiceId?.godownId?._id || pr.invoiceId?.godownId;
+          return gid && allowed.has(String(gid));
+        });
+      }
 
       for (const purchaseReturn of purchaseReturns) {
         for (let index = 0; index < purchaseReturn.lineItems.length; index++) {
@@ -339,6 +387,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Purchase Return",
+            godown: formatGodown(purchaseReturn.invoiceId?.godownId),
             invoiceNo: purchaseReturn.code || "",
             invoiceDate: formatDate(purchaseReturn.createdAt),
             refDocNo: "Calcutta Metal Corporation",
@@ -416,6 +465,7 @@ const generateExcelReport = async (reportData, distributorId) => {
   // Define columns based on the sample format
   worksheet.columns = [
     { header: "Transaction Type", key: "transactionType", width: 18 },
+    { header: "Godown", key: "godown", width: 20 },
     { header: "Invoice No", key: "invoiceNo", width: 15 },
     { header: "Invoice Date", key: "invoiceDate", width: 20 },
     { header: "Ref Doc No", key: "refDocNo", width: 15 },
@@ -490,7 +540,7 @@ const generateExcelReport = async (reportData, distributorId) => {
       gstCell.alignment = { vertical: "middle", horizontal: "right" };
 
       // Center align specific columns
-      ["transactionType", "uom"].forEach((key) => {
+      ["transactionType", "uom", "godown"].forEach((key) => {
         const cell = row.getCell(key);
         cell.alignment = { vertical: "middle", horizontal: "center" };
       });
