@@ -12,6 +12,7 @@ const detailPurchaseReturn = asyncHandler(async (req, res) => {
     const purchaseReturn = await PurchaseReturn.findById(id).populate([
       { path: "distributorId", select: "" },
       { path: "invoiceId", select: "" },
+      { path: "godownId", select: "" },
       {
         path: "lineItems.product",
         model: "Product",

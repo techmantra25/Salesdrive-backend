@@ -130,7 +130,7 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
     if (search) {
       baseMatch.$or = [
         { invoiceNo: { $regex: search, $options: "i" } },
-        { "lineItems.soNumber": { $regex: search, $options: "i" } },  
+        { "lineItems.soNumber": { $regex: search, $options: "i" } },
       ];
     }
 
@@ -381,7 +381,11 @@ const disPaginatedInvoiceList = asyncHandler(async (req, res) => {
         populate: { path: "brand", select: "" },
       })
       .populate({ path: "lineItems.plant", select: "" })
-      .populate({ path: "godownId", select: "" });
+      .populate({ path: "godownId", select: "" })
+      .populate({
+        path: "purchaseReturnIds",
+        select: "status lineItems",   // ← add this
+      });
 
     console.log("==================== QUERY RESULTS ====================");
     console.log("Number of invoices found:", invoices.length);

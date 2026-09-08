@@ -42,6 +42,7 @@ const invoiceDetailForSaleReturn = asyncHandler(async (req, res) => {
   const inventories = await Inventory.find({
     productId: { $in: productIds },
     distributorId: invoice.distributorId?._id,
+    godownId: invoice.godownId,
   }).lean();
 
   /* --------------------------------------------

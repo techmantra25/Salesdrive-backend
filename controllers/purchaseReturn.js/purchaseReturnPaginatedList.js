@@ -11,6 +11,7 @@ const purchaseReturnPaginatedList = asyncHandler(async (req, res) => {
     toDate,
     distributorId,
     status,
+    godownId,
   } = req.query;
 
   page = parseInt(page, 10);
@@ -28,6 +29,9 @@ const purchaseReturnPaginatedList = asyncHandler(async (req, res) => {
 
   if (status) {
     matchStage.status = status;
+  }
+  if (godownId) {
+    matchStage.godownId = new mongoose.Types.ObjectId(godownId);
   }
 
   if (fromDate || toDate) {
@@ -63,18 +67,28 @@ const purchaseReturnPaginatedList = asyncHandler(async (req, res) => {
     },
     { $unwind: "$invoice" },
 
+    {
+      $lookup: {
+        from: "godowns",
+        localField: "godownId",
+        foreignField: "_id",
+        as: "godown",
+      },
+    },
+    { $unwind: { path: "$godown", preserveNullAndEmptyArrays: true } },
+
     // 🔹 Search
     ...(search
       ? [
-          {
-            $match: {
-              $or: [
-                { code: { $regex: search, $options: "i" } },
-                { "invoice.invoiceNo": { $regex: search, $options: "i" } },
-              ],
-            },
+        {
+          $match: {
+            $or: [
+              { code: { $regex: search, $options: "i" } },
+              { "invoice.invoiceNo": { $regex: search, $options: "i" } },
+            ],
           },
-        ]
+        },
+      ]
       : []),
 
     // 🔹 Sorting

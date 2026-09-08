@@ -56,6 +56,11 @@ const purchaseReturnSchema = new mongoose.Schema(
       ref: "Invoice",
       required: true,
     },
+    godownId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Godown",
+      required: true,
+    },
     lineItems: [LineItemSchema],
 
     grossAmount: { type: Number },
@@ -75,15 +80,15 @@ const purchaseReturnSchema = new mongoose.Schema(
       type: String,
       enum: [
         "Return Requested",
-        "Return Approved",
+        "Returned",
         "Return Rejected",
         "Return Completed",
       ],
       default: "Return Requested",
     },
-     totalBasePoints: { type: Number, default: null },
+    totalBasePoints: { type: Number, default: null },
   },
- 
+
   {
     timestamps: true,
   }

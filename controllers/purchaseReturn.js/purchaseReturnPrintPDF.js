@@ -30,6 +30,10 @@ const purchaseReturnPrintPDF = asyncHandler(async (req, res) => {
         select: "",
       })
       .populate({
+        path: "godownId",   
+        select: "",
+      })
+      .populate({
         path: "lineItems.product",
         select: "",
         populate: [
@@ -54,9 +58,9 @@ const purchaseReturnPrintPDF = asyncHandler(async (req, res) => {
     const distributorId = purchaseReturn?.distributorId?._id;
     const termConditions = distributorId
       ? await DBRule.findOne({
-          dbId: distributorId,
-          module: "Purchase Return T&C",
-        })
+        dbId: distributorId,
+        module: "Purchase Return T&C",
+      })
       : null;
 
     purchaseReturn.termConditions = termConditions?.rules || [];
@@ -244,13 +248,11 @@ const purchaseReturnPrintPDF = asyncHandler(async (req, res) => {
               <p>We encountered an error while generating your purchase return print preview. Please try again or contact support if the issue persists.</p>
 
               <div class="error-details">
-                <p><strong>Error Type:</strong> ${
-                  error.name || "Purchase Return Generation Error"
-                }</p>
+                <p><strong>Error Type:</strong> ${error.name || "Purchase Return Generation Error"
+      }</p>
                 <p><strong>Message:</strong> ${error.message}</p>
-                <p><strong>Purchase Return ID:</strong> ${
-                  req.params.purchaseReturnId
-                }</p>
+                <p><strong>Purchase Return ID:</strong> ${req.params.purchaseReturnId
+      }</p>
                 <p><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
               </div>
 

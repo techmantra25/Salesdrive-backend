@@ -6,6 +6,7 @@ const DistributorTransaction = require("../../models/distributorTransaction.mode
 const Distributor = require("../../models/distributor.model");
 const PriamaryTarget = require("../../models/primaryTarget.model");
 const Product = require("../../models/product.model");
+const { approvePurchaseReturn } = require("./updatePurchaseReturn");
 
 const createPurchaseReturn = asyncHandler(async (req, res) => {
   try {
@@ -19,15 +20,17 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
       throw new Error("Unauthorized invoice access");
     }
 
-    // res.status(404);
-    // throw new Error("Invoice not found");
-
     if (!invoice) {
       res.status(404);
       throw new Error("Invoice not found");
     }
 
-    // **NEW: Fetch distributor details to check RBP scheme mapping**
+    // Step 2: reject empty submissions server-side, mirroring the frontend guard
+    if (!Array.isArray(req.body.lineItems) || req.body.lineItems.length === 0) {
+      res.status(400);
+      throw new Error("At least one line item with a return quantity is required");
+    }
+
     const distributor = await Distributor.findById(distributorId).lean();
     if (!distributor) {
       res.status(404);
@@ -36,7 +39,6 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
 
     const totalBasePoints = req.body.totalBasePoints || 0;
 
-    // **CHANGED: Only validate points balance if RBP scheme is mapped and points > 0**
     let currentBalance = 0;
 
     if (totalBasePoints > 0 && distributor.RBPSchemeMapped === "yes") {
@@ -66,12 +68,24 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
     const purchaseReturn = await PurchaseReturn.create({
       ...req.body,
       distributorId,
+      // Step 1: scope to the return's godown — trust the client's value,
+      // fall back to the invoice's own godown if the client omitted it.
+      godownId: req.body.godownId || invoice.godownId,
       code: await generatePurchaseReturnCode("INV-RET"),
+      status: "Returned",
     });
 
     if (!purchaseReturn) {
       res.status(400);
       throw new Error("Purchase return creation failed");
+    }
+
+    // Step 4: auto-approve immediately — runs the same stock-out + reward-points
+    // logic that used to require a separate admin "Approve" action.
+    const approvalResult = await approvePurchaseReturn(purchaseReturn, distributorId);
+    if (!approvalResult.success) {
+      purchaseReturn.status = "Return Rejected";
+      await purchaseReturn.save();
     }
 
     // update the invoice with the purchase return
@@ -86,11 +100,10 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
     if (invoice.targetIds && invoice.targetIds.length > 0) {
       console.log("🎯 Reversing target achievement due to purchase return");
 
-      // fetch products
       const productIds = purchaseReturn.lineItems.map(i => i.product);
 
       const products = await Product.find({
-        _id: { $in: productIds }``
+        _id: { $in: productIds },
       }).lean();
 
       const productMap = {};
@@ -98,12 +111,10 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
         productMap[p._id.toString()] = p;
       });
 
-      // loop targets
       for (const targetId of invoice.targetIds) {
         const target = await PriamaryTarget.findById(targetId);
         if (!target) continue;
 
-        // ✅ date validation
         const invoiceDate = new Date(invoice.date);
         if (
           invoiceDate < new Date(target.target_start_date) ||
@@ -132,7 +143,6 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
 
           if (!isBrandMatch || !isSubBrandMatch) continue;
 
-          // 🔥 MATCH WITH INVOICE ITEM (IMPORTANT FIX)
           const invoiceItem = invoice.lineItems.find(
             invItem =>
               invItem.product.toString() === item.product.toString()
@@ -167,38 +177,11 @@ const createPurchaseReturn = asyncHandler(async (req, res) => {
 
     // ================= TARGET ACHIEVEMENT REVERSAL END =================
 
-    // **COMMENTED OUT: Distributor transaction now happens only after return approval in updatePurchaseReturn.js**
-    /*
-    if (totalBasePoints > 0 && distributor.RBPSchemeMapped === "yes") {
-      console.log(
-        `Creating distributor transaction for ${totalBasePoints} points for purchase return - distributor ${distributor.dbCode}`
-      );
-      // record a debit transaction for the distributor
-      const data = {
-        distributorId,
-        transactionType: "debit",
-        transactionFor: "Purchase Return",
-        point: Number(totalBasePoints),
-        balance: Number(currentBalance) - Number(totalBasePoints),
-        status: "Success",
-        purchaseReturnId: purchaseReturn._id,
-        remark: `Points deducting for purchase return with code ${purchaseReturn.code} for DB Code ${distributor.dbCode}`,
-      };
-
-      await DistributorTransaction.create(data);
-      console.log(
-        `Successfully created distributor transaction: debit ${totalBasePoints} points for purchase return`
-      );
-    } else if (totalBasePoints > 0) {
-      console.log(
-        `Skipping distributor transaction creation - RBP scheme not mapped for distributor ${distributor.dbCode} (RBPSchemeMapped: ${distributor.RBPSchemeMapped})`
-      );
-    }
-    */
-
     res.status(201).json({
       error: false,
-      message: "Purchase return created successfully",
+      message: approvalResult.success
+        ? "Purchase return created and approved successfully"
+        : "Purchase return created but stock processing failed — marked as rejected",
       data: purchaseReturn,
       invoice: updatedInvoice,
     });
