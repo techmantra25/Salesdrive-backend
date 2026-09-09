@@ -1120,19 +1120,46 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
         continue;
       }
 
-      const boxOrderQty = Number(row["GRN Qty (UOM)"] || 0);
+      /**
+       * 📦 Qty resolution — GRN Qty (PCS) vs GRN Qty (UOM)
+       *
+       * The GRN sheet can now carry a piece-level qty directly (GRN Qty
+       * (PCS)) instead of (or as well as) a UOM-level qty (GRN Qty
+       * (UOM)) — e.g. a "box"/"bndl" product might be received in whole
+       * pieces rather than whole boxes/bundles.
+       *
+       * If GRN Qty (PCS) is present on the row, it's already piece-level
+       * and is used as-is, regardless of the product's own uom — no
+       * multiplication by no_of_pieces_in_a_box, since that would double
+       * count. Only when PCS isn't supplied do we fall back to the
+       * previous behaviour: GRN Qty (UOM) * pieces-per-box for any uom
+       * other than "pcs" (a plain "pcs" product's UOM qty is already
+       * piece-level, so multiplying by a 0/undefined pcsPerBox would
+       * silently zero it out).
+       */
+      const uomQtyRaw = row["GRN Qty (UOM)"];
+      const pcsQtyRaw = row["GRN Qty (PCS)"];
 
       const pcsPerBox = Number(
         product.no_of_pieces_in_a_box || 0
       );
 
-      // Only rescale by pieces-per-box for box-style UOMs — for products
-      // ordered in plain "pcs", the qty column is already pcs-level, and
-      // multiplying by a 0/undefined pcsPerBox would silently zero it out.
-      const finalQty =
-        product.uom !== "pcs" && pcsPerBox > 0
-          ? boxOrderQty * pcsPerBox
-          : boxOrderQty;
+      let finalQty = 0;
+
+      if (
+        pcsQtyRaw !== undefined &&
+        pcsQtyRaw !== null &&
+        String(pcsQtyRaw).trim() !== ""
+      ) {
+        finalQty = Number(pcsQtyRaw || 0);
+      } else {
+        const boxOrderQty = Number(uomQtyRaw || 0);
+
+        finalQty =
+          product.uom !== "pcs" && pcsPerBox > 0
+            ? boxOrderQty * pcsPerBox
+            : boxOrderQty;
+      }
 
       grouped[soNumber][invoiceKey].push({
         productCode: String(productCode).trim(),
