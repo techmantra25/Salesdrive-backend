@@ -17,6 +17,7 @@ const advicePrint = asyncHandler(async (req, res) => {
       .populate("distributorId")
       .populate("retailerId")
       .populate("salesmanName")
+      .populate("godownId")
       .populate({
         path: "retailerId",
         populate: {
@@ -99,6 +100,7 @@ const advicePrint = asyncHandler(async (req, res) => {
       distributor: order.distributorId,
       retailer: order.retailerId,
       salesman: order.salesmanName,
+        godownName: order.godownId?.name || order.godownId?.godownName || "",
       beatName:
   order.retailerId?.beatId?.[0]?.name || "",
       route: order.routeId,
