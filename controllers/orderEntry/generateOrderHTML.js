@@ -260,13 +260,12 @@ td, th {
     <td width="15%">${data.invoiceNumber || ""}</td>
   </tr>
 
-  <tr>
-    <td class="label">Desp Adv No &amp; Date:</td>
-    <td>${data.adviceNo || ""} Dt. ${formatDate(data.adviceDate)}</td>
-    <td class="label">Lorry No :</td>
-    <td>${data.lorryNo || ""}</td>
-  </tr>
-
+ <tr> 
+  <td class="label">Desp Adv No &amp; Date:</td> 
+  <td>${data.adviceNo || ""} Dt. ${formatDate(data.adviceDate)}</td> 
+  <td class="label">Godown Name :</td> 
+  <td>${data.godownName || ""}</td> 
+</tr>
   <tr>
     <td class="label">Outlet Code :</td>
     <td>${data.retailer?.outletCode || ""}</td>
