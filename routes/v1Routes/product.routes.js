@@ -19,6 +19,9 @@ const {
   productListPaginatedForPurchaseOrder,
 } = require("../../controllers/product/productListPaginatedForPurchaseOrder.js");
 const {
+  productListPaginatedForPurchaseReturn
+} = require("../../controllers/product/productListPaginatedForPurchaseReturn.js");
+const {
   productListPaginatedForCentralPortal,
 } = require("../../controllers/product/productListPaginatedForCentralPortal.js");
 const protectAdminOrEmployeeRoute = require("../../middlewares/protectAdminOrEmployeeRoute.js");
@@ -51,6 +54,9 @@ productRoutes
 productRoutes
   .route("/dis_prod_price_paginated_list_for_purchase-order")
   .get(protectDisRoute, productListPaginatedForPurchaseOrder);
+productRoutes
+  .route("/dis_prod_price_paginated_list_for_purchase-return")
+  .get(protectDisRoute, productListPaginatedForPurchaseReturn);
 productRoutes
   .route("/dis_prod_price_paginated_list_for_central-portal")
   .get(protectAdminOrEmployeeRoute, productListPaginatedForCentralPortal);
