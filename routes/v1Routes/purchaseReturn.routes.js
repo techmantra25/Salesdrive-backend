@@ -2,6 +2,8 @@ const express = require("express");
 const {
   createPurchaseReturn,
 } = require("../../controllers/purchaseReturn.js/createPurchaseReturn");
+
+const{createPurchaseReturnNew} = require("../../controllers/purchaseOrder/Purchasereturn.controller.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const {
@@ -24,6 +26,10 @@ const purchaseReturnRoutes = express.Router();
 purchaseReturnRoutes
   .route("/create-purchase-return")
   .post(protectDisRoute, createPurchaseReturn);
+
+ purchaseReturnRoutes
+  .route("/create-purchase-return-new")
+  .post(protectDisRoute, createPurchaseReturnNew);
 purchaseReturnRoutes
   .route("/detail-purchase-return/:id")
   .get(protect, detailPurchaseReturn);
