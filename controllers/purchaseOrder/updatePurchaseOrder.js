@@ -50,11 +50,17 @@ const resolveCurrentPrice = async (
     $or: [{ expiresAt: null }, { expiresAt: { $gte: asOfDate } }],
   };
 
+  // NOTE: intentionally no `status: true` filter here. `status` only
+  // reflects whether a price doc is the *currently* active one — when a
+  // new price is created, the previous doc gets flipped to status:false
+  // even though its effective_date/expiresAt window genuinely covered
+  // earlier dates. For resolving "what price applied on this Order Date"
+  // the date window is the source of truth, not the status flag. Same
+  // approach already used in bulkCreatePurchaseOrder.js.
   let price = await Price.findOne({
     productId,
     price_type: "distributor",
     distributorId: distributor._id,
-    status: true,
     ...dateFilter,
   }).sort({ effective_date: -1 });
 
@@ -63,7 +69,6 @@ const resolveCurrentPrice = async (
       productId,
       price_type: "regional",
       regionId: distributor.regionId,
-      status: true,
       ...dateFilter,
     }).sort({ effective_date: -1 });
   }
@@ -72,7 +77,6 @@ const resolveCurrentPrice = async (
     price = await Price.findOne({
       productId,
       price_type: "national",
-      status: true,
       ...dateFilter,
     }).sort({ effective_date: -1 });
   }
@@ -101,7 +105,7 @@ const resolveIsInterState = async (purchaseOrder) => {
   };
 };
 
-const repriceLineItemsForConfirm = async (purchaseOrder) => {
+const repriceLineItemsForConfirm = async (purchaseOrder, asOfDate) => {
   const { distributor, isInterState } = await resolveIsInterState(
     purchaseOrder
   );
@@ -112,7 +116,12 @@ const repriceLineItemsForConfirm = async (purchaseOrder) => {
     return purchaseOrder.lineItems;
   }
 
-  const now = new Date();
+  // Reprice as of the PO's Order Date (manualDate) — NOT the confirm
+  // timestamp. A draft created on the 20th and confirmed on the 25th
+  // with Order Date left at the 22nd must get the price that was
+  // active on the 22nd, not whatever is active today.
+  const priceAsOfDate =
+    asOfDate || purchaseOrder.manualDate || purchaseOrder.createdAt;
 
   return Promise.all(
     purchaseOrder.lineItems.map(async (item) => {
@@ -122,11 +131,12 @@ const repriceLineItemsForConfirm = async (purchaseOrder) => {
         const currentPrice = await resolveCurrentPrice(
           plain.product,
           distributor,
-          now
+          priceAsOfDate
         );
 
-        // No active price found today — keep the originally pinned
-        // price/amounts untouched rather than failing the confirm.
+        // No active price found as of the Order Date — keep the
+        // originally pinned price/amounts untouched rather than
+        // silently falling back to today's price.
         if (!currentPrice) {
           return plain;
         }
@@ -143,10 +153,6 @@ const repriceLineItemsForConfirm = async (purchaseOrder) => {
         const orderQty = Number(plain.orderQty || 0);
         const soValue = orderQty * basicAmt;
 
-        // GST RATE comes from the product's own slabs, with the same
-        // default fallback used at PO creation time; WHICH slab applies
-        // (IGST vs CGST+SGST) was already decided above via the
-        // authoritative distributor/supplier state comparison.
         let productCgst = Number(product.cgst || 0);
         let productSgst = Number(product.sgst || 0);
         let productIgst = Number(product.igst || 0);
@@ -183,13 +189,103 @@ const repriceLineItemsForConfirm = async (purchaseOrder) => {
           netAmt: soValue + totalGST,
         };
       } catch (err) {
-        // One product's repricing failure must not block confirming the
-        // rest of the PO — fall back to its originally pinned price.
         console.error(
           `Repricing failed for product ${plain.product} on PO ${purchaseOrder.purchaseOrderNo}:`,
           err.message
         );
         return plain;
+      }
+    })
+  );
+};
+
+// ---------------------------------------------------------------------
+// Draft edit -> PO Date change repricing
+// ---------------------------------------------------------------------
+// Same idea as repriceLineItemsForConfirm, but runs off the lineItems the
+// client just submitted (with whatever qty/UOM edits were made in the
+// Edit page) instead of the previously-pinned purchaseOrder.lineItems.
+// Triggered whenever PO Date (manualDate) is edited on a Draft order, so
+// moving PO Date to 22 Aug re-resolves each product's price as of 22 Aug,
+// and moving it back to today re-resolves today's price.
+const repriceLineItemsForDate = async (purchaseOrder, lineItems, asOfDate) => {
+  const { distributor, isInterState } = await resolveIsInterState(purchaseOrder);
+
+  // Can't determine distributor OR the interstate/intrastate split —
+  // leave every line item exactly as submitted rather than guessing.
+  if (!distributor || isInterState === null) {
+    return lineItems;
+  }
+
+  return Promise.all(
+    lineItems.map(async (item) => {
+      try {
+        const currentPrice = await resolveCurrentPrice(
+          item.product,
+          distributor,
+          asOfDate
+        );
+
+        // No active price found as of the new PO Date — keep this line
+        // item's price/amounts exactly as submitted rather than silently
+        // falling back to today's price.
+        if (!currentPrice) {
+          return item;
+        }
+
+        const product = await Product.findById(item.product);
+        if (!product) {
+          return item;
+        }
+
+        const mrp = Number(currentPrice.mrp_price || 0);
+        const l1 = Number(currentPrice.L1DiscountPercentage || 0);
+        const basicAmt = mrp - (mrp * l1) / 100;
+
+        const orderQty = Number(item.orderQty || item.oderQty || 0);
+        const grossAmt = Number((orderQty * basicAmt).toFixed(2));
+
+        let productCgst = Number(product.cgst || 0);
+        let productSgst = Number(product.sgst || 0);
+        let productIgst = Number(product.igst || 0);
+
+        if (productCgst === 0 && productSgst === 0 && productIgst === 0) {
+          productCgst = 9;
+          productSgst = 9;
+          productIgst = 18;
+        }
+
+        let totalCGST = 0;
+        let totalSGST = 0;
+        let totalIGST = 0;
+
+        if (isInterState) {
+          totalIGST = (grossAmt * productIgst) / 100;
+        } else {
+          totalCGST = (grossAmt * productCgst) / 100;
+          totalSGST = (grossAmt * productSgst) / 100;
+        }
+
+        const totalGST = totalCGST + totalSGST + totalIGST;
+
+        return {
+          ...item,
+          price: currentPrice._id,
+          l1Basic: l1,
+          grossAmt,
+          taxableAmt: grossAmt,
+          totalCGST,
+          totalSGST,
+          totalIGST,
+          totalGST,
+          netAmt: Number((grossAmt + totalGST).toFixed(2)),
+        };
+      } catch (err) {
+        console.error(
+          `Repricing failed for product ${item.product} on PO ${purchaseOrder.purchaseOrderNo}:`,
+          err.message
+        );
+        return item;
       }
     })
   );
@@ -217,8 +313,58 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
       purchaseOrder.status === "Draft" && req.body.status === "Confirmed";
 
     if (isDraftBeingConfirmed && !req.body.lineItems) {
+      // Prefer the Order Date sent with this Confirm request (the user
+      // may have just changed it in the UI before hitting Confirm) over
+      // the previously stored manualDate.
+      const priceAsOfDate = req.body.manualDate
+        ? new Date(req.body.manualDate)
+        : purchaseOrder.manualDate || purchaseOrder.createdAt;
+
       const repricedLineItems = await repriceLineItemsForConfirm(
-        purchaseOrder
+        purchaseOrder,
+        priceAsOfDate
+      );
+
+      let grossAmountCalc = 0;
+      let taxableAmountCalc = 0;
+      let totalCGST = 0;
+      let totalSGST = 0;
+      let totalIGST = 0;
+      let totalGSTAmountCalc = 0;
+      let netAmountCalc = 0;
+
+      for (const item of repricedLineItems) {
+        grossAmountCalc += item.grossAmt || 0;
+        taxableAmountCalc += item.taxableAmt || 0;
+        totalCGST += item.totalCGST || 0;
+        totalSGST += item.totalSGST || 0;
+        totalIGST += item.totalIGST || 0;
+        totalGSTAmountCalc += item.totalGST || 0;
+        netAmountCalc += item.netAmt || 0;
+      }
+
+      req.body.lineItems = repricedLineItems;
+      req.body.grossAmount = grossAmountCalc;
+      req.body.taxableAmount = taxableAmountCalc;
+      req.body.cgst = totalCGST;
+      req.body.sgst = totalSGST;
+      req.body.igst = totalIGST;
+      req.body.totalGSTAmount = totalGSTAmountCalc;
+      req.body.netAmount = netAmountCalc;
+    }
+
+     // ✅ Draft edit + PO Date change: whenever the client submits a
+    // manualDate (PO Date) along with lineItems while the order is still
+    // Draft, re-resolve each line item's price as of that date.
+    if (
+      purchaseOrder.status === "Draft" &&
+      req.body.manualDate &&
+      req.body.lineItems
+    ) {
+      const repricedLineItems = await repriceLineItemsForDate(
+        purchaseOrder,
+        req.body.lineItems,
+        new Date(req.body.manualDate)
       );
 
       let grossAmountCalc = 0;
@@ -263,8 +409,7 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     } catch (error) {
       res.status(400);
       throw new Error(
-        `Error fetching config details: ${
-          error?.response?.data?.message || error.message
+        `Error fetching config details: ${error?.response?.data?.message || error.message
         }`
       );
     }
@@ -292,13 +437,13 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
       approved_by = null;
     }
 
-   if (status === "Cancelled") {
-  approvedStatus = "Not Approved";
-  approved_by = req?.user?._id || null;
+    if (status === "Cancelled") {
+      approvedStatus = "Not Approved";
+      approved_by = req?.user?._id || null;
 
-  // When PO is cancelled, invoice status should also be cancelled
-  req.body.invoicestatus = "Cancelled";
-}
+      // When PO is cancelled, invoice status should also be cancelled
+      req.body.invoicestatus = "Cancelled";
+    }
 
     req.body.approvedStatus = approvedStatus;
     req.body.approved_by = approved_by;
@@ -332,8 +477,7 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
 
       res.status(400);
       throw new Error(
-        `Error sending quotation: ${
-          error?.response?.data?.message || error.message
+        `Error sending quotation: ${error?.response?.data?.message || error.message
         }`
       );
     }
