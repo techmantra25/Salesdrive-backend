@@ -70,7 +70,11 @@ const transactionSchema = new mongoose.Schema(
       type: String,
       enum: ["salable", "unsalable", "offer", "reserve",  "intransit"],
     },
-
+  godownId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Godown",
+  index: true,
+},
     invoiceId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Invoice",
@@ -123,6 +127,7 @@ transactionSchema.index(
     type: 1,
     transactionType: 1,
   },
+
   {
     unique: true,
     sparse:true,//added sparse index so duplicate transaction could be avoided
