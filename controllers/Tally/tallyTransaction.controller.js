@@ -78,22 +78,35 @@ const calculateGSTPercentage = (taxableAmount, totalTax) => {
 
 const calculateDiscount = (lineItem, type) => {
   let discountAmount = 0;
-  let grossAmount = 0;
 
   if (type === "sales" || type === "salesReturn") {
-    discountAmount =
-      parseFloat(lineItem.schemeDisc || 0) +
-      parseFloat(lineItem.distributorDisc || 0);
-    grossAmount = parseFloat(lineItem.grossAmt || 0);
+    const grossAmount = parseFloat(lineItem.grossAmt || 0);
+    const schemeDisc = parseFloat(lineItem.schemeDisc || 0);
+
+    // distributorDisc can be a flat amount OR a percentage,
+    // depending on distributorDiscUnit — convert percent to an actual amount
+    let distributorDisc = parseFloat(lineItem.distributorDisc || 0);
+    if (lineItem.distributorDiscUnit === "percent") {
+      distributorDisc = (grossAmount * distributorDisc) / 100;
+    }
+
+    discountAmount = schemeDisc + distributorDisc;
   } else if (type === "purchase" || type === "purchaseReturn") {
-    discountAmount =
-      parseFloat(lineItem.discountAmount || 0) +
-      parseFloat(lineItem.specialDiscountAmount || 0);
-    grossAmount = parseFloat(lineItem.grossAmount || lineItem.grossAmt || 0);
+    const grossAmount = parseFloat(
+      lineItem.grossAmount || lineItem.grossAmt || 0,
+    );
+    const discAmt = parseFloat(lineItem.discountAmount || 0);
+
+    // Same possible percent/amount ambiguity on the special discount side
+    let specialDiscAmt = parseFloat(lineItem.specialDiscountAmount || 0);
+    if (lineItem.specialDiscountUnit === "percent") {
+      specialDiscAmt = (grossAmount * specialDiscAmt) / 100;
+    }
+
+    discountAmount = discAmt + specialDiscAmt;
   }
 
-  if (grossAmount <= 0) return "0.0000";
-  return ((discountAmount / grossAmount) * 100).toFixed(4);
+  return discountAmount.toFixed(2);
 };
 
 exports.generateTallyReport = async (req, res) => {
