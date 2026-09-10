@@ -1,5 +1,5 @@
 const asyncHandler = require("express-async-handler");
-const PurchaseReturn = require("../../models/purchaseReturn.model");
+const PurchaseReturn = require("../../models/PurchasereturnNew.model");
 
 const detailPurchaseReturn = asyncHandler(async (req, res) => {
   try {
@@ -9,35 +9,19 @@ const detailPurchaseReturn = asyncHandler(async (req, res) => {
       throw new Error("Purchase return ID is required");
     }
 
+    // Only populate paths that actually exist on the PurchaseReturnNew
+    // schema. The old model had invoiceId / lineItems.product /
+    // lineItems.plant — none of those exist here anymore, and populating
+    // a path that isn't in the schema throws (strictPopulate), which was
+    // being swallowed by the catch block below and surfacing as a
+    // misleading "not found".
     const purchaseReturn = await PurchaseReturn.findById(id).populate([
       { path: "distributorId", select: "" },
-      { path: "invoiceId", select: "" },
       { path: "godownId", select: "" },
       {
-        path: "lineItems.product",
+        path: "lineItems.productId",
         model: "Product",
         select: "",
-      },
-      {
-        path: "lineItems.plant",
-        model: "Plant",
-        select: "",
-      },
-      {
-        path: "invoiceId",
-        populate: [
-          {
-            path: "purchaseReturnIds",
-            populate: {
-              path: "lineItems.product",
-              model: "Product",
-              select: "",
-            },
-          },
-          {
-            path: "GRNLogId",
-          },
-        ],
       },
     ]);
 
@@ -52,7 +36,11 @@ const detailPurchaseReturn = asyncHandler(async (req, res) => {
       data: purchaseReturn,
     });
   } catch (error) {
-    res.status(400);
+    // Preserve whatever status was already set (400/404) instead of
+    // always forcing 400, so the frontend gets an accurate status code.
+    if (!res.statusCode || res.statusCode === 200) {
+      res.status(400);
+    }
     throw error;
   }
 });

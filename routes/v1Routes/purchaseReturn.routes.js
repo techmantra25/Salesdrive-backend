@@ -4,6 +4,7 @@ const {
 } = require("../../controllers/purchaseReturn.js/createPurchaseReturn");
 
 const{createPurchaseReturnNew} = require("../../controllers/purchaseOrder/Purchasereturn.controller.js");
+const {PaginatedPurchaseReturnNew} = require("../../controllers/purchaseOrder/PaginatedPurchaseReturnNew.js");
 const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 const { protect } = require("../../middlewares/auth.middleware.js");
 const {
@@ -30,6 +31,10 @@ purchaseReturnRoutes
  purchaseReturnRoutes
   .route("/create-purchase-return-new")
   .post(protectDisRoute, createPurchaseReturnNew);
+
+  purchaseReturnRoutes
+  .route("/paginated-purchase-return-new")
+  .get(protectDisRoute, PaginatedPurchaseReturnNew);
 purchaseReturnRoutes
   .route("/detail-purchase-return/:id")
   .get(protect, detailPurchaseReturn);

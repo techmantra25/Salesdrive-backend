@@ -13,6 +13,48 @@ const purchaseReturnLineItemSchema = new Schema(
       required: true,
       min: 1,
     },
+
+    // --- Pricing snapshot (server-recomputed at save time, never trusted
+    // verbatim from the client) ---
+    mrp: {
+      type: Number,
+      default: 0,
+    },
+    l1BasicPercent: {
+      type: Number,
+      default: 0,
+    },
+    basicRate: {
+      // Per-unit rate after L1 discount, i.e. mrp - (mrp * l1BasicPercent / 100)
+      type: Number,
+      default: 0,
+    },
+    taxableAmount: {
+      // basicRate * returnQty, rounded to 2 decimals
+      type: Number,
+      default: 0,
+    },
+    cgstPercent: {
+      type: Number,
+      default: 0,
+    },
+    sgstPercent: {
+      type: Number,
+      default: 0,
+    },
+    igstPercent: {
+      type: Number,
+      default: 0,
+    },
+    gstAmount: {
+      type: Number,
+      default: 0,
+    },
+    netAmount: {
+      // taxableAmount + gstAmount
+      type: Number,
+      default: 0,
+    },
   },
   { _id: false }
 );
@@ -43,6 +85,13 @@ const purchaseReturnSchema = new Schema(
       default: Date.now,
     },
 
+    // Whether IGST applies to this return (vs CGST+SGST). Drives which
+    // gst percent is used when computing gstAmount per line item.
+    isIGST: {
+      type: Boolean,
+      default: false,
+    },
+
     lineItems: {
       type: [purchaseReturnLineItemSchema],
       required: true,
@@ -50,6 +99,24 @@ const purchaseReturnSchema = new Schema(
         validator: (arr) => Array.isArray(arr) && arr.length > 0,
         message: "At least one line item is required",
       },
+    },
+
+    // --- Totals (server-recomputed sum of lineItems, not trusted from client) ---
+    totalQty: {
+      type: Number,
+      default: 0,
+    },
+    totalTaxableAmount: {
+      type: Number,
+      default: 0,
+    },
+    totalGstAmount: {
+      type: Number,
+      default: 0,
+    },
+    totalAmount: {
+      type: Number,
+      default: 0,
     },
 
     // "Draft" = saved only, no stock movement.

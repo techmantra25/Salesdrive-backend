@@ -14,9 +14,13 @@ const generatePurchaseReturnCode = async (distributorId, session) => {
   return `PR-${String(nextNumber).padStart(6, "0")}`;
 };
 
+// Round to 2 decimals, safely handling non-numeric input.
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 const createPurchaseReturnNew = asyncHandler(async (req, res) => {
   const distributorId = req?.user?._id;
-  const { godownId, returnDate, lineItems, status, returnRemark } = req.body;
+  const { godownId, returnDate, lineItems, status, returnRemark, isIGST } =
+    req.body;
 
   // ---- Basic validation ----
   if (!distributorId) {
@@ -48,10 +52,69 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
     );
   }
 
-  const normalizedLineItems = lineItems.map((item) => ({
-    productId: item.productId,
-    returnQty: Number(item.returnQty),
-  }));
+  // ---- Recompute every money field server-side ----
+  // We only trust returnQty, mrp, l1BasicPercent, basicRate, and the gst
+  // percents coming from the client. taxableAmount / gstAmount / netAmount
+  // (and the header-level totals below) are always derived here, mirroring
+  // the pattern used in createSingleBill.js — never trust totals from req.body.
+  const normalizedLineItems = lineItems.map((item) => {
+    const returnQty = Number(item.returnQty);
+    const mrp = Number(item.mrp) || 0;
+    const l1BasicPercent = Number(item.l1BasicPercent) || 0;
+
+    // basicRate can be sent directly (frontend already computes it the same
+    // way), but if it's missing/invalid we fall back to deriving it from
+    // mrp + l1BasicPercent so a bad/absent value can't zero out the return.
+    let basicRate = Number(item.basicRate);
+    if (!Number.isFinite(basicRate) || basicRate < 0) {
+      const discount = (mrp * l1BasicPercent) / 100;
+      basicRate = Math.max(0, mrp - discount);
+    }
+    basicRate = round2(basicRate);
+
+    const cgstPercent = Number(item.cgstPercent) || 0;
+    const sgstPercent = Number(item.sgstPercent) || 0;
+    const igstPercent = Number(item.igstPercent) || 0;
+
+    const taxableAmount = round2(basicRate * returnQty);
+
+    const gstPercent = isIGST ? igstPercent : cgstPercent + sgstPercent;
+    const gstAmount = round2((taxableAmount * gstPercent) / 100);
+    const netAmount = round2(taxableAmount + gstAmount);
+
+    return {
+      productId: item.productId,
+      returnQty,
+      mrp,
+      l1BasicPercent,
+      basicRate,
+      taxableAmount,
+      cgstPercent,
+      sgstPercent,
+      igstPercent,
+      gstAmount,
+      netAmount,
+    };
+  });
+
+  // ---- Header-level totals, summed from the recomputed line items ----
+  const rawTotals = normalizedLineItems.reduce(
+    (acc, item) => {
+      acc.totalQty += item.returnQty;
+      acc.totalTaxableAmount += item.taxableAmount;
+      acc.totalGstAmount += item.gstAmount;
+      acc.totalAmount += item.netAmount;
+      return acc;
+    },
+    { totalQty: 0, totalTaxableAmount: 0, totalGstAmount: 0, totalAmount: 0 }
+  );
+
+  const totals = {
+    totalQty: rawTotals.totalQty,
+    totalTaxableAmount: round2(rawTotals.totalTaxableAmount),
+    totalGstAmount: round2(rawTotals.totalGstAmount),
+    totalAmount: round2(rawTotals.totalAmount),
+  };
 
   const session = await mongoose.startSession();
 
@@ -144,7 +207,12 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
           distributorId,
           godownId,
           returnDate: returnDate || Date.now(),
+          isIGST: !!isIGST,
           lineItems: normalizedLineItems,
+          totalQty: totals.totalQty,
+          totalTaxableAmount: totals.totalTaxableAmount,
+          totalGstAmount: totals.totalGstAmount,
+          totalAmount: totals.totalAmount,
           status: finalStatus,
           returnRemark: (returnRemark || "").trim(),
         },
