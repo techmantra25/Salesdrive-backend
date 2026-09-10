@@ -159,7 +159,7 @@ const adjustSingleLineItem = async (
 
   // Validate inventory
   const inventory = await Inventory.findById(invId).select(
-    "reservedQty availableQty",
+    "reservedQty availableQty godownId",
   );
   if (!inventory) throw new AdjustmentError("Inventory not found", true);
 
@@ -195,6 +195,7 @@ const adjustSingleLineItem = async (
     transactionId: txnId,
     type: "Out",
     transactionType: "delivery",
+    godownId: inventory.godownId,
     stockType: "salable",
     description: `Delivered against Bill ${billNo}`,
   };
