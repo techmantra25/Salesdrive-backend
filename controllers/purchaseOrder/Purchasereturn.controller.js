@@ -244,4 +244,150 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
   }
 });
 
-module.exports = { createPurchaseReturnNew };
+// ---- Confirm an existing Draft: Draft -> Returned + stock deduction ----
+// Route: PATCH /confirm-purchase-return-new/:purchaseReturnId
+const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
+  const distributorId = req?.user?._id;
+  const { purchaseReturnId } = req.params;
+
+  // ---- Basic validation ----
+  if (!distributorId) {
+    res.status(401);
+    throw new Error("Unauthorized");
+  }
+
+  if (!purchaseReturnId || !mongoose.Types.ObjectId.isValid(purchaseReturnId)) {
+    res.status(400);
+    throw new Error("Invalid purchase return id");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+
+    // ---- Find the return, scoped to this distributor ----
+    const purchaseReturn = await PurchaseReturnNew.findOne({
+      _id: purchaseReturnId,
+      distributorId,
+    }).session(session);
+
+    if (!purchaseReturn) {
+      res.status(404);
+      throw new Error("Purchase return not found");
+    }
+
+    if (purchaseReturn.status !== "Draft") {
+      res.status(400);
+      throw new Error(
+        `Purchase return is already "${purchaseReturn.status}" and cannot be confirmed again`
+      );
+    }
+
+    const lineItems = purchaseReturn.lineItems || [];
+    const godownId = purchaseReturn.godownId;
+
+    if (lineItems.length === 0) {
+      res.status(400);
+      throw new Error("Purchase return has no line items to confirm");
+    }
+
+    // ---- Validate stock availability BEFORE touching anything, so we
+    // never partially deduct. ----
+    const productIds = lineItems.map((item) => item.productId);
+
+    const inventoryDocs = await Inventory.find({
+      productId: { $in: productIds },
+      godownId: godownId,
+      distributorId: distributorId,
+    }).session(session);
+
+    const inventoryByProduct = {};
+    inventoryDocs.forEach((inv) => {
+      inventoryByProduct[inv.productId.toString()] = inv;
+    });
+
+    const insufficientItems = [];
+
+    for (const item of lineItems) {
+      const inv = inventoryByProduct[item.productId.toString()];
+      const availableQty = inv?.availableQty || 0;
+
+      if (!inv || availableQty < item.returnQty) {
+        const product = await Product.findById(item.productId)
+          .select("product_code name")
+          .session(session);
+        insufficientItems.push({
+          productId: item.productId,
+          product_code: product?.product_code || item.productId,
+          name: product?.name || "",
+          availableQty,
+          requestedReturnQty: item.returnQty,
+        });
+      }
+    }
+
+    if (insufficientItems.length > 0) {
+      res.status(400);
+      throw new Error(
+        `Insufficient stock in the selected godown for: ${insufficientItems
+          .map(
+            (i) =>
+              `${i.product_code} (available: ${i.availableQty}, requested: ${i.requestedReturnQty})`
+          )
+          .join(", ")}`
+      );
+    }
+
+    // ---- Deduct stock for each product in this godown ----
+    for (const item of lineItems) {
+      const updated = await Inventory.findOneAndUpdate(
+        {
+          productId: item.productId,
+          godownId: godownId,
+          distributorId: distributorId,
+          availableQty: { $gte: item.returnQty }, // guards against race conditions
+        },
+        {
+          $inc: {
+            availableQty: -item.returnQty,
+            totalQty: -item.returnQty,
+          },
+        },
+        { new: true, session }
+      );
+
+      if (!updated) {
+        // Someone else modified stock between our check and this update
+        res.status(409);
+        throw new Error(
+          `Stock for product ${item.productId} changed before the return could be confirmed. Please retry.`
+        );
+      }
+    }
+
+
+    purchaseReturn.status = "Returned";
+    purchaseReturn.createdAt = new Date();
+    await purchaseReturn.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.status(200).json({
+      status: 200,
+      message: "Purchase return confirmed and stock updated successfully",
+      data: purchaseReturn,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+
+    if (!res.statusCode || res.statusCode === 200) {
+      res.status(400);
+    }
+    throw error;
+  }
+});
+
+module.exports = { createPurchaseReturnNew, confirmPurchaseReturnNew };
