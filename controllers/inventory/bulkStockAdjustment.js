@@ -7,6 +7,7 @@ const fs = require("fs");
 const { promises: fsPromises } = require("fs");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
+const Godown = require("../../models/godown.model");
 const Transaction = require("../../models/transaction.model");
 const Distributor = require("../../models/distributor.model"); // **NEW: Added distributor import**
 const DistributorTransaction = require("../../models/distributorTransaction.model"); // **NEW: Added DistributorTransaction import**
@@ -59,6 +60,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                 "Qty In Pcs",
                 "Remarks",
                 "Stock Type",
+                "Godown Code",
               ],
               skipLines: 1,
             }),
@@ -69,9 +71,18 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
               await Promise.all(
                 results.map(async (row, index) => {
                   const productCode = row["Product code"].trim();
+                  const godownCode = row["Godown Code"]?.trim();
                   const qty = parseInt(row["Qty In Pcs"], 10);
                   const adjustmentType = row["Adjustment"].trim().toLowerCase();
                   const stockType = row["Stock Type"].trim().toLowerCase();
+
+                  if (!godownCode) {
+                    skippedRows.push({
+                      row: index + 1,
+                      reason: `Godown code is required for Product code: ${productCode}`,
+                    });
+                    return;
+                  }
 
                   if (isNaN(qty) || qty <= 0) {
                     skippedRows.push({
@@ -105,6 +116,28 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     skippedRows.push({
                       row: index + 1,
                       reason: `Product with code ${productCode} not found`,
+                    });
+                    return;
+                  }
+
+                  // Resolve godown by code, scoped to this distributor
+                  const godown = await Godown.findOne({
+                    godownCode,
+                    distributorId,
+                  });
+
+                  if (!godown) {
+                    skippedRows.push({
+                      row: index + 1,
+                      reason: `Godown with code ${godownCode} not found for this distributor`,
+                    });
+                    return;
+                  }
+
+                  if (!godown.isActive) {
+                    skippedRows.push({
+                      row: index + 1,
+                      reason: `Godown with code ${godownCode} is inactive`,
                     });
                     return;
                   }
@@ -160,6 +193,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
 
                     processedProducts.push({
                       productCode,
+                      godownCode,
                       adjustmentType,
                       qty,
                       basePoint,
@@ -170,22 +204,22 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                   let inventory = await Inventory.findOne({
                     productId: product._id,
                     distributorId,
+                    godownId: godown._id,
                   });
 
                   if (!inventory) {
                     skippedRows.push({
                       row: index + 1,
-                      reason: `Inventory not found for Product code: ${productCode}`,
+                      reason: `Inventory not found for Product code: ${productCode} in Godown: ${godownCode}`,
                     });
                     return;
                   }
 
                   // Adjust quantities and stock amounts based on the adjustment type and stock type
 
-
                   if (adjustmentType === "reduce") {
                     let currentStock;
-                    
+
                     if (stockType === "salable") {
                       currentStock = inventory.availableQty || 0;
                     } else if (stockType === "unsalable") {
@@ -193,11 +227,11 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     } else if (stockType === "offer") {
                       currentStock = inventory.offerQty || 0;
                     }
-                    
+
                     if (currentStock < qty) {
                       skippedRows.push({
                         row: index + 1,
-                        reason: `Insufficient ${stockType} stock for Product code: ${productCode}. Available: ${currentStock}, Requested: ${qty}`,
+                        reason: `Insufficient ${stockType} stock for Product code: ${productCode} in Godown: ${godownCode}. Available: ${currentStock}, Requested: ${qty}`,
                       });
                       return;
                     }
@@ -264,6 +298,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     transactionId: stockId,
                     invItemId: inventory._id,
                     productId: product._id,
+                    godownId: godown._id,
                     qty,
                     date: new Date(),
                     type: adjustmentType === "add" ? "In" : "Out",
@@ -400,6 +435,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                   totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
                   processedProducts: processedProducts.map((product) => ({
                     productCode: product.productCode,
+                    godownCode: product.godownCode,
                     adjustmentType: product.adjustmentType,
                     qty: product.qty,
                     basePoint: product.basePoint,
