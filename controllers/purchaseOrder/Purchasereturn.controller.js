@@ -3,6 +3,7 @@ const asyncHandler = require("express-async-handler");
 const PurchaseReturnNew = require("../../models/PurchasereturnNew.model");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
+const Transaction = require("../../models/transaction.model");
 
 // Generates a simple sequential code per distributor, e.g. PR-000123
 // Adjust prefix/format to match whatever convention the rest of the app uses.
@@ -12,6 +13,22 @@ const generatePurchaseReturnCode = async (distributorId, session) => {
   );
   const nextNumber = count + 1;
   return `PR-${String(nextNumber).padStart(6, "0")}`;
+};
+
+// ---- ASSUMPTION: transactionId generator ----
+// No existing shared ID-generator was provided, so this mirrors the same
+// "count + 1" sequential pattern already used by generatePurchaseReturnCode
+// above, applied globally across the Transaction collection (matching the
+// sample transactionId format "LXSTA-399" you shared, which does not appear
+// to be scoped to a single distributor or product).
+// If the codebase already has a dedicated counter/sequence utility used by
+// other transaction-creating flows (godown transfer, bill delivery, etc.),
+// replace this with that instead — two independent counters can drift or
+// collide.
+const generateTransactionId = async (session) => {
+  const count = await Transaction.countDocuments({}).session(session);
+  const nextNumber = count + 1;
+  return `LXSTA-${nextNumber}`;
 };
 
 // Round to 2 decimals, safely handling non-numeric input.
@@ -169,7 +186,11 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
         );
       }
 
-      // ---- Deduct stock for each product in this godown ----
+      // ---- Deduct stock for each product in this godown, and record a
+      // matching "Out" Transaction for each deduction so stock ledger /
+      // Tally-style reports can trace this movement back to the return. ----
+      const returnDateValue = returnDate ? new Date(returnDate) : new Date();
+
       for (const item of normalizedLineItems) {
         const updated = await Inventory.findOneAndUpdate(
           {
@@ -194,6 +215,37 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
             `Stock for product ${item.productId} changed before the return could be saved. Please retry.`
           );
         }
+
+        const transactionId = await generateTransactionId(session);
+
+        await Transaction.create(
+          [
+            {
+              distributorId,
+              productId: item.productId,
+              transactionId,
+              invItemId: updated._id,
+              billId: null,
+              qty: item.returnQty,
+              date: returnDateValue,
+              type: "Out",
+              // ASSUMPTION: post-deduction available balance in this godown.
+              balanceCount: updated.availableQty,
+              description: `Purchase return — stock deducted`,
+              transactionType: "purchasereturn",
+              // ASSUMPTION: purchase returns move salable stock. Adjust if
+              // this should vary by stockType passed from the request.
+              stockType: "salable",
+              godownId,
+              dates: {
+                deliveryDate: null,
+                originalDeliveryDate: null,
+              },
+              enabledBackDate: false,
+            },
+          ],
+          { session }
+        );
       }
     }
 
@@ -339,7 +391,12 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
       );
     }
 
-    // ---- Deduct stock for each product in this godown ----
+    // ---- Deduct stock for each product in this godown, and record a
+    // matching "Out" Transaction for each deduction. ----
+    const returnDateValue = purchaseReturn.returnDate
+      ? new Date(purchaseReturn.returnDate)
+      : new Date();
+
     for (const item of lineItems) {
       const updated = await Inventory.findOneAndUpdate(
         {
@@ -364,8 +421,38 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
           `Stock for product ${item.productId} changed before the return could be confirmed. Please retry.`
         );
       }
-    }
 
+      const transactionId = await generateTransactionId(session);
+
+      await Transaction.create(
+        [
+          {
+            distributorId,
+            productId: item.productId,
+            transactionId,
+            invItemId: updated._id,
+            billId: null,
+            qty: item.returnQty,
+            date: returnDateValue,
+            type: "Out",
+            // ASSUMPTION: post-deduction available balance in this godown.
+            balanceCount: updated.availableQty,
+            description: `Purchase return ${purchaseReturn.code} confirmed — stock deducted`,
+            transactionType: "purchasereturn",
+            // ASSUMPTION: purchase returns move salable stock. Adjust if
+            // this should vary by stockType stored on the return itself.
+            stockType: "salable",
+            godownId,
+            dates: {
+              deliveryDate: null,
+              originalDeliveryDate: null,
+            },
+            enabledBackDate: false,
+          },
+        ],
+        { session }
+      );
+    }
 
     purchaseReturn.status = "Returned";
     purchaseReturn.createdAt = new Date();
