@@ -76,37 +76,60 @@ const calculateGSTPercentage = (taxableAmount, totalTax) => {
   }
 };
 
-const calculateDiscount = (lineItem, type) => {
-  let discountAmount = 0;
-
+/**
+ * Helper function to calculate the LINE-ITEM discount PERCENTAGE for the
+ * Tally report's "Discount" column.
+ *
+ * IMPORTANT: `distributorDisc` on sales / salesReturn line items is stored
+ * as a plain PERCENTAGE (e.g. 5, 10) whenever `distributorDiscUnit ===
+ * "percent"`, and as a RUPEE AMOUNT whenever `distributorDiscUnit ===
+ * "amount"`. `schemeDisc` has no unit field and is always a percentage.
+ *
+ * The old implementation summed distributorDisc (already a %) with
+ * schemeDisc and then divided that sum by grossAmt again, which produced
+ * a meaningless number whenever distributorDiscUnit was "percent" (the
+ * normal case). This version branches on the unit so the column always
+ * shows a clean, correct percentage.
+ *
+ * For purchase / purchaseReturn, the schema has no percent field at all —
+ * only rupee amounts (discountAmount, specialDiscountAmount) — so those
+ * are still converted to a percentage of grossAmount, same as before.
+ */
+const calculateDiscountPercentage = (lineItem, type) => {
   if (type === "sales" || type === "salesReturn") {
     const grossAmount = parseFloat(lineItem.grossAmt || 0);
-    const schemeDisc = parseFloat(lineItem.schemeDisc || 0);
 
-    // distributorDisc can be a flat amount OR a percentage,
-    // depending on distributorDiscUnit — convert percent to an actual amount
-    let distributorDisc = parseFloat(lineItem.distributorDisc || 0);
-    if (lineItem.distributorDiscUnit === "percent") {
-      distributorDisc = (grossAmount * distributorDisc) / 100;
-    }
+    // schemeDisc has no unit flag in the schema — always a percentage.
+    const schemeDiscPercent = parseFloat(lineItem.schemeDisc || 0);
 
-    discountAmount = schemeDisc + distributorDisc;
-  } else if (type === "purchase" || type === "purchaseReturn") {
+    const distDiscRaw = parseFloat(lineItem.distributorDisc || 0);
+    const distDiscUnit = lineItem.distributorDiscUnit || "percent";
+
+    // Only convert to % when it was actually stored as a rupee amount.
+    const distDiscPercent =
+      distDiscUnit === "amount"
+        ? grossAmount > 0
+          ? (distDiscRaw / grossAmount) * 100
+          : 0
+        : distDiscRaw; // already a percentage
+
+    return (schemeDiscPercent + distDiscPercent).toFixed(2);
+  }
+
+  if (type === "purchase" || type === "purchaseReturn") {
     const grossAmount = parseFloat(
       lineItem.grossAmount || lineItem.grossAmt || 0,
     );
-    const discAmt = parseFloat(lineItem.discountAmount || 0);
+    const discountAmount =
+      parseFloat(lineItem.discountAmount || 0) +
+      parseFloat(lineItem.specialDiscountAmount || 0);
 
-    // Same possible percent/amount ambiguity on the special discount side
-    let specialDiscAmt = parseFloat(lineItem.specialDiscountAmount || 0);
-    if (lineItem.specialDiscountUnit === "percent") {
-      specialDiscAmt = (grossAmount * specialDiscAmt) / 100;
-    }
-
-    discountAmount = discAmt + specialDiscAmt;
+    return grossAmount > 0
+      ? ((discountAmount / grossAmount) * 100).toFixed(2)
+      : "0.00";
   }
 
-  return discountAmount.toFixed(2);
+  return "0.00";
 };
 
 exports.generateTallyReport = async (req, res) => {
@@ -173,7 +196,10 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < bill.lineItems.length; index++) {
           const lineItem = bill.lineItems[index];
 
-          const discount = calculateDiscount(lineItem, "sales");
+          const discountPercentage = calculateDiscountPercentage(
+            lineItem,
+            "sales",
+          );
 
           // const roundOff = index === 0 ? bill.roundOffAmount || 0 : 0;
           // Calculate GST percentage
@@ -214,7 +240,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.totalSGST),
             igst: formatCurrency(lineItem.totalIGST),
             taxAmount: formatCurrency(totalTax),
-            discount: formatCurrency(discount),
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmt),
             netAmount: formatCurrency(lineItem.netAmt),
           });
@@ -246,7 +272,10 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < salesReturn.lineItems.length; index++) {
           const lineItem = salesReturn.lineItems[index];
 
-          const discount = calculateDiscount(lineItem, "salesReturn");
+          const discountPercentage = calculateDiscountPercentage(
+            lineItem,
+            "salesReturn",
+          );
           const roundOff = index === 0 ? salesReturn.roundOffAmount || 0 : 0;
           // Calculate GST percentage
           const taxableAmount = parseFloat(lineItem.grossAmt || 0);
@@ -286,7 +315,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.totalSGST),
             igst: formatCurrency(lineItem.totalIGST),
             taxAmount: formatCurrency(totalTax),
-            discount: formatCurrency(discount),
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmt),
             netAmount: formatCurrency(lineItem.netAmt),
           });
@@ -309,7 +338,10 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < invoice.lineItems.length; index++) {
           const lineItem = invoice.lineItems[index];
 
-          const discount = calculateDiscount(lineItem, "purchase");
+          const discountPercentage = calculateDiscountPercentage(
+            lineItem,
+            "purchase",
+          );
           const roundOff = index === 0 ? invoice.roundOff || 0 : 0;
           // Calculate GST percentage
           const taxableAmount = parseFloat(lineItem.grossAmount || 0);
@@ -348,7 +380,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.sgst),
             igst: formatCurrency(lineItem.igst),
             taxAmount: formatCurrency(totalTax),
-            discount: formatCurrency(discount),
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmount),
             netAmount: formatCurrency(lineItem.netAmount),
           });
@@ -388,7 +420,10 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < purchaseReturn.lineItems.length; index++) {
           const lineItem = purchaseReturn.lineItems[index];
 
-          const discount = calculateDiscount(lineItem, "purchaseReturn");
+          const discountPercentage = calculateDiscountPercentage(
+            lineItem,
+            "purchaseReturn",
+          );
           const roundOff = index === 0 ? purchaseReturn.roundOff || 0 : 0;
           // Calculate GST percentage
           const taxableAmount = parseFloat(lineItem.grossAmt || 0);
@@ -427,7 +462,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.sgst),
             igst: formatCurrency(lineItem.igst),
             taxAmount: formatCurrency(totalTax),
-            discount: formatCurrency(discount),
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmt),
             netAmount: formatCurrency(lineItem.netAmt),
           });
@@ -499,7 +534,7 @@ const generateExcelReport = async (reportData, distributorId) => {
     { header: "Qty", key: "qty", width: 10 },
     { header: "Unit Price", key: "price", width: 12 },
     { header: "Item Value", key: "grossAmount", width: 15 },
-    { header: "Discount", key: "discount", width: 12 },
+    { header: "Discount %", key: "discount", width: 12 },
     { header: "Taxable Amount", key: "taxableAmount", width: 15 },
     { header: "CGST", key: "cgst", width: 12 },
     { header: "SGST", key: "sgst", width: 12 },
@@ -530,7 +565,9 @@ const generateExcelReport = async (reportData, distributorId) => {
       row.font = { size: 10, name: "Arial" };
       row.alignment = { vertical: "middle" };
 
-      // Format numeric columns
+      // Format numeric (currency) columns — "discount" intentionally
+      // excluded here since it's a percentage, not a rupee amount; it's
+      // formatted separately below alongside the GST % column.
       [
         "qty",
         "price",
@@ -551,6 +588,11 @@ const generateExcelReport = async (reportData, distributorId) => {
       const gstCell = row.getCell("gst");
       gstCell.numFmt = "0.00";
       gstCell.alignment = { vertical: "middle", horizontal: "right" };
+
+      // Format Discount percentage column
+      const discountCell = row.getCell("discount");
+      discountCell.numFmt = "0.00";
+      discountCell.alignment = { vertical: "middle", horizontal: "right" };
 
       // Center align specific columns
       ["transactionType", "uom"].forEach((key) => {
