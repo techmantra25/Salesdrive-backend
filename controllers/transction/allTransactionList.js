@@ -21,7 +21,8 @@ const allTransactionList = asyncHandler(async (req, res) => {
       fromDate,
       transactionFor,
       productId,
-      partyIds, // NEW: comma-separated list. "self" = the distributor, or a retailer (OutletApproved) _id
+      partyIds, // comma-separated list. "self" = the distributor, or a retailer (OutletApproved) _id
+      godownId, // NEW — filter transactions by godown
     } = req.query;
 
     const pageNum = parseInt(page);
@@ -35,6 +36,21 @@ const allTransactionList = asyncHandler(async (req, res) => {
 
     if (req.query.invoiceId) {
       matchStage.invoiceId = req.query.invoiceId;
+    }
+
+    // NEW — Godown filter. Only applied when a real id is sent (frontend
+    // sends nothing when "All Godowns" is selected, but guard against
+    // "all"/"default" sentinel values reaching here too, and against an
+    // invalid id blowing up the ObjectId cast).
+    if (godownId && godownId !== "all" && godownId !== "default") {
+      if (mongoose.Types.ObjectId.isValid(godownId)) {
+        matchStage.godownId = new mongoose.Types.ObjectId(godownId);
+      } else {
+        return res.status(400).json({
+          status: 400,
+          message: `Invalid godownId "${godownId}"`,
+        });
+      }
     }
 
     // Accept timezone from client or default to Asia/Kolkata
@@ -85,7 +101,7 @@ const allTransactionList = asyncHandler(async (req, res) => {
     }
 
     // ---------------------------------------------------------------------
-    // NEW: Party filter
+    // Party filter
     // A "party" is either:
     //  - "self"      -> the logged-in distributor (relevant to "invoice" rows,
     //                    where stock comes IN from the distributor's own account)
@@ -194,6 +210,11 @@ const allTransactionList = asyncHandler(async (req, res) => {
         model: "Distributor",
       })
       .populate({
+        path: "godownId", // NEW — resolve godown name/code for the table
+        model: "Godown",
+        select: "godownName godownCode",
+      })
+      .populate({
         path: "billId",
         model: "Bill",
         populate: {
@@ -208,10 +229,12 @@ const allTransactionList = asyncHandler(async (req, res) => {
       .lean();
 
     // ---------------------------------------------------------------------
-    // NEW: attach a normalized `party` object to every row for the frontend.
+    // Attach normalized `party` and `godown` objects to every row for the
+    // frontend table.
     //  - invoice rows                          -> party = the distributor (self)
     //  - delivery / salesreturn / purchasereturn rows with a bill -> party = retailer
     //  - everything else (stockadjustment, godowntransfer, opening stock) -> null
+    //  - godown -> whichever godown is populated on the row (NEW), null if none
     // ---------------------------------------------------------------------
     const transactionsWithParty = transactionData.map((txn) => {
       let party = null;
@@ -237,7 +260,18 @@ const allTransactionList = asyncHandler(async (req, res) => {
         };
       }
 
-      return { ...txn, party };
+      // NEW — normalized godown object, mirrors the `party` pattern above so
+      // the frontend can read txn.godown?.name directly instead of reaching
+      // into txn.godownId (which is now a populated doc, not just an id).
+      const godown = txn.godownId
+        ? {
+            id: txn.godownId._id,
+            name: txn.godownId.godownName,
+            code: txn.godownId.godownCode,
+          }
+        : null;
+
+      return { ...txn, party, godown };
     });
 
     // Total filtered count
@@ -270,7 +304,7 @@ const allTransactionList = asyncHandler(async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// NEW: options endpoint that backs the searchable multi-select "Party" filter
+// options endpoint that backs the searchable multi-select "Party" filter
 // on the frontend. Register this as a route, e.g.:
 //   router.get("/party-options", protect, searchPartyOptions);
 // ---------------------------------------------------------------------------
