@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 const Distributor = require("../../models/distributor.model");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
+const Godown = require("../../models/godown.model");
 const { generateCodesInBatch } = require("../../utils/codeGenerator");
 const { releaseLock, acquireLock } = require("../../models/lock.model");
 const notificationQueue = require("../../queues/notificationQueue");
@@ -17,10 +18,14 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
   try {
     const distributorId = req.user?._id;
 
-    // Fetch distributor and inventory in parallel
-    const [distributor, inventoryItems] = await Promise.all([
+    // Fetch distributor, godowns and existing inventory in parallel
+    const [distributor, godowns, inventoryItems] = await Promise.all([
       Distributor.findById(distributorId),
-      Inventory.find({ distributorId }, { productId: 1, _id: 0 }),
+      Godown.find({ distributorId, isActive: true }),
+      Inventory.find(
+        { distributorId },
+        { productId: 1, godownId: 1, _id: 0 }
+      ),
     ]);
 
     if (!distributor) {
@@ -31,11 +36,6 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
         message: "Distributor does not have an opening stock uploaded",
       });
     }
-    // if (!inventoryItems || !inventoryItems.length) {
-    //   return res
-    //     .status(404)
-    //     .json({ message: "No inventory items found for the distributor" });
-    // }
 
     const brandIds = distributor.brandId || [];
     if (!brandIds.length) {
@@ -44,16 +44,48 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
         .json({ message: "No brands associated with the distributor" });
     }
 
-    const productIds = inventoryItems.map((inv) => inv.productId);
+    if (!godowns.length) {
+      return res
+        .status(400)
+        .json({ message: "No godowns found for the distributor" });
+    }
 
-    // Find products to add
-    const productsToAdd = await Product.find({
-      _id: { $nin: productIds },
+    // All products the distributor is entitled to stock, per brand mapping
+    const productsMaster = await Product.find({
       brand: { $in: brandIds },
       status: true,
     });
 
-    if (!productsToAdd.length) {
+    if (!productsMaster.length) {
+      return res.status(200).json({
+        message: "Inventory is already in sync with product master",
+        data: 0,
+      });
+    }
+
+    // ---- Per-(product, godown) existence check ----
+    // A product can be missing from one godown while already present in
+    // another (e.g. godown A already has it, newly added godown B does
+    // not), so we key existing inventory by productId+godownId rather
+    // than productId alone.
+    const existingPairs = new Set(
+      inventoryItems.map(
+        (inv) => `${inv.productId}-${inv.godownId}`
+      )
+    );
+
+    // Build the list of missing (product, godown) combinations
+    const missingPairs = [];
+    for (const godown of godowns) {
+      for (const product of productsMaster) {
+        const key = `${product._id}-${godown._id}`;
+        if (!existingPairs.has(key)) {
+          missingPairs.push({ product, godown });
+        }
+      }
+    }
+
+    if (!missingPairs.length) {
       return res.status(200).json({
         message: "Inventory is already in sync with product master",
         data: 0,
@@ -63,17 +95,18 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
     // Generate all inventory IDs in batch
     const inventoryItemIds = await generateCodesInBatch(
       "INVT",
-      productsToAdd.length
+      missingPairs.length
     );
 
     // Prepare bulkWrite operations
-    const bulkOps = productsToAdd.map((product, index) => ({
+    const bulkOps = missingPairs.map(({ product, godown }, index) => ({
       insertOne: {
         document: {
           productId: product._id,
           distributorId,
           invitemId: inventoryItemIds[index],
-          godownType: "main",
+          godownId: godown._id,
+          godownType: godown.godownType,
           availableQty: 0,
           unsalableQty: 0,
           offerQty: 0,
@@ -108,13 +141,13 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
     }
 
     // 🔔 Send notification to distributor about inventory sync
-    const notificationMessage = `Successfully synced ${(productsToAdd.length)?.toLocaleString("en-In")} new product(s) to your inventory`;
+    const notificationMessage = `Successfully synced ${(missingPairs.length)?.toLocaleString("en-In")} new inventory item(s) across ${godowns.length} godown(s)`;
     await notificationQueue.add("inventorySync", {
       type: "inventory",
       data: {
         message: notificationMessage,
         title: "Inventory Sync Completed",
-        entriesAdded: productsToAdd.length,
+        entriesAdded: missingPairs.length,
       },
       userId: distributorId,
       userType: "Distributor",
@@ -122,7 +155,7 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
 
     res.status(201).json({
       message: "Inventory synced with product master successfully",
-      data: productsToAdd.length,
+      data: missingPairs.length,
     });
   } catch (error) {
     res.status(500);
