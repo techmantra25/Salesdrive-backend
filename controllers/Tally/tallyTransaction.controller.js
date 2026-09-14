@@ -55,21 +55,43 @@ const formatGodown = (godownDoc) => {
 };
 
 /**
- * Helper function to calculate the LINE-ITEM GST percentage.
- *
- * IMPORTANT: This previously guessed a slab (<=2500 -> 5%, >2500 -> 18%)
- * instead of using the actual tax recorded on the line item, and was also
- * being fed `grossAmt` as the "taxable amount" instead of the real
- * `taxableAmt` — both wrong. The correct rate is always derivable
- * directly from the line item's own stored tax amounts:
- *   GST % = (CGST + SGST + IGST) / taxableAmt * 100
- * e.g. CGST 113.27 + SGST 113.27 = 226.54 over taxableAmt 1258.56 = 18.00%,
- * which matches the product's own cgst(9%) + sgst(9%) fields.
+ * Helper function to calculate the LINE-ITEM GST percentage for
+ * Purchase / Purchase Return, where there is no reliable stored product
+ * GST field wired up the same way as Sales / Sales Return (see NOTE on
+ * those blocks below). This back-derives the % from the recorded tax
+ * rupee amounts, which is left exactly as before for these two types.
  */
 const calculateGSTPercentage = (taxableAmount, totalTax) => {
   const taxable = parseFloat(taxableAmount || 0);
   const tax = parseFloat(totalTax || 0);
   return taxable > 0 ? ((tax / taxable) * 100).toFixed(2) : "0.00";
+};
+
+/**
+ * NEW (Sales / Sales Return only): GST % read DIRECTLY off the product's
+ * own stored cgst / sgst / igst fields, instead of being back-calculated
+ * from the line item's rounded rupee tax amounts.
+ *
+ * Why: totalCGST / totalSGST on a line item are stored rounded to 2
+ * decimals (e.g. 9% of 14.59 = 1.3131 -> stored as 1.31). Re-dividing
+ * those rounded rupee figures back into a percentage reintroduces
+ * rounding drift — e.g. (1.31 + 1.31) / 14.59 * 100 = 17.96%, even
+ * though the product's actual rate is a clean 18.00% (cgst 9 + sgst 9).
+ * The product's rate never changes, so read it straight from the
+ * populated product doc instead.
+ *
+ * isInterstate decides which side of the product's rate to use:
+ *   - interstate line item (carries IGST)      -> product.igst
+ *   - intrastate line item (carries CGST+SGST) -> product.cgst + product.sgst
+ */
+const getProductGSTPercentage = (product, isInterstate) => {
+  if (!product) return "0.00";
+  if (isInterstate) {
+    return parseFloat(product.igst || 0).toFixed(2);
+  }
+  return (
+    parseFloat(product.cgst || 0) + parseFloat(product.sgst || 0)
+  ).toFixed(2);
 };
 
 /**
@@ -134,7 +156,7 @@ const calculateDiscountPercentage = (lineItem, type) => {
  * calculateGSTPercentage(). e.g. charges of 100 -> GST amount of 18 -> total 118.
  * The report displays this RATE (18.00) in the "Charges GST %" column,
  * while the actual rupee gstAmount is still used internally to compute
- * totalWithGst / totalNetAmount, AND (new) to top up each line item's own
+ * totalWithGst / totalNetAmount, AND to top up each line item's own
  * CGST / SGST / IGST columns — see distributeChargesGst() below.
  */
 const CHARGES_GST_RATE = 18;
@@ -161,7 +183,19 @@ const computeChargesForDoc = (doc) => {
 };
 
 /**
- * NEW: Splits a document's total Charges-GST rupee amount equally across
+ * Determines whether a line item is interstate (IGST) or intrastate
+ * (CGST+SGST), based on the tax amounts ALREADY stored on the line item
+ * itself — used consistently across GST %, Tax Amount, and the
+ * Charges-GST split so all three agree on which side of the tax split
+ * this particular line item is on.
+ */
+const isInterstateLineItem = (lineItem) => {
+  const originalIgst = parseFloat(lineItem.totalIGST || lineItem.igst || 0);
+  return originalIgst > 0;
+};
+
+/**
+ * Splits a document's total Charges-GST rupee amount equally across
  * every line item belonging to that document, then routes each line
  * item's share into CGST+SGST (intrastate) or IGST (interstate) —
  * matching whichever tax type that specific line item already uses.
@@ -170,10 +204,9 @@ const computeChargesForDoc = (doc) => {
  *   - Intrastate line item (has CGST/SGST): +3 to CGST, +3 to SGST.
  *   - Interstate line item (has IGST only):  +6 to IGST.
  *
- * IMPORTANT (per explicit request): this ONLY changes what the cgst /
- * sgst / igst columns display. Tax Amount, GST %, Taxable Amount,
- * Charges, and Charges GST % columns are left exactly as they were
- * before — untouched.
+ * The returned cgst / sgst / igst are the FINAL, fully-loaded values —
+ * they are what gets displayed in those columns AND (see the FIX below)
+ * what Tax Amount is derived from, so the two can never drift apart.
  */
 const distributeChargesGst = (lineItem, chargesResult, lineItemCount) => {
   const count = lineItemCount > 0 ? lineItemCount : 1;
@@ -187,7 +220,7 @@ const distributeChargesGst = (lineItem, chargesResult, lineItemCount) => {
   // one that already carries CGST/SGST. Decided per line item so a mixed
   // bill (shouldn't normally happen, but just in case) still splits
   // correctly for each row.
-  const isInterstate = originalIgst > 0;
+  const isInterstate = isInterstateLineItem(lineItem);
 
   const cgst = isInterstate
     ? originalCgst
@@ -268,7 +301,10 @@ exports.generateTallyReport = async (req, res) => {
             select: "name",
           },
         })
-        .populate("lineItems.product", "name product_code product_hsn_code")
+        .populate(
+          "lineItems.product",
+          "name product_code product_hsn_code cgst sgst igst",
+        )
         .populate("lineItems.price", "mrp_price sellingPrice")
         .populate("godownId", "godownName godownCode")
         .lean();
@@ -285,7 +321,7 @@ exports.generateTallyReport = async (req, res) => {
         const billNetAmtSum = sumLineItemsNetAmt(bill.lineItems);
         const billTotalNetAmount = billNetAmtSum + chargesResult.totalWithGst;
 
-        // NEW: charges GST is split equally across every line item in the
+        // Charges GST is split equally across every line item in the
         // bill (see distributeChargesGst). Divisor uses the full line
         // item count of the bill, unchanged by the 0-qty filter below.
         const lineItemCount = bill.lineItems.length;
@@ -293,7 +329,7 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < bill.lineItems.length; index++) {
           const lineItem = bill.lineItems[index];
 
-          // NEW: skip 0-qty line items entirely — they don't show up in
+          // Skip 0-qty line items entirely — they don't show up in
           // the report at all.
           if (parseFloat(lineItem.billQty || 0) === 0) continue;
 
@@ -319,26 +355,40 @@ exports.generateTallyReport = async (req, res) => {
             lineItem.totalDiscountPercentage || 0,
           ).toFixed(2);
 
-          // Calculate the real GST % from actual tax amounts recorded on
-          // the line item — must use taxableAmt (the correct base), not
-          // grossAmt. (Unchanged — still the product-only tax, per your
-          // "don't change anything else" instruction.)
-          const totalTax =
-            parseFloat(lineItem.totalCGST || 0) +
-            parseFloat(lineItem.totalSGST || 0) +
-            parseFloat(lineItem.totalIGST || 0);
-          const gstPercentage = calculateGSTPercentage(
-            lineItem.taxableAmt,
-            totalTax,
+          // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
+          // Determined once and reused for GST %, Tax Amount, and the
+          // Charges-GST split below, so all three columns stay consistent
+          // with each other.
+          const isInterstate = isInterstateLineItem(lineItem);
+
+          // GST % comes directly from the PRODUCT's own stored
+          // cgst/sgst/igst fields, not back-calculated from the line
+          // item's rounded rupee tax amounts (that approach drifted —
+          // e.g. 17.96% instead of the product's real 18.00%).
+          const gstPercentage = getProductGSTPercentage(
+            lineItem.product,
+            isInterstate,
           );
 
-          // NEW: CGST / SGST / IGST displayed values now include this
-          // line item's equal share of the bill's Charges GST.
+          // CGST / SGST / IGST displayed values include this line
+          // item's equal share of the bill's Charges GST. These are the
+          // FINAL values used everywhere below — including Tax Amount —
+          // so the two can never disagree.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
             lineItemCount,
           );
+
+          // FIX: Tax Amount = CGST + SGST for an intrastate line item,
+          // OR IGST alone for an interstate line item. Derived from the
+          // SAME final cgst/sgst/igst values shown in those columns
+          // (i.e. INCLUDING each line item's share of Charges GST), so
+          // Tax Amount always equals what CGST+SGST (or IGST) add up to
+          // on the row. Previously this was computed from the original,
+          // pre-charges-GST totalCGST/totalSGST/totalIGST, which left
+          // Tax Amount short by exactly that line's Charges-GST share.
+          const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
             transactionType: "Sales",
@@ -366,7 +416,7 @@ exports.generateTallyReport = async (req, res) => {
             cgst: formatCurrency(cgst), // includes this line's share of Charges GST
             sgst: formatCurrency(sgst), // includes this line's share of Charges GST
             igst: formatCurrency(igst), // includes this line's share of Charges GST
-            taxAmount: formatCurrency(totalTax),
+            taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
             discount: discountPercentage, // final line-item discount %
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
@@ -374,7 +424,7 @@ exports.generateTallyReport = async (req, res) => {
             // charges: same charges value repeated across every line item
             // belonging to this bill.
             charges: formatCurrency(chargesResult.chargesAmt),
-            // chargesGst: now a PERCENTAGE (e.g. 18.00), not a rupee
+            // chargesGst: a PERCENTAGE (e.g. 18.00), not a rupee
             // amount, repeated across every line item of this bill.
             chargesGst: chargesResult.gstRate.toFixed(2),
             // totalNetAmount: BILL-LEVEL total (sum of all line items'
@@ -401,7 +451,10 @@ exports.generateTallyReport = async (req, res) => {
             select: "name",
           },
         })
-        .populate("lineItems.product", "name product_code product_hsn_code")
+        .populate(
+          "lineItems.product",
+          "name product_code product_hsn_code cgst sgst igst",
+        )
         .populate("lineItems.price", "mrp_price sellingPrice")
         .populate("godownId", "godownName godownCode")
         .lean();
@@ -417,13 +470,13 @@ exports.generateTallyReport = async (req, res) => {
         const returnTotalNetAmount =
           returnNetAmtSum + chargesResult.totalWithGst;
 
-        // NEW: divisor for splitting charges GST across line items.
+        // Divisor for splitting charges GST across line items.
         const lineItemCount = salesReturn.lineItems.length;
 
         for (let index = 0; index < salesReturn.lineItems.length; index++) {
           const lineItem = salesReturn.lineItems[index];
 
-          // NEW: skip 0-qty line items entirely.
+          // Skip 0-qty line items entirely.
           if (parseFloat(lineItem.returnQty || 0) === 0) continue;
 
           const roundOff = index === 0 ? salesReturn.roundOffAmount || 0 : 0;
@@ -446,21 +499,32 @@ exports.generateTallyReport = async (req, res) => {
             lineItem.totalDiscountPercentage || 0,
           ).toFixed(2);
 
-          // Calculate GST percentage (unchanged — product-only tax).
-          const taxableAmount = parseFloat(lineItem.grossAmt || 0);
-          const totalTax =
-            parseFloat(lineItem.totalCGST || 0) +
-            parseFloat(lineItem.totalSGST || 0) +
-            parseFloat(lineItem.totalIGST || 0);
-          const gstPercentage = calculateGSTPercentage(taxableAmount, totalTax);
+          // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
+          const isInterstate = isInterstateLineItem(lineItem);
 
-          // NEW: CGST / SGST / IGST displayed values now include this
-          // line item's equal share of the sales return's Charges GST.
+          // GST % read directly from the PRODUCT's own stored
+          // cgst/sgst/igst fields, same reasoning as the Sales loop above.
+          const gstPercentage = getProductGSTPercentage(
+            lineItem.product,
+            isInterstate,
+          );
+
+          // CGST / SGST / IGST displayed values include this line
+          // item's equal share of the sales return's Charges GST. These
+          // are the FINAL values used everywhere below — including Tax
+          // Amount — so the two can never disagree.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
             lineItemCount,
           );
+
+          // FIX: Tax Amount = CGST + SGST (intrastate) OR IGST alone
+          // (interstate), derived from the SAME final cgst/sgst/igst
+          // values shown in those columns (i.e. INCLUDING each line
+          // item's share of Charges GST) — see note in the Sales loop
+          // above for why this must be computed this way.
+          const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
             transactionType: "Sales Return",
@@ -488,7 +552,7 @@ exports.generateTallyReport = async (req, res) => {
             cgst: formatCurrency(cgst), // includes this line's share of Charges GST
             sgst: formatCurrency(sgst), // includes this line's share of Charges GST
             igst: formatCurrency(igst), // includes this line's share of Charges GST
-            taxAmount: formatCurrency(totalTax),
+            taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
             discount: discountPercentage, // final line-item discount %
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
@@ -508,15 +572,19 @@ exports.generateTallyReport = async (req, res) => {
     }
 
     // Fetch Purchase data
-    // NOTE: Left unchanged (still uses old price/discount logic). The
-    // Invoice schema has no populated price.mrp reference and no stored
-    // totalDiscountPercentage field, so the MRP / final-discount-%
-    // treatment applied to Sales / Sales Return above does not carry
-    // over here without further schema-level changes. Purchase has no
-    // Freight/Handling charges concept applied here, so charges /
-    // chargesGst are 0 and totalNetAmount stays the line item's own
-    // netAmount (no document-level charges to add in). No charges-GST to
-    // split here either, since there are no charges.
+    // NOTE: Left unchanged (still uses old back-calculated GST % logic
+    // and old price/discount logic). The Invoice schema has no populated
+    // product doc with reliable cgst/sgst/igst wired the same way as
+    // Sales / Sales Return above, and no stored totalDiscountPercentage
+    // field, so the product-GST% / MRP / final-discount-% treatment
+    // applied to Sales / Sales Return does not carry over here without
+    // further schema-level changes. Purchase has no Freight/Handling
+    // charges concept applied here, so charges / chargesGst are 0 and
+    // totalNetAmount stays the line item's own netAmount (no
+    // document-level charges to add in). No charges-GST to split here
+    // either, since there are no charges. Its Tax Amount is therefore
+    // already consistent with cgst+sgst / igst (both come straight from
+    // the line item's own stored fields with nothing added on top).
     if (includeTypes.includes("purchase")) {
       const invoices = await Invoice.find({
         distributorId,
@@ -531,7 +599,7 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < invoice.lineItems.length; index++) {
           const lineItem = invoice.lineItems[index];
 
-          // NEW: skip 0-qty line items entirely.
+          // Skip 0-qty line items entirely.
           const purchaseQty = parseFloat(
             lineItem.receivedQty || lineItem.qty || 0,
           );
@@ -542,7 +610,7 @@ exports.generateTallyReport = async (req, res) => {
             "purchase",
           );
           const roundOff = index === 0 ? invoice.roundOff || 0 : 0;
-          // Calculate GST percentage
+          // Calculate GST percentage (unchanged for Purchase — see NOTE above)
           const taxableAmount = parseFloat(lineItem.grossAmount || 0);
           const totalTax =
             parseFloat(lineItem.cgst || 0) +
@@ -594,7 +662,8 @@ exports.generateTallyReport = async (req, res) => {
 
     // Fetch Purchase Return data
     // NOTE: Left unchanged, same reasoning as Purchase above. No charges
-    // GST to split here either.
+    // GST to split here either, so Tax Amount already matches cgst+sgst
+    // / igst as-is.
     if (includeTypes.includes("purchaseReturn")) {
       let purchaseReturns = await PurchaseReturn.find({
         distributorId,
@@ -626,7 +695,7 @@ exports.generateTallyReport = async (req, res) => {
         for (let index = 0; index < purchaseReturn.lineItems.length; index++) {
           const lineItem = purchaseReturn.lineItems[index];
 
-          // NEW: skip 0-qty line items entirely.
+          // Skip 0-qty line items entirely.
           if (parseFloat(lineItem.returnQty || 0) === 0) continue;
 
           const discountPercentage = calculateDiscountPercentage(
@@ -634,7 +703,7 @@ exports.generateTallyReport = async (req, res) => {
             "purchaseReturn",
           );
           const roundOff = index === 0 ? purchaseReturn.roundOff || 0 : 0;
-          // Calculate GST percentage
+          // Calculate GST percentage (unchanged for Purchase Return — see NOTE above)
           const taxableAmount = parseFloat(lineItem.grossAmt || 0);
           const totalTax =
             parseFloat(lineItem.cgst || 0) +
@@ -727,7 +796,7 @@ const generateExcelReport = async (reportData, distributorId) => {
   // Define columns based on the sample format.
   // All original headers/keys are unchanged. Three new columns are
   // appended at the end for the per-document Freight + Handling charges.
-  // NOTE: "Charges GST" is now a PERCENTAGE column (e.g. 18.00), not a
+  // NOTE: "Charges GST" is a PERCENTAGE column (e.g. 18.00), not a
   // rupee amount — header updated to "Charges GST %" to reflect that.
   worksheet.columns = [
     { header: "Transaction Type", key: "transactionType", width: 18 },
@@ -821,7 +890,7 @@ const generateExcelReport = async (reportData, distributorId) => {
       discountCell.numFmt = "0.00";
       discountCell.alignment = { vertical: "middle", horizontal: "right" };
 
-      // Format Charges GST percentage column (now a %, not a rupee value)
+      // Format Charges GST percentage column (this is a %, not a rupee value)
       const chargesGstCell = row.getCell("chargesGst");
       chargesGstCell.numFmt = "0.00";
       chargesGstCell.alignment = { vertical: "middle", horizontal: "right" };
