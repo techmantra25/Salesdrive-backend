@@ -22,7 +22,6 @@ const productListPaginated = asyncHandler(async (req, res) => {
       quotationDate,
     } = req.query;
 
-    console.log("hjdcjsdhg", req.query);
 
     // Normalize godownId once — treat "undefined"/"null" strings (which
     // can arrive from the frontend when no godown is selected) as absent.
