@@ -6,6 +6,7 @@ const Inventory = require("../../models/inventory.model");
 const { getBatchProductPricing } = require("../product/utils/pricing.utils");
 const { getBatchInventoryStock } = require("../product/utils/inventory.utils");
 
+// console.time("API_TOTAL");
 const productListPaginated = asyncHandler(async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -21,24 +22,18 @@ const productListPaginated = asyncHandler(async (req, res) => {
       quotationDate,
     } = req.query;
 
+    console.log("hjdcjsdhg", req.query);
+
+    // Normalize godownId once — treat "undefined"/"null" strings (which
+    // can arrive from the frontend when no godown is selected) as absent.
     const hasGodownFilter =
       godownId && godownId !== "undefined" && godownId !== "null";
 
-    // --- Only products that HAVE an inventory record for the given godown ---
-    // If no godownId is supplied, we show NOTHING (no silent fallback to
-    // "all godowns"), since godown-scoped inventory is now mandatory.
-    let productIdsWithInventory = [];
-    if (hasGodownFilter) {
-      productIdsWithInventory = await Inventory.distinct("productId", {
-        distributorId,
-        godownId,
-      });
-    }
-
-    const query = {
-      status: true,
-      _id: { $in: productIdsWithInventory },
-    };
+    // Product list is driven entirely by the Product collection — every
+    // active product shows here regardless of whether it has any
+    // inventory row. Inventory (via getBatchInventoryStock below) is only
+    // used to attach stock numbers, never to decide which products appear.
+    const query = { status: true };
 
     const filterFields = [
       { field: "cat_id", value: categoryId },
@@ -55,7 +50,11 @@ const productListPaginated = asyncHandler(async (req, res) => {
 
     if (req.query.search) {
       const search = req.query.search.trim();
+
+      // Split by space or dash
       const tokens = search.split(/[\s-]+/).filter(Boolean);
+
+      // Every token must match
       query.$and = tokens.map((token) => ({
         $or: [
           { product_code: { $regex: token, $options: "i" } },
@@ -67,42 +66,53 @@ const productListPaginated = asyncHandler(async (req, res) => {
       }));
     }
 
+    // Parallel execution for counts and products
+
     console.time("PRODUCT_DB");
-    const [totalCount, totalFilteredCount, productList] = hasGodownFilter
-      ? await Promise.all([
-          Product.countDocuments({ status: true, _id: { $in: productIdsWithInventory } }),
-          Product.countDocuments(query),
-          Product.find(query)
-            .populate([
-              { path: "cat_id", select: "" },
-              { path: "collection_id", select: "" },
-              { path: "brand", select: "" },
-              { path: "supplier", select: "" },
-            ])
-            .sort({ product_code: 1 })
-            .skip(skip)
-            .limit(limit)
-            .lean(),
+    const [totalCount, totalFilteredCount, productList] = await Promise.all([
+      Product.countDocuments({ status: true }),
+      Product.countDocuments(query),
+      Product.find(query)
+        .populate([
+          { path: "cat_id", select: "" },
+          { path: "collection_id", select: "" },
+          { path: "brand", select: "" },
+          {
+            path: "supplier",
+            select: "",
+          },
         ])
-      : [0, 0, []]; // no godownId → return empty result immediately
+        .sort({
+          product_code: 1,
+        })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+    ]);
     console.timeEnd("PRODUCT_DB");
 
+    // Batch API calls for pricing and inventory
     const productIds_batch = productList.map((p) => p._id.toString());
 
     console.time("EXTERNAL_APIS");
-    const [pricingByProduct, inventoryByProduct] = productIds_batch.length
-      ? await Promise.all([
-          getBatchProductPricing(productIds_batch, distributorId, null, quotationDate),
-          getBatchInventoryStock(productIds_batch, distributorId, godownId),
-        ])
-      : [{}, {}];
+    const [pricingByProduct, inventoryByProduct] = await Promise.all([
+      getBatchProductPricing(productIds_batch, distributorId, null, quotationDate),
+      getBatchInventoryStock(
+        productIds_batch,
+        distributorId,
+        hasGodownFilter ? godownId : undefined
+      ),
+    ]);
     console.timeEnd("EXTERNAL_APIS");
 
+    // Map results with pricing and inventory data
     console.time("DATA_MAPPING");
     const resultProductList = productList.map((product) => {
       const productId = product._id.toString();
+
       const priceArray = pricingByProduct[productId] || [];
       const price = priceArray.length > 0 ? priceArray[0] : null;
+
       const inventory = inventoryByProduct[productId] || null;
 
       return {
@@ -126,6 +136,7 @@ const productListPaginated = asyncHandler(async (req, res) => {
         filteredCount: totalFilteredCount,
       },
     };
+    // console.timeEnd("API_TOTAL");
     return res.status(200).json(responseData);
   } catch (error) {
     res.status(500);
