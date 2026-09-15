@@ -260,12 +260,72 @@ exports.generateTallyReport = async (req, res) => {
     }
 
     // Build date filter
-    const dateFilter = {};
-    if (startDate || endDate) {
-      dateFilter.createdAt = {};
-      if (startDate) dateFilter.createdAt.$gte = new Date(startDate);
-      if (endDate) dateFilter.createdAt.$lte = new Date(endDate);
-    }
+  const parseSelectedDate = (value, endOfDay = false) => {
+  if (!value) return null;
+
+  let year, month, day;
+
+  const str = String(value).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    [year, month, day] = str.split("-").map(Number);
+  } else if (/^\d{2}-\d{2}-\d{4}$/.test(str)) {
+    [day, month, year] = str.split("-").map(Number);
+  } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+    [day, month, year] = str.split("/").map(Number);
+  } else {
+    const parsed = new Date(str);
+    if (isNaN(parsed.getTime())) return null;
+
+    year = parsed.getFullYear();
+    month = parsed.getMonth() + 1;
+    day = parsed.getDate();
+  }
+
+  const utcMillis = Date.UTC(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
+  );
+
+  // IST = UTC + 5:30
+  return new Date(utcMillis - 5.5 * 60 * 60 * 1000);
+};
+
+const selectedStart = parseSelectedDate(startDate, false);
+const selectedEnd = parseSelectedDate(endDate, true);
+
+const dateFilter = {};
+
+if (selectedStart || selectedEnd) {
+  dateFilter.createdAt = {};
+
+  if (selectedStart) {
+    dateFilter.createdAt.$gte = selectedStart;
+  }
+
+  if (selectedEnd) {
+    dateFilter.createdAt.$lte = selectedEnd;
+  }
+}
+
+const purchaseDateFilter = {};
+
+if (selectedStart || selectedEnd) {
+  purchaseDateFilter.date = {};
+
+  if (selectedStart) {
+    purchaseDateFilter.date.$gte = selectedStart;
+  }
+
+  if (selectedEnd) {
+    purchaseDateFilter.date.$lte = selectedEnd;
+  }
+}
 
     // Build godown filter (Bill / SalesReturn / Invoice each carry a
     // godownId field directly). PurchaseReturn has no godownId of its own —
@@ -586,11 +646,11 @@ exports.generateTallyReport = async (req, res) => {
     // already consistent with cgst+sgst / igst (both come straight from
     // the line item's own stored fields with nothing added on top).
     if (includeTypes.includes("purchase")) {
-      const invoices = await Invoice.find({
-        distributorId,
-        ...dateFilter,
-        ...godownFilter,
-      })
+     const invoices = await Invoice.find({
+  distributorId,
+  ...purchaseDateFilter,
+  ...godownFilter,
+})
         .populate("lineItems.product", "name product_code product_hsn_code")
         .populate("godownId", "godownName godownCode")
         .lean();
@@ -755,6 +815,20 @@ exports.generateTallyReport = async (req, res) => {
 
     // Generate Excel file
     const filePath = await generateExcelReport(reportData, distributorId);
+    reportData.sort((a, b) => {
+  const parseReportDate = (value) => {
+    if (!value) return Number.MAX_SAFE_INTEGER;
+
+    const parts = String(value).split("-");
+    if (parts.length !== 3) return Number.MAX_SAFE_INTEGER;
+
+    const [day, month, year] = parts.map(Number);
+
+    return new Date(year, month - 1, day).getTime();
+  };
+
+  return parseReportDate(a.invoiceDate) - parseReportDate(b.invoiceDate);
+});
 
     // Send file
     res.download(
