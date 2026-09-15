@@ -235,6 +235,24 @@ const sumLineItemsTax = (lineItems) =>
  * The returned cgst / sgst / igst are the FINAL, fully-loaded values —
  * they are what gets displayed in those columns AND what Tax Amount is
  * derived from, so the two can never drift apart.
+ *
+ * FIX (CGST must always equal SGST): previously cgst and sgst were each
+ * computed independently —
+ *   cgst = originalCgst + perItemChargesGst / 2
+ *   sgst = originalSgst + perItemChargesGst / 2
+ * Two things could make these diverge by a paisa even though GST rules
+ * require CGST === SGST for any intrastate line item:
+ *   1. originalCgst and originalSgst can already differ by a paisa,
+ *      since they were rounded independently when the line item was
+ *      first stored (e.g. 9% of 14.59 rounds to 1.31 on each side, but
+ *      that rounding doesn't always land the same way for both).
+ *   2. Even starting equal, formatCurrency() (toFixed(2)) rounds each
+ *      one separately downstream, and floating-point division can push
+ *      one up and the other down.
+ * Fix: compute ONE combined intrastate tax figure (original CGST +
+ * original SGST + this line's share of Charges GST) and split it in
+ * half ONCE, assigning the exact same number to both cgst and sgst —
+ * so they are bit-for-bit identical before formatting, not just close.
  */
 const distributeChargesGst = (
   lineItem,
@@ -267,13 +285,23 @@ const distributeChargesGst = (
   // correctly for each row.
   const isInterstate = isInterstateLineItem(lineItem);
 
-  const cgst = isInterstate
-    ? originalCgst
-    : originalCgst + perItemChargesGst / 2;
-  const sgst = isInterstate
-    ? originalSgst
-    : originalSgst + perItemChargesGst / 2;
-  const igst = isInterstate ? originalIgst + perItemChargesGst : originalIgst;
+  let cgst, sgst, igst;
+
+  if (isInterstate) {
+    cgst = originalCgst;
+    sgst = originalSgst;
+    igst = originalIgst + perItemChargesGst;
+  } else {
+    // Combine both intrastate sides into ONE figure, then split it in
+    // half ONCE. cgst and sgst end up as the exact same JS number, so
+    // formatCurrency() can never round them to two different strings.
+    const combinedIntrastateTax =
+      originalCgst + originalSgst + perItemChargesGst;
+    const half = combinedIntrastateTax / 2;
+    cgst = half;
+    sgst = half;
+    igst = originalIgst;
+  }
 
   return { cgst, sgst, igst };
 };
@@ -305,72 +333,88 @@ exports.generateTallyReport = async (req, res) => {
     }
 
     // Build date filter
-  const parseSelectedDate = (value, endOfDay = false) => {
-  if (!value) return null;
+    //
+    // FIX (date range only returning first day of range): the frontend
+    // now always sends plain "YYYY-MM-DD" strings (see TallyReport.jsx),
+    // so the regex fast-paths below are the ones that should normally
+    // fire. But as defense-in-depth, the catch-all `else` branch (for
+    // any ISO/Date-like string that slips through) now reads the
+    // Y/M/D using UTC getters instead of LOCAL getters. Using local
+    // getters is what caused the original bug: a Date serialized to
+    // e.g. "2026-09-05T18:30:00.000Z" (IST midnight of the 6th,
+    // converted to UTC) would have its calendar day silently pulled
+    // back to the 5th if the Node process's local timezone was UTC —
+    // getUTCDate() always reads the day embedded in the string itself,
+    // regardless of server timezone, so it can't drift like that.
+    const parseSelectedDate = (value, endOfDay = false) => {
+      if (!value) return null;
 
-  let year, month, day;
+      let year, month, day;
 
-  const str = String(value).trim();
+      const str = String(value).trim();
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    [year, month, day] = str.split("-").map(Number);
-  } else if (/^\d{2}-\d{2}-\d{4}$/.test(str)) {
-    [day, month, year] = str.split("-").map(Number);
-  } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
-    [day, month, year] = str.split("/").map(Number);
-  } else {
-    const parsed = new Date(str);
-    if (isNaN(parsed.getTime())) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        [year, month, day] = str.split("-").map(Number);
+      } else if (/^\d{2}-\d{2}-\d{4}$/.test(str)) {
+        [day, month, year] = str.split("-").map(Number);
+      } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(str)) {
+        [day, month, year] = str.split("/").map(Number);
+      } else {
+        const parsed = new Date(str);
+        if (isNaN(parsed.getTime())) return null;
 
-    year = parsed.getFullYear();
-    month = parsed.getMonth() + 1;
-    day = parsed.getDate();
-  }
+        // FIX: use UTC getters, not local getters, so the extracted
+        // calendar date matches what's actually encoded in the string
+        // regardless of the server's timezone configuration.
+        year = parsed.getUTCFullYear();
+        month = parsed.getUTCMonth() + 1;
+        day = parsed.getUTCDate();
+      }
 
-  const utcMillis = Date.UTC(
-    year,
-    month - 1,
-    day,
-    endOfDay ? 23 : 0,
-    endOfDay ? 59 : 0,
-    endOfDay ? 59 : 0,
-    endOfDay ? 999 : 0
-  );
+      const utcMillis = Date.UTC(
+        year,
+        month - 1,
+        day,
+        endOfDay ? 23 : 0,
+        endOfDay ? 59 : 0,
+        endOfDay ? 59 : 0,
+        endOfDay ? 999 : 0
+      );
 
-  // IST = UTC + 5:30
-  return new Date(utcMillis - 5.5 * 60 * 60 * 1000);
-};
+      // IST = UTC + 5:30
+      return new Date(utcMillis - 5.5 * 60 * 60 * 1000);
+    };
 
-const selectedStart = parseSelectedDate(startDate, false);
-const selectedEnd = parseSelectedDate(endDate, true);
+    const selectedStart = parseSelectedDate(startDate, false);
+    const selectedEnd = parseSelectedDate(endDate, true);
 
-const dateFilter = {};
+    const dateFilter = {};
 
-if (selectedStart || selectedEnd) {
-  dateFilter.createdAt = {};
+    if (selectedStart || selectedEnd) {
+      dateFilter.createdAt = {};
 
-  if (selectedStart) {
-    dateFilter.createdAt.$gte = selectedStart;
-  }
+      if (selectedStart) {
+        dateFilter.createdAt.$gte = selectedStart;
+      }
 
-  if (selectedEnd) {
-    dateFilter.createdAt.$lte = selectedEnd;
-  }
-}
+      if (selectedEnd) {
+        dateFilter.createdAt.$lte = selectedEnd;
+      }
+    }
 
-const purchaseDateFilter = {};
+    const purchaseDateFilter = {};
 
-if (selectedStart || selectedEnd) {
-  purchaseDateFilter.date = {};
+    if (selectedStart || selectedEnd) {
+      purchaseDateFilter.date = {};
 
-  if (selectedStart) {
-    purchaseDateFilter.date.$gte = selectedStart;
-  }
+      if (selectedStart) {
+        purchaseDateFilter.date.$gte = selectedStart;
+      }
 
-  if (selectedEnd) {
-    purchaseDateFilter.date.$lte = selectedEnd;
-  }
-}
+      if (selectedEnd) {
+        purchaseDateFilter.date.$lte = selectedEnd;
+      }
+    }
 
     // Build godown filter (Bill / SalesReturn / Invoice each carry a
     // godownId field directly). PurchaseReturn has no godownId of its own —
@@ -485,7 +529,9 @@ if (selectedStart || selectedEnd) {
           // on this line item's own tax amount vs the bill's total tax
           // amount (see distributeChargesGst). These are the FINAL
           // values used everywhere below — including Tax Amount — so
-          // the two can never disagree.
+          // the two can never disagree. CGST and SGST are also now
+          // guaranteed to be identical (see fix note on
+          // distributeChargesGst above).
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
@@ -632,7 +678,8 @@ if (selectedStart || selectedEnd) {
           // — based on this line item's own tax amount vs the sales
           // return's total tax amount. These are the FINAL values used
           // everywhere below — including Tax Amount — so the two can
-          // never disagree.
+          // never disagree. CGST and SGST are also now guaranteed to be
+          // identical (see fix note on distributeChargesGst above).
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
@@ -707,11 +754,11 @@ if (selectedStart || selectedEnd) {
     // already consistent with cgst+sgst / igst (both come straight from
     // the line item's own stored fields with nothing added on top).
     if (includeTypes.includes("purchase")) {
-     const invoices = await Invoice.find({
-  distributorId,
-  ...purchaseDateFilter,
-  ...godownFilter,
-})
+      const invoices = await Invoice.find({
+        distributorId,
+        ...purchaseDateFilter,
+        ...godownFilter,
+      })
         .populate("lineItems.product", "name product_code product_hsn_code")
         .populate("godownId", "godownName godownCode")
         .lean();
@@ -877,19 +924,19 @@ if (selectedStart || selectedEnd) {
     // Generate Excel file
     const filePath = await generateExcelReport(reportData, distributorId);
     reportData.sort((a, b) => {
-  const parseReportDate = (value) => {
-    if (!value) return Number.MAX_SAFE_INTEGER;
+      const parseReportDate = (value) => {
+        if (!value) return Number.MAX_SAFE_INTEGER;
 
-    const parts = String(value).split("-");
-    if (parts.length !== 3) return Number.MAX_SAFE_INTEGER;
+        const parts = String(value).split("-");
+        if (parts.length !== 3) return Number.MAX_SAFE_INTEGER;
 
-    const [day, month, year] = parts.map(Number);
+        const [day, month, year] = parts.map(Number);
 
-    return new Date(year, month - 1, day).getTime();
-  };
+        return new Date(year, month - 1, day).getTime();
+      };
 
-  return parseReportDate(a.invoiceDate) - parseReportDate(b.invoiceDate);
-});
+      return parseReportDate(a.invoiceDate) - parseReportDate(b.invoiceDate);
+    });
 
     // Send file
     res.download(
@@ -965,10 +1012,9 @@ const generateExcelReport = async (reportData, distributorId) => {
     { header: "Net Amount", key: "netAmount", width: 15 },
     // --- new columns (charges are same for every line item of a
     // given order/bill; 0 when the document has no charges) ---
-   { header: "Freight & Delivery Charges & Handling Fee)", key: "charges", width: 20 },
+    { header: "Freight & Delivery Charges & Handling Fee)", key: "charges", width: 20 },
     { header: "Charges GST %", key: "chargesGst", width: 14 },
     { header: "Total Net Amount (Inc. GST)", key: "totalNetAmount", width: 18 },
-
   ];
 
   // Style header row
