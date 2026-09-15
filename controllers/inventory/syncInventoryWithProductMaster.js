@@ -16,8 +16,7 @@ const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
   }
 
   try {
-    const distributorId = req.user?._id;
-
+const distributorId = req.query.distributorId;
     // Fetch distributor, godowns and existing inventory in parallel
     const [distributor, godowns, inventoryItems] = await Promise.all([
       Distributor.findById(distributorId),

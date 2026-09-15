@@ -35,6 +35,7 @@ const {
   // balanceUpdateEveningJob,
   // // cronRetryAllFailedInvoiceAdjustmentsJob,
   // syncOutletCodeUpdatesJob,
+  syncInventoryWithProductMasterJob
 } = require("./jobs/cron");
 
 const app = expressApp;
@@ -69,7 +70,8 @@ app.use(cookieParser());
 // balanceUpdateEveningJob.start();
 // // cronRetryAllFailedInvoiceAdjustmentsJob.start();
 // syncOutletCodeUpdatesJob.start();
-
+// syncInventoryWithProductMasterJob.start();
+syncInventoryWithProductMasterJob.start();
 // Health check route
 app.get("/", (req, res) => {
   res.status(200).json({
