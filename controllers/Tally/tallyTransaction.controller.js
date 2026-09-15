@@ -195,26 +195,71 @@ const isInterstateLineItem = (lineItem) => {
 };
 
 /**
- * Splits a document's total Charges-GST rupee amount equally across
- * every line item belonging to that document, then routes each line
- * item's share into CGST+SGST (intrastate) or IGST (interstate) —
- * matching whichever tax type that specific line item already uses.
+ * Sums the ORIGINAL (pre-charges-GST) tax amount — CGST + SGST + IGST —
+ * across every line item belonging to a single document (Bill /
+ * SalesReturn). This is used as the weight base so a document's Charges
+ * GST can be split PROPORTIONALLY by each line item's own tax amount,
+ * instead of splitting it equally across line items.
+ */
+const sumLineItemsTax = (lineItems) =>
+  (lineItems || []).reduce((sum, li) => {
+    const cgst = parseFloat(li.totalCGST || li.cgst || 0);
+    const sgst = parseFloat(li.totalSGST || li.sgst || 0);
+    const igst = parseFloat(li.totalIGST || li.igst || 0);
+    return sum + cgst + sgst + igst;
+  }, 0);
+
+/**
+ * Splits a document's total Charges-GST rupee amount across every line
+ * item belonging to that document IN PROPORTION TO each line item's own
+ * ORIGINAL tax amount (CGST+SGST+IGST), then routes each line item's
+ * share into CGST+SGST (intrastate) or IGST (interstate) — matching
+ * whichever tax type that specific line item already uses.
  *
- * Example: charges GST = 18, 3 line items -> 18 / 3 = 6 per line item.
- *   - Intrastate line item (has CGST/SGST): +3 to CGST, +3 to SGST.
- *   - Interstate line item (has IGST only):  +6 to IGST.
+ * Example: charges GST = 18, line item A has tax amount 200 and line
+ * item B has tax amount 100 (document total tax = 300):
+ *   - A's share = 18 * (200 / 300) = 12
+ *   - B's share = 18 * (100 / 300) = 6
+ *   - If A is intrastate (CGST/SGST): +6 to CGST, +6 to SGST.
+ *   - If B is intrastate (CGST/SGST): +3 to CGST, +3 to SGST.
+ *   - If either is interstate (IGST only): its full share goes to IGST.
+ *
+ * `totalDocTax` is the document-level sum from sumLineItemsTax() above,
+ * computed once per document and passed in here for every line item so
+ * all of them are weighted against the same total.
+ *
+ * Falls back to an EQUAL split across line items (the previous
+ * behaviour) only when the document's total tax amount is 0 — e.g. every
+ * line item is tax-free — to avoid a divide-by-zero.
  *
  * The returned cgst / sgst / igst are the FINAL, fully-loaded values —
- * they are what gets displayed in those columns AND (see the FIX below)
- * what Tax Amount is derived from, so the two can never drift apart.
+ * they are what gets displayed in those columns AND what Tax Amount is
+ * derived from, so the two can never drift apart.
  */
-const distributeChargesGst = (lineItem, chargesResult, lineItemCount) => {
+const distributeChargesGst = (
+  lineItem,
+  chargesResult,
+  lineItemCount,
+  totalDocTax,
+) => {
   const count = lineItemCount > 0 ? lineItemCount : 1;
-  const perItemChargesGst = chargesResult.gstAmount / count;
 
   const originalCgst = parseFloat(lineItem.totalCGST || lineItem.cgst || 0);
   const originalSgst = parseFloat(lineItem.totalSGST || lineItem.sgst || 0);
   const originalIgst = parseFloat(lineItem.totalIGST || lineItem.igst || 0);
+
+  // This line item's own original tax amount — the weight used for the
+  // proportional split below.
+  const lineItemTax = originalCgst + originalSgst + originalIgst;
+
+  // Proportional share of the document's Charges GST, based on this line
+  // item's own tax amount vs the document's total tax amount. Falls back
+  // to an equal split across line items only when the document has no
+  // tax at all (avoids dividing by zero).
+  const perItemChargesGst =
+    totalDocTax > 0
+      ? (chargesResult.gstAmount * lineItemTax) / totalDocTax
+      : chargesResult.gstAmount / count;
 
   // Interstate line item = one that already carries IGST; intrastate =
   // one that already carries CGST/SGST. Decided per line item so a mixed
@@ -381,10 +426,15 @@ if (selectedStart || selectedEnd) {
         const billNetAmtSum = sumLineItemsNetAmt(bill.lineItems);
         const billTotalNetAmount = billNetAmtSum + chargesResult.totalWithGst;
 
-        // Charges GST is split equally across every line item in the
-        // bill (see distributeChargesGst). Divisor uses the full line
-        // item count of the bill, unchanged by the 0-qty filter below.
+        // Divisor used only as the fallback equal-split when the bill's
+        // total tax amount is 0 (see distributeChargesGst above).
         const lineItemCount = bill.lineItems.length;
+
+        // Document-level total tax amount (CGST+SGST+IGST across every
+        // line item), used as the weight base so each line item's share
+        // of the bill's Charges GST is proportional to its OWN tax
+        // amount instead of being split equally.
+        const billTotalTax = sumLineItemsTax(bill.lineItems);
 
         for (let index = 0; index < bill.lineItems.length; index++) {
           const lineItem = bill.lineItems[index];
@@ -431,23 +481,24 @@ if (selectedStart || selectedEnd) {
           );
 
           // CGST / SGST / IGST displayed values include this line
-          // item's equal share of the bill's Charges GST. These are the
-          // FINAL values used everywhere below — including Tax Amount —
-          // so the two can never disagree.
+          // item's PROPORTIONAL share of the bill's Charges GST — based
+          // on this line item's own tax amount vs the bill's total tax
+          // amount (see distributeChargesGst). These are the FINAL
+          // values used everywhere below — including Tax Amount — so
+          // the two can never disagree.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
             lineItemCount,
+            billTotalTax,
           );
 
           // FIX: Tax Amount = CGST + SGST for an intrastate line item,
           // OR IGST alone for an interstate line item. Derived from the
           // SAME final cgst/sgst/igst values shown in those columns
-          // (i.e. INCLUDING each line item's share of Charges GST), so
-          // Tax Amount always equals what CGST+SGST (or IGST) add up to
-          // on the row. Previously this was computed from the original,
-          // pre-charges-GST totalCGST/totalSGST/totalIGST, which left
-          // Tax Amount short by exactly that line's Charges-GST share.
+          // (i.e. INCLUDING each line item's proportional share of
+          // Charges GST), so Tax Amount always equals what CGST+SGST
+          // (or IGST) add up to on the row.
           const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
@@ -473,9 +524,9 @@ if (selectedStart || selectedEnd) {
             qty: lineItem.billQty || 0,
             price: formatCurrency(mrpPrice), // Unit Price = MRP
             grossAmount: formatCurrency(itemValue), // Item Value = MRP * Qty
-            cgst: formatCurrency(cgst), // includes this line's share of Charges GST
-            sgst: formatCurrency(sgst), // includes this line's share of Charges GST
-            igst: formatCurrency(igst), // includes this line's share of Charges GST
+            cgst: formatCurrency(cgst), // includes this line's proportional share of Charges GST
+            sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
+            igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
             discount: discountPercentage, // final line-item discount %
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
@@ -530,8 +581,15 @@ if (selectedStart || selectedEnd) {
         const returnTotalNetAmount =
           returnNetAmtSum + chargesResult.totalWithGst;
 
-        // Divisor for splitting charges GST across line items.
+        // Divisor used only as the fallback equal-split when the sales
+        // return's total tax amount is 0 (see distributeChargesGst above).
         const lineItemCount = salesReturn.lineItems.length;
+
+        // Document-level total tax amount (CGST+SGST+IGST across every
+        // line item), used as the weight base so each line item's share
+        // of the sales return's Charges GST is proportional to its OWN
+        // tax amount instead of being split equally.
+        const returnTotalTax = sumLineItemsTax(salesReturn.lineItems);
 
         for (let index = 0; index < salesReturn.lineItems.length; index++) {
           const lineItem = salesReturn.lineItems[index];
@@ -570,20 +628,23 @@ if (selectedStart || selectedEnd) {
           );
 
           // CGST / SGST / IGST displayed values include this line
-          // item's equal share of the sales return's Charges GST. These
-          // are the FINAL values used everywhere below — including Tax
-          // Amount — so the two can never disagree.
+          // item's PROPORTIONAL share of the sales return's Charges GST
+          // — based on this line item's own tax amount vs the sales
+          // return's total tax amount. These are the FINAL values used
+          // everywhere below — including Tax Amount — so the two can
+          // never disagree.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
             lineItemCount,
+            returnTotalTax,
           );
 
           // FIX: Tax Amount = CGST + SGST (intrastate) OR IGST alone
           // (interstate), derived from the SAME final cgst/sgst/igst
           // values shown in those columns (i.e. INCLUDING each line
-          // item's share of Charges GST) — see note in the Sales loop
-          // above for why this must be computed this way.
+          // item's proportional share of Charges GST) — see note in the
+          // Sales loop above for why this must be computed this way.
           const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
@@ -609,9 +670,9 @@ if (selectedStart || selectedEnd) {
             qty: lineItem.returnQty || 0,
             price: formatCurrency(mrpPrice), // Unit Price = MRP
             grossAmount: formatCurrency(itemValue), // Item Value = MRP * Qty
-            cgst: formatCurrency(cgst), // includes this line's share of Charges GST
-            sgst: formatCurrency(sgst), // includes this line's share of Charges GST
-            igst: formatCurrency(igst), // includes this line's share of Charges GST
+            cgst: formatCurrency(cgst), // includes this line's proportional share of Charges GST
+            sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
+            igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
             discount: discountPercentage, // final line-item discount %
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
