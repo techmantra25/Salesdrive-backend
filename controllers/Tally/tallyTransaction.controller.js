@@ -106,12 +106,17 @@ const getProductGSTPercentage = (product, isInterstate) => {
  * NOTE: This helper is still used for Purchase / Purchase Return below.
  * For Sales / Sales Return, the "Discount %" column now shows the line
  * item's own stored `totalDiscountPercentage` value directly (the final,
- * already-computed discount %) instead of being recalculated here — see
- * the Sales / Sales Return loops.
+ * already-computed discount %), falling back to a direct calculation
+ * from itemValue vs taxableAmt when that stored value is 0 — see
+ * getSalesDiscountPercentage / calculateDiscountFromAmounts below —
+ * instead of being recalculated here.
  *
  * For purchase / purchaseReturn, the schema has no percent field at all —
  * only rupee amounts (discountAmount, specialDiscountAmount) — so those
- * are still converted to a percentage of grossAmount, same as before.
+ * are still converted to a percentage of grossAmount, same as before,
+ * and Purchase now also falls back to a direct calculation from
+ * itemValue vs grossAmount when that comes out 0 — see
+ * getPurchaseDiscountPercentage below.
  */
 const calculateDiscountPercentage = (lineItem, type) => {
   if (type === "sales" || type === "salesReturn") {
@@ -148,6 +153,84 @@ const calculateDiscountPercentage = (lineItem, type) => {
   }
 
   return "0.00";
+};
+
+/**
+ * Discount % derived directly from a line item's own recorded amounts:
+ * (MRP * Qty) vs. the line item's actual post-discount amount (taxable
+ * amount for Sales / Sales Return, gross amount for Purchase). This is
+ * self-contained — no cross-collection Price lookup, no date/region
+ * matching — and is guaranteed consistent with whatever discount was
+ * actually baked into that specific transaction's own numbers.
+ *
+ * WHY NOT the Price collection's L1/L2DiscountPercentage: tried that
+ * first (see prior revision), but a product can have several Price
+ * docs over time (one per effective_date/expiresAt window), and the
+ * "current" one (status: true, expiresAt: null) isn't necessarily the
+ * one that was in effect when a given historical transaction happened.
+ * Confirmed on real data: product 3100000715 had L2 = 38 in effect from
+ * 2026-08-03 to 2026-09-06, then a NEW price doc took over from
+ * 2026-09-06 with L2 = 35 (status: true, expiresAt: null). A Sales
+ * Return line item whose actual applied discount (per its own
+ * taxableAmt vs MRP*qty) was still 38 showed 35 in the report instead —
+ * it had picked up the CURRENT price doc's L2 rather than the one
+ * actually in effect on the transaction's date. Worse, an $gte date
+ * filter against expiresAt: null never matches at all (Mongo doesn't
+ * satisfy "$gte" against null), so an open-ended "current" price was
+ * only ever reachable via the status:true tiebreak — meaning it always
+ * won regardless of the transaction's actual date. Deriving from the
+ * line item's own stored amounts sidesteps all of this.
+ */
+const calculateDiscountFromAmounts = (mrpValue, actualAmount) => {
+  const mrp = parseFloat(mrpValue || 0);
+  const actual = parseFloat(actualAmount || 0);
+  if (mrp <= 0) return "0.00";
+  return (((mrp - actual) / mrp) * 100).toFixed(2);
+};
+
+/**
+ * Sales / Sales Return "Discount %" column.
+ *
+ * Primary source is the line item's own stored totalDiscountPercentage
+ * (the final, already-computed discount % for that order line) — this
+ * already matches (1 - taxableAmt/itemValue)*100 almost exactly on real
+ * Sales data, so it's trusted first.
+ *
+ * That field is only ever written on Bill line items, not SalesReturn
+ * line items, so on every SalesReturn row it comes back 0 even though a
+ * real discount was applied to the order. When the stored value is 0 or
+ * missing, fall back to deriving it directly from this line item's own
+ * itemValue (MRP * qty) vs its own taxableAmt — see
+ * calculateDiscountFromAmounts above for why this is preferred over a
+ * Price-collection lookup.
+ */
+const getSalesDiscountPercentage = (lineItem, itemValue, taxableAmt) => {
+  const stored = parseFloat(lineItem.totalDiscountPercentage || 0);
+  if (stored > 0) return stored.toFixed(2);
+
+  return calculateDiscountFromAmounts(itemValue, taxableAmt);
+};
+
+/**
+ * Purchase "Discount %" column.
+ *
+ * Primary source is calculateDiscountPercentage(lineItem, "purchase"),
+ * which derives % from the line item's own stored discountAmount /
+ * specialDiscountAmount rupee fields (unchanged from before) — in
+ * practice this is usually 0, since Invoice line items don't have those
+ * populated in this dataset.
+ *
+ * When that's 0, falls back to deriving it directly from this line
+ * item's own itemValue (MRP * qty) vs its own grossAmount — see
+ * calculateDiscountFromAmounts above.
+ */
+const getPurchaseDiscountPercentage = (lineItem, itemValue, actualAmount) => {
+  const stored = parseFloat(
+    calculateDiscountPercentage(lineItem, "purchase"),
+  );
+  if (stored > 0) return stored.toFixed(2);
+
+  return calculateDiscountFromAmounts(itemValue, actualAmount);
 };
 
 /**
@@ -454,7 +537,10 @@ exports.generateTallyReport = async (req, res) => {
           "lineItems.product",
           "name product_code product_hsn_code cgst sgst igst",
         )
-        .populate("lineItems.price", "mrp_price sellingPrice")
+        .populate(
+          "lineItems.price",
+          "mrp_price sellingPrice",
+        )
         .populate("godownId", "godownName godownCode")
         .lean();
 
@@ -504,10 +590,15 @@ exports.generateTallyReport = async (req, res) => {
           const itemValue = mrpPrice * (lineItem.billQty || 0);
 
           // Discount % = the line item's own final stored discount
-          // percentage (not recalculated from scheme + distributor disc).
-          const discountPercentage = parseFloat(
-            lineItem.totalDiscountPercentage || 0,
-          ).toFixed(2);
+          // percentage, falling back to a direct calculation from this
+          // line item's own itemValue (MRP * qty) vs its own taxableAmt
+          // when the stored value is 0 — see getSalesDiscountPercentage
+          // / calculateDiscountFromAmounts above.
+          const discountPercentage = getSalesDiscountPercentage(
+            lineItem,
+            itemValue,
+            lineItem.taxableAmt,
+          );
 
           // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
           // Determined once and reused for GST %, Tax Amount, and the
@@ -574,7 +665,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
             igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
-            discount: discountPercentage, // final line-item discount %
+            discount: discountPercentage, // final line-item discount %, with price-doc fallback
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
             // --- new columns ---
@@ -612,7 +703,10 @@ exports.generateTallyReport = async (req, res) => {
           "lineItems.product",
           "name product_code product_hsn_code cgst sgst igst",
         )
-        .populate("lineItems.price", "mrp_price sellingPrice")
+        .populate(
+          "lineItems.price",
+          "mrp_price sellingPrice",
+        )
         .populate("godownId", "godownName godownCode")
         .lean();
 
@@ -658,10 +752,20 @@ exports.generateTallyReport = async (req, res) => {
           const itemValue = mrpPrice * (lineItem.returnQty || 0);
 
           // Discount % = the line item's own final stored discount
-          // percentage.
-          const discountPercentage = parseFloat(
-            lineItem.totalDiscountPercentage || 0,
-          ).toFixed(2);
+          // percentage, falling back to a direct calculation from this
+          // line item's own itemValue (MRP * returnQty) vs its own
+          // taxableAmt when the stored value is 0. This is the fix for
+          // SalesReturn rows: totalDiscountPercentage is only ever
+          // written on Bill line items, so on a SalesReturn line item it
+          // is always 0/missing and previously showed as 0.00 in the
+          // report even though a real discount applied to the order —
+          // see getSalesDiscountPercentage / calculateDiscountFromAmounts
+          // above.
+          const discountPercentage = getSalesDiscountPercentage(
+            lineItem,
+            itemValue,
+            lineItem.taxableAmt,
+          );
 
           // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
           const isInterstate = isInterstateLineItem(lineItem);
@@ -721,7 +825,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
             igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
-            discount: discountPercentage, // final line-item discount %
+            discount: discountPercentage, // final line-item discount %, with price-doc fallback
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
             // --- new columns ---
@@ -740,19 +844,30 @@ exports.generateTallyReport = async (req, res) => {
     }
 
     // Fetch Purchase data
-    // NOTE: Left unchanged (still uses old back-calculated GST % logic
-    // and old price/discount logic). The Invoice schema has no populated
-    // product doc with reliable cgst/sgst/igst wired the same way as
-    // Sales / Sales Return above, and no stored totalDiscountPercentage
-    // field, so the product-GST% / MRP / final-discount-% treatment
-    // applied to Sales / Sales Return does not carry over here without
-    // further schema-level changes. Purchase has no Freight/Handling
-    // charges concept applied here, so charges / chargesGst are 0 and
-    // totalNetAmount stays the line item's own netAmount (no
-    // document-level charges to add in). No charges-GST to split here
-    // either, since there are no charges. Its Tax Amount is therefore
-    // already consistent with cgst+sgst / igst (both come straight from
-    // the line item's own stored fields with nothing added on top).
+    // NOTE: still uses the old back-calculated GST % logic (Invoice has
+    // no populated product doc with reliable cgst/sgst/igst wired the
+    // same way as Sales / Sales Return above). Purchase has no
+    // Freight/Handling charges concept applied here, so charges /
+    // chargesGst are 0 and totalNetAmount stays the line item's own
+    // netAmount (no document-level charges to add in). No charges-GST to
+    // split here either, since there are no charges. Its Tax Amount is
+    // therefore already consistent with cgst+sgst / igst (both come
+    // straight from the line item's own stored fields with nothing added
+    // on top).
+    //
+    // Discount % now falls back the same way Sales/Sales Return does:
+    // calculateDiscountPercentage(lineItem, "purchase") is tried first
+    // (derived from the line item's own discountAmount /
+    // specialDiscountAmount rupee fields); when that comes out 0 —
+    // typically because those rupee fields aren't populated on the
+    // Invoice line item — fall back to a direct calculation from this
+    // line item's own mrp * qty vs its own grossAmount. See
+    // getPurchaseDiscountPercentage / calculateDiscountFromAmounts
+    // above for why this is preferred over a Price-collection lookup
+    // (Invoice line items have no `price` ref field to populate at all,
+    // and a date/region-based lookup picked up the wrong, currently-
+    // active price doc instead of the one in effect on the transaction's
+    // own date — confirmed on real data).
     if (includeTypes.includes("purchase")) {
       const invoices = await Invoice.find({
         distributorId,
@@ -773,9 +888,16 @@ exports.generateTallyReport = async (req, res) => {
           );
           if (purchaseQty === 0) continue;
 
-          const discountPercentage = calculateDiscountPercentage(
+          // MRP * Qty, used ONLY as the base for the discount fallback
+          // below — the displayed "Item Value"/grossAmount column for
+          // Purchase is unchanged (still lineItem.grossAmount, per the
+          // NOTE above).
+          const mrpItemValue = parseFloat(lineItem.mrp || 0) * purchaseQty;
+
+          const discountPercentage = getPurchaseDiscountPercentage(
             lineItem,
-            "purchase",
+            mrpItemValue,
+            lineItem.grossAmount,
           );
           const roundOff = index === 0 ? invoice.roundOff || 0 : 0;
           // Calculate GST percentage (unchanged for Purchase — see NOTE above)
@@ -815,7 +937,7 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.sgst),
             igst: formatCurrency(lineItem.igst),
             taxAmount: formatCurrency(totalTax),
-            discount: discountPercentage,
+            discount: discountPercentage, // stored discount %, with mrp-vs-grossAmount fallback
             taxableAmount: formatCurrency(lineItem.taxableAmount),
             netAmount: formatCurrency(lineItem.netAmount),
             // Purchase has no Freight/Handling charges concept applied
