@@ -68,11 +68,11 @@ const bulkModifyProduct = asyncHandler(async (req, res) => {
 
       try {
         const product_code = clean(row["Product Code"]);
-        const name = clean(row["Product Name"]);
 
         // ================= REQUIRED =================
+        // Product Code is the ONLY required field now — everything else
+        // is optional and only updated if the CSV actually provided it.
         if (!product_code) throw new Error("Product Code is required");
-        if (!name) throw new Error("Product Name is required");
 
         // ================= DUPLICATE IN FILE =================
         if (fileSet.has(product_code)) {
@@ -86,63 +86,109 @@ const bulkModifyProduct = asyncHandler(async (req, res) => {
           throw new Error("Product does not exist");
         }
 
-        // ================= LOOKUPS =================
-        const catId = categoryMap[clean(row["Category Code"])];
-        if (!catId) throw new Error("Invalid Category Code");
+        // ================= OPTIONAL LOOKUPS =================
+        // If the CSV gave a code, it must resolve to a real record (bad data
+        // still fails the row). If the CSV left it blank, we skip it and the
+        // existing DB value is left untouched.
+        const name = clean(row["Product Name"]); // optional now too
 
-        const collectionId = collectionMap[clean(row["Collection Code"])];
-        if (!collectionId) throw new Error("Invalid Collection Code");
-
-        const brandId = brandMap[clean(row["Brand Code"])];
-        if (!brandId) throw new Error("Invalid Brand Code");
-
-        const subBrandId =
-          subBrandMap[clean(row["subBrand Code"])] || null;
-
-        // ================= ENUM VALIDATION =================
-        const uom = clean(row["UOM"]) || "pcs";
-        if (!["pcs", "bndl", "box", "coil"].includes(uom)) {
-          throw new Error(`Invalid UOM: ${uom}`);
+        const categoryCode = clean(row["Category Code"]);
+        let catId;
+        if (categoryCode) {
+          catId = categoryMap[categoryCode];
+          if (!catId) throw new Error("Invalid Category Code");
         }
 
-        // ================= FINAL PAYLOAD =================
-        const payload = {
-          product_code,
-          sku_group_id: clean(row["SKU Group Code"]),
-          sku_group__name: clean(row["SKU Group Name"]),
+        const collectionCode = clean(row["Collection Code"]);
+        let collectionId;
+        if (collectionCode) {
+          collectionId = collectionMap[collectionCode];
+          if (!collectionId) throw new Error("Invalid Collection Code");
+        }
 
-          cat_id: catId,
-          collection_id: collectionId,
-          brand: brandId,
-          subBrand: subBrandId,
+        const brandCode = clean(row["Brand Code"]);
+        let brandId;
+        if (brandCode) {
+          brandId = brandMap[brandCode];
+          if (!brandId) throw new Error("Invalid Brand Code");
+        }
 
-          size: clean(row["Size"]),
-          color: clean(row["Color"]),
-          pack: clean(row["Pack"]),
-          no_of_pieces_in_a_box: clean(row["Std Pkg in Pc"]),
-          wp_pc: clean(row["W/P Pc"]),
-          name,
-          img_path: clean(row["Image Path"]),
-          product_type: clean(row["Product Type"]),
-          product_valuation_type: clean(row["Product Valuation Type"]),
-          product_hsn_code: clean(row["HSN Code"]),
-          cgst: clean(row["CGST"]),
-          sgst: clean(row["SGST"]),
-          igst: clean(row["IGST"]),
-          sbu: clean(row["SBU"]),
-          uom,
-          base_point: clean(row["Base Point"]),
-          ean11: clean(row["EAN"]),
-          status:
-            clean(row["Status"]) === "false" ? false : true,
+        // subBrand stays optional, but we only touch it if the file gave a code
+        const subBrandCode = clean(row["subBrand Code"]);
+        const subBrandId = subBrandCode
+          ? subBrandMap[subBrandCode] || null
+          : undefined; // undefined => won't be added to $set below
+
+        // ================= ENUM VALIDATION =================
+        // Only enforce/override UOM if the file actually provided one;
+        // otherwise leave the existing DB value alone.
+        const uomRaw = clean(row["UOM"]);
+        let uom;
+        if (uomRaw) {
+          if (!["pcs", "bndl", "box", "coil"].includes(uomRaw)) {
+            throw new Error(`Invalid UOM: ${uomRaw}`);
+          }
+          uom = uomRaw;
+        }
+
+        // ================= BUILD PAYLOAD (skip blanks) =================
+        // Helper: only add the key if the CSV actually had a value for it,
+        // so bulkWrite's $set never wipes an existing field with "".
+        const payload = {};
+        const setIfPresent = (key, value) => {
+          if (value !== undefined && value !== null && value !== "") {
+            payload[key] = value;
+          }
         };
 
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: existingId },
-            update: { $set: payload },
-          },
-        });
+        // Product Code identifies the row (used as the filter, not $set).
+        // Everything else is optional — only set when the CSV cell is non-empty.
+        setIfPresent("name", name);
+        setIfPresent("cat_id", catId);
+        setIfPresent("collection_id", collectionId);
+        setIfPresent("brand", brandId);
+        setIfPresent("subBrand", subBrandId);
+        setIfPresent("sku_group_id", clean(row["SKU Group Code"]));
+        setIfPresent("sku_group__name", clean(row["SKU Group Name"]));
+        setIfPresent("size", clean(row["Size"]));
+        setIfPresent("color", clean(row["Color"]));
+        setIfPresent("pack", clean(row["Pack"]));
+        setIfPresent("no_of_pieces_in_a_box", clean(row["Std Pkg in Pc"]));
+        setIfPresent("wp_pc", clean(row["W/P Pc"]));
+        setIfPresent("img_path", clean(row["Image Path"]));
+        setIfPresent("product_type", clean(row["Product Type"]));
+        setIfPresent(
+          "product_valuation_type",
+          clean(row["Product Valuation Type"])
+        );
+        setIfPresent("product_hsn_code", clean(row["HSN Code"]));
+        setIfPresent("cgst", clean(row["CGST"]));
+        setIfPresent("sgst", clean(row["SGST"]));
+        setIfPresent("igst", clean(row["IGST"]));
+        setIfPresent("sbu", clean(row["SBU"]));
+        setIfPresent("uom", uom);
+        setIfPresent("base_point", clean(row["Base Point"]));
+        setIfPresent("ean11", clean(row["EAN"]));
+
+        // Status: only override if the column was actually present in the row
+        if (Object.prototype.hasOwnProperty.call(row, "Status")) {
+          const statusRaw = clean(row["Status"]);
+          if (statusRaw !== "") {
+            payload.status = statusRaw === "false" ? false : true;
+          }
+        }
+
+        // If the row only had a Product Code (nothing else to update),
+        // $set would be empty — Mongo rejects an empty $set, so just skip
+        // queuing an update for it, but still report it as a success.
+        if (Object.keys(payload).length > 0) {
+          bulkOps.push({
+            updateOne: {
+              filter: { _id: existingId },
+              update: { $set: payload },
+            },
+          });
+        }
 
         successData.push({
           index: i + 2,
