@@ -237,9 +237,11 @@ const generateSalesEnquiryReport = asyncHandler(async (req, res) => {
           "Godown Code": enquiry.godownId?.godownCode || "",
           "Godown Name": escapeCSVValue(enquiry.godownId?.godownName || ""),
           "Enquiry Number": enquiry.enquiryNo || "",
-          "Enquiry Date": moment(enquiry.updatedAt)
-            .tz("Asia/Kolkata")
-            .format("DD-MM-YYYY"),
+          "Enquiry Date": enquiry.manualDate
+            ? moment(enquiry.manualDate)
+              .tz("Asia/Kolkata")
+              .format("DD-MM-YYYY")
+            : "",
           "Order Source": enquiry.orderSource || "",
           "Salesman Code": enquiry.salesmanName?.empId || "",
           "Salesman Name": enquiry.salesmanName?.name || "",
