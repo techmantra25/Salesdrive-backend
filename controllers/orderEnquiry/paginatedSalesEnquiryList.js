@@ -156,7 +156,8 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
         {
           rowId: `${enquiry._id}`,
           enquiryNo: enquiry.enquiryNo || "",
-          enquiryDate: enquiry.updatedAt,
+          enquiryDate: enquiry.manualDate || enquiry.updatedAt || null,
+          manualDate: enquiry.manualDate || null,
           orderSource: enquiry.orderSource || "",
           godownCode: enquiry.godownId?.godownCode || "",
           godownName: enquiry.godownId?.godownName || "",
@@ -197,7 +198,8 @@ const paginatedSalesEnquiryList = asyncHandler(async (req, res) => {
       return {
         rowId: `${enquiry._id}-${idx}`,
         enquiryNo: enquiry.enquiryNo || "",
-        enquiryDate: enquiry.updatedAt,
+        enquiryDate: enquiry.manualDate || order.updatedAt || null,
+        manualDate: enquiry.manualDate || null,
         orderSource: enquiry.orderSource || "",
         godownCode: enquiry.godownId?.godownCode || "",
         godownName: enquiry.godownId?.godownName || "",

@@ -130,7 +130,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
         {
           rowId: `${order._id}`,
           orderNo: order.orderNo || "",
-          orderDate: order.updatedAt,
+          orderDate: order.manualOrderDate || order.updatedAt || null,
           orderSource: order.orderSource || "",
           godownCode: order.godownId?.godownCode || "",
           godownName: order.godownId?.godownName || "",
@@ -170,7 +170,7 @@ const paginatedSalesOrderList = asyncHandler(async (req, res) => {
       return {
         rowId: `${order._id}-${idx}`,
         orderNo: order.orderNo || "",
-        orderDate: order.updatedAt,
+        orderDate: order.manualOrderDate || order.updatedAt || null,
         orderSource: order.orderSource || "",
         godownCode: order.godownId?.godownCode || "",
         godownName: order.godownId?.godownName || "",
