@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
-
+const CREATE_TYPES = [
+  "MANUAL",
+  "OPENING_STOCK",
+  "SYNC",
+];
 const inventorySchema = new mongoose.Schema(
   {
     productId: {
@@ -86,6 +90,10 @@ const inventorySchema = new mongoose.Schema(
     openingStock: {
       type: Boolean,
       default: false,
+    },
+    createType: {
+      type: String,
+      enum: CREATE_TYPES,
     },
   },
   {
