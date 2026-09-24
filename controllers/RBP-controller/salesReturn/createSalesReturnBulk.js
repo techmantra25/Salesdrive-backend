@@ -38,7 +38,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
-      godownId, // NEW — the godown selected on the Sales Return Entry screen; stock goes back here
+      godownId, // the godown selected on the Sales Return Entry screen; stock goes back here
       goodsType,
       collectionStatus,
       remarks,
@@ -61,7 +61,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
     const missingFields = [
       !routeId && "routeId",
       !retailerId && "retailerId",
-      !godownId && "godownId", // NEW — required, since inventory is godown-wise now
+      !godownId && "godownId", // required, since inventory is godown-wise now
       !goodsType && "goodsType",
       (!lineItems || !lineItems.length) && "lineItems",
     ].filter(Boolean);
@@ -73,12 +73,11 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       });
     }
 
-    // NEW — resolve the return date+time that will be saved on
-    // salesReturnDate / manualDate: the DATE the user picked on the
-    // frontend, combined with the CURRENT time-of-day (i.e. the moment
-    // this request is being processed) — never midnight, and never the
-    // frontend's own clock. Falls back to "right now" entirely if no
-    // manualDate was sent.
+    // Resolve the return date+time that will be saved on salesReturnDate /
+    // manualDate: the DATE the user picked on the frontend, combined with
+    // the CURRENT time-of-day (i.e. the moment this request is being
+    // processed) — never midnight, and never the frontend's own clock.
+    // Falls back to "right now" entirely if no manualDate was sent.
     const nowInKolkata = moment.tz("Asia/Kolkata");
     let resolvedReturnDate = nowInKolkata.toDate();
     if (manualDate) {
@@ -305,7 +304,7 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       salesmanName,
       routeId,
       retailerId,
-      godownId, // NEW — which godown this return's stock was credited back to
+      godownId, // which godown this return's stock was credited back to
       goodsType,
       collectionStatus,
       totalReturnQty,
@@ -324,16 +323,16 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       roundOffAmount,
       cashDiscount,
       netAmount,
-      // NEW — both fields save the frontend-picked date stamped with the
-      // current time (see resolvedReturnDate above). createdAt/updatedAt
-      // are intentionally left alone below — they always stay as
-      // Mongoose's own auto-generated record-creation timestamps.
+      // both fields save the frontend-picked date stamped with the current
+      // time (see resolvedReturnDate above). createdAt/updatedAt are
+      // intentionally left alone below — they always stay as Mongoose's
+      // own auto-generated record-creation timestamps.
       salesReturnDate: resolvedReturnDate,
       originalSalesReturnDate: backdateFields.originalDeliveryDate,
       enabledBackDate: backdateFields.enabledBackDate,
     };
 
-    // NEW — salesReturnNo can collide under concurrent requests if
+    // salesReturnNo can collide under concurrent requests if
     // generateCodeForSalesReturn isn't perfectly atomic (e.g. two requests
     // both read the same "last number" before either writes). Rather than
     // fail the whole return, catch the duplicate-key error, generate a
@@ -397,18 +396,17 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
     for (const item of lineItems) {
       const itemBill = billMap.get(String(item.billId));
 
-      // CHANGED — stock now goes back to whichever godown was selected on
-      // the return entry screen (req.body.godownId), NOT necessarily the
-      // godown of the original bill's inventory record. Inventory is
-      // looked up by product + selected godown instead of by the bill's
-      // stored inventoryId.
+      // Stock now goes back to whichever godown was selected on the return
+      // entry screen (req.body.godownId), NOT necessarily the godown of
+      // the original bill's inventory record. Inventory is looked up by
+      // product + selected godown instead of by the bill's stored
+      // inventoryId.
       const inventory = await Inventory.findOne({
         distributorId: req.user._id,
         productId: item.product,
         godownId: godownId,
       });
 
-      const stockId = await transactionCode("LXSTA");
       if (!inventory) {
         return res.status(404).json({
           status: 404,
@@ -436,33 +434,59 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
       inventory.totalQty = (inventory.availableQty || 0) + (inventory.unsalableQty || 0);
       await inventory.save();
 
-      const transactionData = {
-        distributorId: req.user._id,
-        transactionId: stockId,
-        invItemId: inventory._id, // CHANGED — the godown-resolved inventory doc, not item.inventoryId
-        productId: inventory.productId,
-        billId: itemBill?._id,
-        billLineItemId: item._id,
-        qty: item.returnQty,
-        date: backdateFields.deliveryDate || new Date(),
-        type: "In",
-        description: `Sales Return for ${salesReturnNo} (Bill ${itemBill?.billNo || ""})`,
-        balanceCount: goodsType === "Salable" ? inventory.availableQty : inventory.unsalableQty,
-        transactionType: "salesreturn",
-        stockType: goodsType === "Salable" ? "salable" : "unsalable",
-        dates: {
-          deliveryDate: backdateFields.deliveryDate,
-          originalDeliveryDate: backdateFields.originalDeliveryDate,
-        },
-        enabledBackDate: backdateFields.enabledBackDate,
-      };
+      // stockId (transactionId) is generated fresh from the Transaction
+      // collection and re-generated on each retry below if a duplicate-key
+      // error is hit — same pattern as salesReturnNo above. See the note
+      // on getNextTransactionId() for why this loop only fully protects
+      // against collisions once a sparse unique index exists on
+      // transactionId.
+      const MAX_TRANSACTION_ID_RETRIES = 5;
+      let transaction;
+      for (let txnAttempt = 0; txnAttempt <= MAX_TRANSACTION_ID_RETRIES; txnAttempt++) {
+        const stockId = await getNextTransactionId("LXSTA");
 
-      if (backdateFields.deliveryDate) {
-        transactionData.createdAt = backdateFields.deliveryDate;
-        transactionData.updatedAt = backdateFields.deliveryDate;
+        const transactionData = {
+          distributorId: req.user._id,
+          transactionId: stockId,
+          invItemId: inventory._id, // the godown-resolved inventory doc, not item.inventoryId
+          productId: inventory.productId,
+          billId: itemBill?._id,
+          billLineItemId: item._id,
+          qty: item.returnQty,
+          date: backdateFields.deliveryDate || new Date(),
+          type: "In",
+          description: `Sales Return for ${salesReturnNo} (Bill ${itemBill?.billNo || ""})`,
+          balanceCount: goodsType === "Salable" ? inventory.availableQty : inventory.unsalableQty,
+          transactionType: "salesreturn",
+          stockType: goodsType === "Salable" ? "salable" : "unsalable",
+          godownId: inventory.godownId || godownId, // godown stock was actually returned to
+          dates: {
+            deliveryDate: backdateFields.deliveryDate,
+            originalDeliveryDate: backdateFields.originalDeliveryDate,
+          },
+          enabledBackDate: backdateFields.enabledBackDate,
+        };
+
+        if (backdateFields.deliveryDate) {
+          transactionData.createdAt = backdateFields.deliveryDate;
+          transactionData.updatedAt = backdateFields.deliveryDate;
+        }
+
+        try {
+          transaction = await Transaction.create(transactionData);
+          break;
+        } catch (err) {
+          const isDuplicateTransactionId =
+            err?.code === 11000 &&
+            (err?.keyPattern?.transactionId || /transactionId/.test(err?.message || ""));
+
+          if (!isDuplicateTransactionId || txnAttempt === MAX_TRANSACTION_ID_RETRIES) {
+            throw err;
+          }
+          // loop again — getNextTransactionId() will read the just-created
+          // (colliding) row and move past it
+        }
       }
-
-      const transaction = await Transaction.create(transactionData);
 
       try {
         await createStockLedgerEntry(transaction._id);
@@ -730,6 +754,37 @@ const createSalesReturnBulk = asyncHandler(async (req, res) => {
     throw error;
   }
 });
+
+// Reads the last LXSTA-#### transactionId directly from the Transaction
+// collection and returns the next one in sequence. Replaces the opaque
+// transactionCode("LXSTA") helper so the sequence source is visible and
+// controlled here.
+//
+// IMPORTANT: transactionId currently has only a non-unique index on the
+// Transaction schema (the schema's one unique compound index is scoped to
+// type:"Out" + transactionType in [delivery, salesreturn], which does NOT
+// cover the type:"In" transactions created here). That means this function
+// reduces collision risk but cannot fully prevent it under concurrent
+// requests — for that, add a sparse unique index on transactionId, e.g.:
+//   transactionSchema.index({ transactionId: 1 }, { unique: true, sparse: true });
+// Once that index exists, the retry-on-duplicate-key loop below will
+// actually catch and recover from a collision, the same way salesReturnNo
+// is handled above.
+const getNextTransactionId = async (prefix = "LXSTA") => {
+  const lastTxn = await Transaction.findOne({
+    transactionId: { $regex: `^${prefix}-\\d+$` },
+  })
+    .sort({ _id: -1 })
+    .select("transactionId");
+
+  if (!lastTxn) {
+    return `${prefix}-1`;
+  }
+
+  const match = lastTxn.transactionId.match(/\d+$/);
+  const nextNumber = match ? Number(match[0]) + 1 : 1;
+  return `${prefix}-${nextNumber}`;
+};
 
 // Signature changed: now takes retailerId directly instead of a single bill,
 // since a batch can span multiple bills.

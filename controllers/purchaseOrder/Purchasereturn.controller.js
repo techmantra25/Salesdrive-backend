@@ -1,28 +1,43 @@
+
 const mongoose = require("mongoose");
 const asyncHandler = require("express-async-handler");
 const PurchaseReturnNew = require("../../models/PurchasereturnNew.model");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
+const Transaction = require("../../models/transaction.model");
 
-// Generates a simple sequential code per distributor, e.g. PR-000123
-// Adjust prefix/format to match whatever convention the rest of the app uses.
-const generatePurchaseReturnCode = async (distributorId, session) => {
-  const count = await PurchaseReturnNew.countDocuments({ distributorId }).session(
-    session
-  );
-  const nextNumber = count + 1;
-  return `PR-${String(nextNumber).padStart(6, "0")}`;
+// Generates a sequential purchase return code per distributor
+const generatePurchaseReturnCode = async (distributorId) => {
+  const count = await PurchaseReturnNew.countDocuments({ distributorId });
+  return `PR-${String(count + 1).padStart(6, "0")}`;
 };
 
-// Round to 2 decimals, safely handling non-numeric input.
+// Generates a transaction ID
+const generateTransactionId = async () => {
+  const count = await Transaction.countDocuments({});
+  return `LXSTA-${count + 1}`;
+};
+
+// Round to 2 decimals
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+
+// =====================================================
+// CREATE PURCHASE RETURN
+// =====================================================
 const createPurchaseReturnNew = asyncHandler(async (req, res) => {
   const distributorId = req?.user?._id;
-  const { godownId, returnDate, lineItems, status, returnRemark, isIGST } =
-    req.body;
 
-  // ---- Basic validation ----
+  const {
+    godownId,
+    returnDate,
+    lineItems,
+    status,
+    returnRemark,
+    isIGST,
+  } = req.body;
+
+  // Basic validation
   if (!distributorId) {
     res.status(401);
     throw new Error("Unauthorized");
@@ -39,12 +54,18 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
   }
 
   const allowedStatuses = ["Draft", "Returned"];
-  const finalStatus = allowedStatuses.includes(status) ? status : "Draft";
+  const finalStatus = allowedStatuses.includes(status)
+    ? status
+    : "Draft";
 
-  // Validate each line item shape
+  // Validate line items
   const invalidItem = lineItems.find(
-    (item) => !item?.productId || !item?.returnQty || Number(item.returnQty) <= 0
+    (item) =>
+      !item?.productId ||
+      !item?.returnQty ||
+      Number(item.returnQty) <= 0
   );
+
   if (invalidItem) {
     res.status(400);
     throw new Error(
@@ -52,24 +73,19 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
     );
   }
 
-  // ---- Recompute every money field server-side ----
-  // We only trust returnQty, mrp, l1BasicPercent, basicRate, and the gst
-  // percents coming from the client. taxableAmount / gstAmount / netAmount
-  // (and the header-level totals below) are always derived here, mirroring
-  // the pattern used in createSingleBill.js — never trust totals from req.body.
+  // Recalculate line item amounts
   const normalizedLineItems = lineItems.map((item) => {
     const returnQty = Number(item.returnQty);
     const mrp = Number(item.mrp) || 0;
     const l1BasicPercent = Number(item.l1BasicPercent) || 0;
 
-    // basicRate can be sent directly (frontend already computes it the same
-    // way), but if it's missing/invalid we fall back to deriving it from
-    // mrp + l1BasicPercent so a bad/absent value can't zero out the return.
     let basicRate = Number(item.basicRate);
+
     if (!Number.isFinite(basicRate) || basicRate < 0) {
       const discount = (mrp * l1BasicPercent) / 100;
       basicRate = Math.max(0, mrp - discount);
     }
+
     basicRate = round2(basicRate);
 
     const cgstPercent = Number(item.cgstPercent) || 0;
@@ -78,8 +94,14 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
 
     const taxableAmount = round2(basicRate * returnQty);
 
-    const gstPercent = isIGST ? igstPercent : cgstPercent + sgstPercent;
-    const gstAmount = round2((taxableAmount * gstPercent) / 100);
+    const gstPercent = isIGST
+      ? igstPercent
+      : cgstPercent + sgstPercent;
+
+    const gstAmount = round2(
+      (taxableAmount * gstPercent) / 100
+    );
+
     const netAmount = round2(taxableAmount + gstAmount);
 
     return {
@@ -97,16 +119,22 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
     };
   });
 
-  // ---- Header-level totals, summed from the recomputed line items ----
+  // Calculate header totals
   const rawTotals = normalizedLineItems.reduce(
     (acc, item) => {
       acc.totalQty += item.returnQty;
       acc.totalTaxableAmount += item.taxableAmount;
       acc.totalGstAmount += item.gstAmount;
       acc.totalAmount += item.netAmount;
+
       return acc;
     },
-    { totalQty: 0, totalTaxableAmount: 0, totalGstAmount: 0, totalAmount: 0 }
+    {
+      totalQty: 0,
+      totalTaxableAmount: 0,
+      totalGstAmount: 0,
+      totalAmount: 0,
+    }
   );
 
   const totals = {
@@ -116,23 +144,21 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
     totalAmount: round2(rawTotals.totalAmount),
   };
 
-  const session = await mongoose.startSession();
-
   try {
-    session.startTransaction();
-
-    // ---- If status is "Returned", validate stock availability BEFORE
-    // touching anything, so we never partially deduct. ----
+    // If returned immediately, validate and deduct stock
     if (finalStatus === "Returned") {
-      const productIds = normalizedLineItems.map((item) => item.productId);
+      const productIds = normalizedLineItems.map(
+        (item) => item.productId
+      );
 
       const inventoryDocs = await Inventory.find({
         productId: { $in: productIds },
-        godownId: godownId,
-        distributorId: distributorId,
-      }).session(session);
+        godownId,
+        distributorId,
+      });
 
       const inventoryByProduct = {};
+
       inventoryDocs.forEach((inv) => {
         inventoryByProduct[inv.productId.toString()] = inv;
       });
@@ -145,8 +171,8 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
 
         if (!inv || availableQty < item.returnQty) {
           const product = await Product.findById(item.productId)
-            .select("product_code name")
-            .session(session);
+            .select("product_code name");
+
           insufficientItems.push({
             productId: item.productId,
             product_code: product?.product_code || item.productId,
@@ -159,24 +185,31 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
 
       if (insufficientItems.length > 0) {
         res.status(400);
+
         throw new Error(
-          `Insufficient stock in the selected godown for: ${insufficientItems
-            .map(
-              (i) =>
-                `${i.product_code} (available: ${i.availableQty}, requested: ${i.requestedReturnQty})`
-            )
-            .join(", ")}`
+          `Insufficient stock in the selected godown for: ${
+            insufficientItems
+              .map(
+                (i) =>
+                  `${i.product_code} (available: ${i.availableQty}, requested: ${i.requestedReturnQty})`
+              )
+              .join(", ")
+          }`
         );
       }
 
-      // ---- Deduct stock for each product in this godown ----
+      const returnDateValue = returnDate
+        ? new Date(returnDate)
+        : new Date();
+
+      // Deduct stock and create transactions
       for (const item of normalizedLineItems) {
         const updated = await Inventory.findOneAndUpdate(
           {
             productId: item.productId,
-            godownId: godownId,
-            distributorId: distributorId,
-            availableQty: { $gte: item.returnQty }, // guards against race conditions
+            godownId,
+            distributorId,
+            availableQty: { $gte: item.returnQty },
           },
           {
             $inc: {
@@ -184,44 +217,64 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
               totalQty: -item.returnQty,
             },
           },
-          { new: true, session }
+          { new: true }
         );
 
         if (!updated) {
-          // Someone else modified stock between our check and this update
           res.status(409);
+
           throw new Error(
             `Stock for product ${item.productId} changed before the return could be saved. Please retry.`
           );
         }
+
+        const transactionId = await generateTransactionId();
+
+        await Transaction.create([
+          {
+            distributorId,
+            productId: item.productId,
+            transactionId,
+            invItemId: updated._id,
+            billId: null,
+            qty: item.returnQty,
+            date: returnDateValue,
+            type: "Out",
+            balanceCount: updated.availableQty,
+            description: "Purchase return — stock deducted",
+            transactionType: "purchasereturn",
+            stockType: "salable",
+            godownId,
+            dates: {
+              deliveryDate: null,
+              originalDeliveryDate: null,
+            },
+            enabledBackDate: false,
+          },
+        ]);
       }
     }
 
-    // ---- Generate code and create the return document ----
-    const code = await generatePurchaseReturnCode(distributorId, session);
+    // Generate purchase return code
+    const code = await generatePurchaseReturnCode(distributorId);
 
-    const purchaseReturnDoc = await PurchaseReturnNew.create(
-      [
-        {
-          code,
-          distributorId,
-          godownId,
-          returnDate: returnDate || Date.now(),
-          isIGST: !!isIGST,
-          lineItems: normalizedLineItems,
-          totalQty: totals.totalQty,
-          totalTaxableAmount: totals.totalTaxableAmount,
-          totalGstAmount: totals.totalGstAmount,
-          totalAmount: totals.totalAmount,
-          status: finalStatus,
-          returnRemark: (returnRemark || "").trim(),
-        },
-      ],
-      { session }
-    );
-
-    await session.commitTransaction();
-    session.endSession();
+    // Create purchase return
+    const purchaseReturnDoc = await PurchaseReturnNew.create([
+      {
+        code,
+        distributorId,
+        godownId,
+        returnDate: returnDate || Date.now(),
+        isIGST: !!isIGST,
+        lineItems: normalizedLineItems,
+        totalQty: totals.totalQty,
+        totalTaxableAmount: totals.totalTaxableAmount,
+        totalGstAmount: totals.totalGstAmount,
+        totalAmount: totals.totalAmount,
+        status: finalStatus,
+        returnRemark: (returnRemark || "").trim(),
+      },
+    ]);
 
     return res.status(201).json({
       status: 201,
@@ -232,45 +285,43 @@ const createPurchaseReturnNew = asyncHandler(async (req, res) => {
       data: purchaseReturnDoc[0],
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-
-    // Re-throw with whatever status was already set (asyncHandler needs a
-    // status code set before throwing, matching the pattern in this codebase)
     if (!res.statusCode || res.statusCode === 200) {
       res.status(400);
     }
+
     throw error;
   }
 });
 
-// ---- Confirm an existing Draft: Draft -> Returned + stock deduction ----
-// Route: PATCH /confirm-purchase-return-new/:purchaseReturnId
+
+// =====================================================
+// CONFIRM PURCHASE RETURN
+// Draft -> Returned + stock deduction
+// =====================================================
 const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
   const distributorId = req?.user?._id;
   const { purchaseReturnId } = req.params;
 
-  // ---- Basic validation ----
+  // Basic validation
   if (!distributorId) {
     res.status(401);
     throw new Error("Unauthorized");
   }
 
-  if (!purchaseReturnId || !mongoose.Types.ObjectId.isValid(purchaseReturnId)) {
+  if (
+    !purchaseReturnId ||
+    !mongoose.Types.ObjectId.isValid(purchaseReturnId)
+  ) {
     res.status(400);
     throw new Error("Invalid purchase return id");
   }
 
-  const session = await mongoose.startSession();
-
   try {
-    session.startTransaction();
-
-    // ---- Find the return, scoped to this distributor ----
+    // Find purchase return
     const purchaseReturn = await PurchaseReturnNew.findOne({
       _id: purchaseReturnId,
       distributorId,
-    }).session(session);
+    });
 
     if (!purchaseReturn) {
       res.status(404);
@@ -279,6 +330,7 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
 
     if (purchaseReturn.status !== "Draft") {
       res.status(400);
+
       throw new Error(
         `Purchase return is already "${purchaseReturn.status}" and cannot be confirmed again`
       );
@@ -292,17 +344,19 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
       throw new Error("Purchase return has no line items to confirm");
     }
 
-    // ---- Validate stock availability BEFORE touching anything, so we
-    // never partially deduct. ----
-    const productIds = lineItems.map((item) => item.productId);
+    // Validate stock availability
+    const productIds = lineItems.map(
+      (item) => item.productId
+    );
 
     const inventoryDocs = await Inventory.find({
       productId: { $in: productIds },
-      godownId: godownId,
-      distributorId: distributorId,
-    }).session(session);
+      godownId,
+      distributorId,
+    });
 
     const inventoryByProduct = {};
+
     inventoryDocs.forEach((inv) => {
       inventoryByProduct[inv.productId.toString()] = inv;
     });
@@ -315,8 +369,8 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
 
       if (!inv || availableQty < item.returnQty) {
         const product = await Product.findById(item.productId)
-          .select("product_code name")
-          .session(session);
+          .select("product_code name");
+
         insufficientItems.push({
           productId: item.productId,
           product_code: product?.product_code || item.productId,
@@ -329,24 +383,31 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
 
     if (insufficientItems.length > 0) {
       res.status(400);
+
       throw new Error(
-        `Insufficient stock in the selected godown for: ${insufficientItems
-          .map(
-            (i) =>
-              `${i.product_code} (available: ${i.availableQty}, requested: ${i.requestedReturnQty})`
-          )
-          .join(", ")}`
+        `Insufficient stock in the selected godown for: ${
+          insufficientItems
+            .map(
+              (i) =>
+                `${i.product_code} (available: ${i.availableQty}, requested: ${i.requestedReturnQty})`
+            )
+            .join(", ")
+        }`
       );
     }
 
-    // ---- Deduct stock for each product in this godown ----
+    const returnDateValue = purchaseReturn.returnDate
+      ? new Date(purchaseReturn.returnDate)
+      : new Date();
+
+    // Deduct stock and create transactions
     for (const item of lineItems) {
       const updated = await Inventory.findOneAndUpdate(
         {
           productId: item.productId,
-          godownId: godownId,
-          distributorId: distributorId,
-          availableQty: { $gte: item.returnQty }, // guards against race conditions
+          godownId,
+          distributorId,
+          availableQty: { $gte: item.returnQty },
         },
         {
           $inc: {
@@ -354,25 +415,48 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
             totalQty: -item.returnQty,
           },
         },
-        { new: true, session }
+        { new: true }
       );
 
       if (!updated) {
-        // Someone else modified stock between our check and this update
         res.status(409);
+
         throw new Error(
           `Stock for product ${item.productId} changed before the return could be confirmed. Please retry.`
         );
       }
+
+      const transactionId = await generateTransactionId();
+
+      await Transaction.create([
+        {
+          distributorId,
+          productId: item.productId,
+          transactionId,
+          invItemId: updated._id,
+          billId: null,
+          qty: item.returnQty,
+          date: returnDateValue,
+          type: "Out",
+          balanceCount: updated.availableQty,
+          description: `Purchase return ${purchaseReturn.code} confirmed — stock deducted`,
+          transactionType: "purchasereturn",
+          stockType: "salable",
+          godownId,
+          dates: {
+            deliveryDate: null,
+            originalDeliveryDate: null,
+          },
+          enabledBackDate: false,
+        },
+      ]);
     }
 
-
+    // Update purchase return status
     purchaseReturn.status = "Returned";
     purchaseReturn.createdAt = new Date();
-    await purchaseReturn.save({ session });
 
-    await session.commitTransaction();
-    session.endSession();
+    await purchaseReturn.save();
 
     return res.status(200).json({
       status: 200,
@@ -380,14 +464,15 @@ const confirmPurchaseReturnNew = asyncHandler(async (req, res) => {
       data: purchaseReturn,
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
-
     if (!res.statusCode || res.statusCode === 200) {
       res.status(400);
     }
+
     throw error;
   }
 });
 
-module.exports = { createPurchaseReturnNew, confirmPurchaseReturnNew };
+module.exports = {
+  createPurchaseReturnNew,
+  confirmPurchaseReturnNew,
+};

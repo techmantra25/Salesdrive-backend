@@ -9,33 +9,7 @@ const notificationQueue = require("../../queues/notificationQueue");
 
 const BATCH_SIZE = 1000;
 
-/**
- * Behavior (per product, per active godown):
- *  - Row already exists for (product, godown)   -> left untouched.
- *  - Row missing for (product, godown)          -> created at zero stock.
- * So a product with 3 active godowns always ends up with exactly 3 rows,
- * one per godown, no matter which of them already had stock before sync
- * ran. A single godown can never end up with 2 rows for the same product.
- *
- * That guarantee is enforced at two levels:
- *  1. App level: the upsert filter is the exact triple
- *     (productId, distributorId, godownId).
- *  2. DB level (the part that actually makes it race-proof): the
- *     Inventory collection MUST have a unique compound index on
- *     { productId: 1, distributorId: 1, godownId: 1 }. Without that
- *     index, two upserts racing on the same missing triple can both
- *     "not find" a match and both insert — the unique index is what
- *     forces the second one to fail instead of silently duplicating.
- *     Add it once via:
- *       db.inventories.createIndex(
- *         { productId: 1, distributorId: 1, godownId: 1 },
- *         { unique: true }
- *       )
- *     (or the equivalent `index({...}, {unique:true})` in the Mongoose
- *     schema). This file assumes that index exists and treats a
- *     duplicate-key error on a specific pair as "already synced by a
- *     concurrent process", not a real failure.
- */
+
 const syncInventoryWithProductMaster = asyncHandler(async (req, res) => {
   const distributorId = req.user?._id;
 

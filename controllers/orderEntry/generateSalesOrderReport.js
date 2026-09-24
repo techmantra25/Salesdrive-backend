@@ -238,9 +238,11 @@ const generateSalesOrderReport = asyncHandler(async (req, res) => {
           "Godown Code": order.godownId?.godownCode || "",
           "Godown Name": escapeCSVValue(order.godownId?.godownName || ""),
           "Order Number": order.orderNo || "",
-          "Order Date": moment(order.updatedAt)
-            .tz("Asia/Kolkata")
-            .format("DD-MM-YYYY"),
+          "Order Date": order.manualOrderDate
+            ? moment(order.manualOrderDate)
+              .tz("Asia/Kolkata")
+              .format("DD-MM-YYYY")
+            : "",
           "Order Source": order.orderSource || "",
           "Salesman Code": order.salesmanName?.empId || "",
           "Salesman Name": order.salesmanName?.name || "",

@@ -7,7 +7,7 @@ const fs = require("fs");
 const { promises: fsPromises } = require("fs");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
-const Godown = require("../../models/godown.model"); // NEW: needed to resolve Godown Code -> godownId
+const Godown = require("../../models/godown.model"); // needed to resolve Godown Code -> godownId
 const Transaction = require("../../models/transaction.model");
 const Distributor = require("../../models/distributor.model");
 const DistributorTransaction = require("../../models/distributorTransaction.model");
@@ -62,7 +62,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                 "Qty In Pcs",
                 "Remarks",
                 "Stock Type",
-                "Godown Code", // NEW: which godown this row's stock belongs to
+                "Godown Code", // which godown this row's stock belongs to
               ],
               skipLines: 1,
             }),
@@ -73,10 +73,10 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
               await Promise.all(
                 results.map(async (row, index) => {
                   const productCode = row["Product code"]?.trim();
+                  const godownCode = row["Godown Code"]?.trim();
                   const qty = parseInt(row["Qty In Pcs"], 10);
                   const adjustmentType = row["Adjustment"]?.trim().toLowerCase();
                   const stockType = row["Stock Type"]?.trim().toLowerCase();
-                  const godownCode = row["Godown Code"]?.trim();
 
                   if (isNaN(qty) || qty <= 0) {
                     skippedRows.push({
@@ -102,7 +102,6 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     return;
                   }
 
-                  // ---- NEW: Godown is now required per row ----
                   if (!godownCode) {
                     skippedRows.push({
                       row: index + 1,
@@ -187,6 +186,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     }
                     processedProducts.push({
                       productCode,
+                      godownCode,
                       adjustmentType,
                       qty,
                       basePoint,
@@ -197,21 +197,15 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                   // ------------------------------------------------------------------
                   // ATOMIC INVENTORY UPDATE (race-condition safe)
                   // ------------------------------------------------------------------
-                  // Previous version did: findOne -> mutate in JS -> save().
-                  // Under Promise.all, concurrent rows touching the same
-                  // (productId, distributorId, godownId) would read the same
-                  // stale snapshot and the later .save() would clobber the
-                  // earlier one's write — silently dropping an adjustment.
-                  //
-                  // Fix: use a single atomic findOneAndUpdate with $inc, which
+                  // Uses a single atomic findOneAndUpdate with $inc, which
                   // MongoDB guarantees is applied atomically server-side even
-                  // under concurrent requests. Also scope strictly by
-                  // godownId (not just productId+distributorId) so a bulk
-                  // upload never guesses which godown's stock to touch, and
-                  // upsert so a brand-new (product, godown) pair gets created
-                  // correctly with godownId/godownType set from the start —
-                  // this is the root cause of the earlier "combine across
-                  // godowns" bug, where a doc existed with no godown info.
+                  // under concurrent requests — avoids the old
+                  // findOne -> mutate in JS -> save() pattern, where two
+                  // concurrent rows touching the same (productId,
+                  // distributorId, godownId) could read the same stale
+                  // snapshot and the later .save() would clobber the
+                  // earlier write. Scoped strictly by godownId so a bulk
+                  // upload never guesses which godown's stock to touch.
 
                   const qtyField =
                     stockType === "salable"
@@ -268,9 +262,9 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                       // productId/distributorId/godownId are already part of
                       // `filter` above, so MongoDB sets them automatically on
                       // upsert-insert — no $setOnInsert needed for those.
-                      // godownType is intentionally NOT set here: the read
-                      // pipeline no longer filters on it (see inventory list
-                      // controller), so it's not required for correctness.
+                      $setOnInsert: {
+                        createType: "bulkStockAdjustment",
+                      },
                     },
                     {
                       new: true,
@@ -396,6 +390,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                   totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
                   processedProducts: processedProducts.map((product) => ({
                     productCode: product.productCode,
+                    godownCode: product.godownCode,
                     adjustmentType: product.adjustmentType,
                     qty: product.qty,
                     basePoint: product.basePoint,

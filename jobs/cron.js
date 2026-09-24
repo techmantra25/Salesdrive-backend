@@ -44,6 +44,40 @@ const { SERVER_URL } = require("../config/server.config");
 //   "Asia/Kolkata"
 // );
 
+// Sync inventory with product master daily at 5:00 AM and 12:00 PM
+const syncInventoryWithProductMasterJob = new cron.CronJob(
+  "00 05,12 * * *",
+  async function () {
+    try {
+      console.log("🔄 Starting Inventory with Product Master Sync...");
+
+      const distributorId = "6a33c65753a484258e9b0979";
+
+      const res = await axios.get(
+        `${API_URL}/api/v1/inventory/sync-inventory-with-product-master?distributorId=${distributorId}`
+      );
+
+      if (res.status === 200 || res.status === 201) {
+        console.log(
+          "✅ Inventory synced with Product Master successfully"
+        );
+      } else {
+        console.log(
+          "❌ Inventory with Product Master sync failed",
+          res.status
+        );
+      }
+    } catch (error) {
+      console.error(
+        "🔥 Error while syncing inventory with Product Master:",
+        error.response?.data || error.message
+      );
+    }
+  },
+  null,
+  true,
+  "Asia/Kolkata"
+);
 // // to fetch primary invoices every 3 hours 23 minutes between 6am to 7pm
 // const fetchPrimaryInvoicesJob = new cron.CronJob(
 //   "23 6-19/3 * * *",
@@ -1025,4 +1059,5 @@ module.exports = {
   //   syncOutletCodeUpdatesJob,
   // rebuildDistributorBalanceJob,
   // rebuildRetailerBalanceJob,
+  syncInventoryWithProductMasterJob 
 };
