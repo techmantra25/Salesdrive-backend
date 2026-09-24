@@ -52,19 +52,10 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
 
     const pipeline = [];
 
-    // ---- Shared godown filter fragment ----
-    // A specific godownId always takes precedence over godownType, since
-    // godownType is a denormalized field on each inventory doc (copied from
-    // the godown it belongs to) and a specific godown already disambiguates
-    // type. This same fragment is reused in totalCountPipeline and
-    // pointsCalculationPipeline so all counts/totals stay consistent with
-    // whichever godown filter the user has selected.
-    const godownMatchFragment = godownId
-      ? { godownId: new mongoose.Types.ObjectId(godownId) }
-      : godownType
-      ? { godownType: godownType }
-      : {};
-
+   
+const godownMatchFragment = godownId
+  ? { godownId: new mongoose.Types.ObjectId(godownId) }
+  : {};
     // Match filters for inventory
     // --------------------------------------------------
     // INVENTORY FILTER
