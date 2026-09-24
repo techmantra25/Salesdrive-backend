@@ -7,9 +7,10 @@ const fs = require("fs");
 const { promises: fsPromises } = require("fs");
 const Inventory = require("../../models/inventory.model");
 const Product = require("../../models/product.model");
+const Godown = require("../../models/godown.model"); // NEW: needed to resolve Godown Code -> godownId
 const Transaction = require("../../models/transaction.model");
-const Distributor = require("../../models/distributor.model"); // **NEW: Added distributor import**
-const DistributorTransaction = require("../../models/distributorTransaction.model"); // **NEW: Added DistributorTransaction import**
+const Distributor = require("../../models/distributor.model");
+const DistributorTransaction = require("../../models/distributorTransaction.model");
 const { transactionCode } = require("../../utils/codeGenerator");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
@@ -29,14 +30,12 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
     const fileName = `${uuidv4()}.csv`;
     const filePath = path.join(__dirname, fileName);
 
-    // Download the file from the URL
     const response = await axios({
       method: "GET",
       url: csvUrl,
       responseType: "stream",
     });
 
-    // Save the file locally
     const writer = fs.createWriteStream(filePath);
     response.data.pipe(writer);
 
@@ -47,7 +46,11 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
         const transactions = [];
         const stockId = await transactionCode("LXSTA");
         let totalAdjustmentPoints = 0;
-        const processedProducts = []; // Track processed products for logging
+        const processedProducts = [];
+
+        // Cache Godown lookups per distributor so we don't hit the DB
+        // once per CSV row for the same godown code.
+        const godownCache = new Map();
 
         fs.createReadStream(filePath)
           .pipe(
@@ -59,6 +62,7 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                 "Qty In Pcs",
                 "Remarks",
                 "Stock Type",
+                "Godown Code", // NEW: which godown this row's stock belongs to
               ],
               skipLines: 1,
             }),
@@ -68,10 +72,11 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
             try {
               await Promise.all(
                 results.map(async (row, index) => {
-                  const productCode = row["Product code"].trim();
+                  const productCode = row["Product code"]?.trim();
                   const qty = parseInt(row["Qty In Pcs"], 10);
-                  const adjustmentType = row["Adjustment"].trim().toLowerCase();
-                  const stockType = row["Stock Type"].trim().toLowerCase();
+                  const adjustmentType = row["Adjustment"]?.trim().toLowerCase();
+                  const stockType = row["Stock Type"]?.trim().toLowerCase();
+                  const godownCode = row["Godown Code"]?.trim();
 
                   if (isNaN(qty) || qty <= 0) {
                     skippedRows.push({
@@ -93,6 +98,33 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     skippedRows.push({
                       row: index + 1,
                       reason: `Invalid stock type for Product code: ${productCode}. Must be 'salable', 'unsalable', or 'offer'`,
+                    });
+                    return;
+                  }
+
+                  // ---- NEW: Godown is now required per row ----
+                  if (!godownCode) {
+                    skippedRows.push({
+                      row: index + 1,
+                      reason: `Godown Code is required for Product code: ${productCode}`,
+                    });
+                    return;
+                  }
+
+                  let godown = godownCache.get(godownCode);
+                  if (godown === undefined) {
+                    godown = await Godown.findOne({
+                      distributorId,
+                      godownCode,
+                      isActive: true,
+                    }).lean();
+                    godownCache.set(godownCode, godown || null);
+                  }
+
+                  if (!godown) {
+                    skippedRows.push({
+                      row: index + 1,
+                      reason: `Godown Code "${godownCode}" not found (or inactive) for this distributor. Product code: ${productCode}`,
                     });
                     return;
                   }
@@ -143,21 +175,16 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     return;
                   }
 
-                  // **NEW: Calculate adjustment points before inventory update**
                   const basePoint = Number(product.base_point) || 0;
+                  let productAdjustmentPoints = 0;
                   if (basePoint > 0) {
-                    let productAdjustmentPoints = 0;
-
                     if (adjustmentType === "add") {
-                      // For add adjustment, credit points
                       productAdjustmentPoints = basePoint * qty;
                       totalAdjustmentPoints += productAdjustmentPoints;
                     } else if (adjustmentType === "reduce") {
-                      // For reduce adjustment, debit points
                       productAdjustmentPoints = basePoint * qty;
                       totalAdjustmentPoints -= productAdjustmentPoints;
                     }
-
                     processedProducts.push({
                       productCode,
                       adjustmentType,
@@ -167,126 +194,139 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     });
                   }
 
-                  let inventory = await Inventory.findOne({
+                  // ------------------------------------------------------------------
+                  // ATOMIC INVENTORY UPDATE (race-condition safe)
+                  // ------------------------------------------------------------------
+                  // Previous version did: findOne -> mutate in JS -> save().
+                  // Under Promise.all, concurrent rows touching the same
+                  // (productId, distributorId, godownId) would read the same
+                  // stale snapshot and the later .save() would clobber the
+                  // earlier one's write — silently dropping an adjustment.
+                  //
+                  // Fix: use a single atomic findOneAndUpdate with $inc, which
+                  // MongoDB guarantees is applied atomically server-side even
+                  // under concurrent requests. Also scope strictly by
+                  // godownId (not just productId+distributorId) so a bulk
+                  // upload never guesses which godown's stock to touch, and
+                  // upsert so a brand-new (product, godown) pair gets created
+                  // correctly with godownId/godownType set from the start —
+                  // this is the root cause of the earlier "combine across
+                  // godowns" bug, where a doc existed with no godown info.
+
+                  const qtyField =
+                    stockType === "salable"
+                      ? "availableQty"
+                      : stockType === "unsalable"
+                      ? "unsalableQty"
+                      : "offerQty";
+
+                  const dlpAmtField =
+                    stockType === "salable"
+                      ? "totalStockamtDlp"
+                      : stockType === "unsalable"
+                      ? "totalUnsalableamtDlp"
+                      : null;
+
+                  const rlpAmtField =
+                    stockType === "salable"
+                      ? "totalStockamtRlp"
+                      : stockType === "unsalable"
+                      ? "totalUnsalableStockamtRlp"
+                      : null;
+
+                  const signedQty = adjustmentType === "add" ? qty : -qty;
+                  const signedDlpAmt = dlpAmtField
+                    ? (adjustmentType === "add" ? qty : -qty) * dlpbyPcs
+                    : 0;
+                  const signedRlpAmt = rlpAmtField
+                    ? (adjustmentType === "add" ? qty : -qty) * rlpbyPcs
+                    : 0;
+
+                  const filter = {
                     productId: product._id,
                     distributorId,
-                  });
+                    godownId: godown._id,
+                  };
 
-                  if (!inventory) {
+                  // For "reduce", guard against going negative atomically by
+                  // requiring currentStock >= qty as part of the filter. If
+                  // that condition fails to match, findOneAndUpdate returns
+                  // null (row is skipped below) instead of racing on a
+                  // separate read-then-check.
+                  if (adjustmentType === "reduce") {
+                    filter[qtyField] = { $gte: qty };
+                  }
+
+                  const inc = { [qtyField]: signedQty, totalQty: signedQty };
+                  if (dlpAmtField) inc[dlpAmtField] = signedDlpAmt;
+                  if (rlpAmtField) inc[rlpAmtField] = signedRlpAmt;
+
+                  const updatedInventory = await Inventory.findOneAndUpdate(
+                    filter,
+                    {
+                      $inc: inc,
+                      // productId/distributorId/godownId are already part of
+                      // `filter` above, so MongoDB sets them automatically on
+                      // upsert-insert — no $setOnInsert needed for those.
+                      // godownType is intentionally NOT set here: the read
+                      // pipeline no longer filters on it (see inventory list
+                      // controller), so it's not required for correctness.
+                    },
+                    {
+                      new: true,
+                      upsert: adjustmentType === "add", // never create a doc just to reduce it
+                      setDefaultsOnInsert: true,
+                    },
+                  );
+
+                  if (!updatedInventory) {
+                    // Either reduce failed the $gte guard (insufficient
+                    // stock) or no doc exists to reduce from.
                     skippedRows.push({
                       row: index + 1,
-                      reason: `Inventory not found for Product code: ${productCode}`,
+                      reason:
+                        adjustmentType === "reduce"
+                          ? `Insufficient ${stockType} stock for Product code: ${productCode} at godown ${godownCode} (requested ${qty})`
+                          : `Inventory not found for Product code: ${productCode} at godown ${godownCode}`,
                     });
                     return;
                   }
 
-                  // Adjust quantities and stock amounts based on the adjustment type and stock type
-
-
-                  if (adjustmentType === "reduce") {
-                    let currentStock;
-                    
-                    if (stockType === "salable") {
-                      currentStock = inventory.availableQty || 0;
-                    } else if (stockType === "unsalable") {
-                      currentStock = inventory.unsalableQty || 0;
-                    } else if (stockType === "offer") {
-                      currentStock = inventory.offerQty || 0;
-                    }
-                    
-                    if (currentStock < qty) {
-                      skippedRows.push({
-                        row: index + 1,
-                        reason: `Insufficient ${stockType} stock for Product code: ${productCode}. Available: ${currentStock}, Requested: ${qty}`,
-                      });
-                      return;
-                    }
-                  }
-                  if (adjustmentType === "add") {
-                    if (stockType === "salable") {
-                      inventory.availableQty += qty;
-                      inventory.totalStockamtDlp += dlpbyPcs * qty;
-                      inventory.totalStockamtRlp += rlpbyPcs * qty;
-                    } else if (stockType === "unsalable") {
-                      inventory.unsalableQty += qty;
-                      inventory.totalUnsalableamtDlp += dlpbyPcs * qty;
-                      inventory.totalUnsalableStockamtRlp += rlpbyPcs * qty;
-                    } else if (stockType === "offer") {
-                      inventory.offerQty += qty;
-                    }
-                  } else if (adjustmentType === "reduce") {
-                    if (stockType === "salable") {
-                      inventory.availableQty = Math.max(
-                        inventory.availableQty - qty,
-                        0,
-                      );
-                      inventory.totalStockamtDlp = Math.max(
-                        inventory.totalStockamtDlp - dlpbyPcs * qty,
-                        0,
-                      );
-                      inventory.totalStockamtRlp = Math.max(
-                        inventory.totalStockamtRlp - rlpbyPcs * qty,
-                        0,
-                      );
-                    } else if (stockType === "unsalable") {
-                      inventory.unsalableQty = Math.max(
-                        inventory.unsalableQty - qty,
-                        0,
-                      );
-                      inventory.totalUnsalableamtDlp = Math.max(
-                        inventory.totalUnsalableamtDlp - dlpbyPcs * qty,
-                        0,
-                      );
-                      inventory.totalUnsalableStockamtRlp = Math.max(
-                        inventory.totalUnsalableStockamtRlp - rlpbyPcs * qty,
-                        0,
-                      );
-                    } else if (stockType === "offer") {
-                      inventory.offerQty = Math.max(
-                        inventory.offerQty - qty,
-                        0,
-                      );
-                    }
+                  // Clamp amount fields at 0 defensively (in case of prior
+                  // negative drift in the data); doesn't affect qty which is
+                  // already guarded above.
+                  if (
+                    (dlpAmtField && updatedInventory[dlpAmtField] < 0) ||
+                    (rlpAmtField && updatedInventory[rlpAmtField] < 0)
+                  ) {
+                    await Inventory.updateOne(filter, {
+                      $max: {
+                        ...(dlpAmtField ? { [dlpAmtField]: 0 } : {}),
+                        ...(rlpAmtField ? { [rlpAmtField]: 0 } : {}),
+                      },
+                    });
                   }
 
-                  // Calculate totalQty
-                  inventory.totalQty =
-                    inventory.availableQty +
-                    inventory.unsalableQty +
-                    inventory.offerQty;
-
-                  // Save the inventory
-                  await inventory.save();
-
-                  // causing the issue
                   transactions.push({
                     distributorId,
                     transactionId: stockId,
-                    invItemId: inventory._id,
+                    invItemId: updatedInventory._id,
                     productId: product._id,
+                    godownId: godown._id,
                     qty,
                     date: new Date(),
                     type: adjustmentType === "add" ? "In" : "Out",
                     description: row["Remarks"],
-                    balanceCount:
-                      stockType === "salable"
-                        ? inventory.availableQty
-                        : stockType === "unsalable"
-                          ? inventory.unsalableQty
-                          : inventory.offerQty,
+                    balanceCount: updatedInventory[qtyField],
                     transactionType: "stockadjustment",
                     stockType,
                   });
                 }),
               );
 
-              // Insert transactions in bulk
-              // await Transaction.insertMany(transactions);
-
               const createdTransactions =
                 await Transaction.insertMany(transactions);
 
-              // Create stock ledger entries in bulk
               try {
                 await createBulkStockLedgerEntries(createdTransactions);
               } catch (error) {
@@ -294,72 +334,39 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                   "Bulk stock ledger creation failed:",
                   error.message,
                 );
-                // Don't throw - allow adjustment to continue
               }
 
-              // **NEW: Create DistributorTransaction for adjustment points if applicable**
-              if (
-                processedProducts?.length > 0 &&
-                totalAdjustmentPoints !== 0
-              ) {
+              if (processedProducts?.length > 0 && totalAdjustmentPoints !== 0) {
                 try {
-                  console.log(
-                    `Processing ${processedProducts.length} products for adjustment points calculation...`,
-                  );
-
-                  // **NEW: Fetch distributor details to check RBP scheme mapping**
                   const distributor =
                     await Distributor.findById(distributorId).lean();
 
                   if (!distributor) {
-                    console.log(
-                      `Distributor not found for ID: ${distributorId}`,
-                    );
+                    console.log(`Distributor not found for ID: ${distributorId}`);
                   } else if (distributor?.RBPSchemeMapped !== "yes") {
                     console.log(
                       `Skipping adjustment points calculation - RBP scheme not mapped for distributor ${distributor.dbCode} (RBPSchemeMapped: ${distributor.RBPSchemeMapped})`,
                     );
                   } else {
-                    console.log(
-                      `Creating distributor transaction for ${Math.abs(
-                        totalAdjustmentPoints,
-                      )} adjustment points for distributor ${
-                        distributor.dbCode
-                      }...`,
-                    );
-
-                    // Get the latest distributor transaction to calculate new balance
                     const latestTransaction =
                       await DistributorTransaction.findOne({
-                        distributorId: distributorId,
+                        distributorId,
                       }).sort({ createdAt: -1 });
 
                     const currentBalance = latestTransaction
                       ? Number(latestTransaction.balance)
                       : 0;
 
-                    // Determine transaction type and ensure we have positive points for transaction
                     const transactionType =
                       totalAdjustmentPoints > 0 ? "credit" : "debit";
                     const pointsToRecord = Math.abs(totalAdjustmentPoints);
                     const newBalance =
                       transactionType === "credit"
                         ? currentBalance + pointsToRecord
-                        : Math.max(currentBalance - pointsToRecord, 0); // Prevent negative balance
+                        : Math.max(currentBalance - pointsToRecord, 0);
 
-                    // Check if debit would cause negative balance
-                    if (
-                      transactionType === "debit" &&
-                      currentBalance < pointsToRecord
-                    ) {
-                      console.log(
-                        `Warning: Adjustment would cause negative balance. Current: ${currentBalance}, Attempting to debit: ${pointsToRecord}. Setting balance to 0.`,
-                      );
-                    }
-
-                    // Create the distributor transaction
                     const distributorTransaction = new DistributorTransaction({
-                      distributorId: distributorId,
+                      distributorId,
                       transactionType,
                       transactionFor: "Adjustment Point",
                       point: Math.round(pointsToRecord),
@@ -369,32 +376,21 @@ const bulkStockAdjustment = asyncHandler(async (req, res) => {
                     });
 
                     await distributorTransaction.save();
-
-                    console.log(
-                      `Successfully created distributor transaction: ${transactionType} ${Math.round(
-                        pointsToRecord,
-                      )} points for distributor ${
-                        distributor.dbCode
-                      }. New balance: ${newBalance}`,
-                    );
                   }
                 } catch (pointsError) {
                   console.error(
                     "Error creating distributor transaction:",
                     pointsError,
                   );
-                  // Don't fail the entire operation, just log the error
                 }
               }
 
-              // Delete the local file after processing
               await fsPromises.unlink(filePath);
 
               res.status(201).json({
                 message: "Stock adjustment processed successfully",
                 transactions,
                 skippedRows,
-                // **NEW: Add adjustment points summary to response**
                 adjustmentSummary: {
                   totalProcessedProducts: processedProducts.length,
                   totalAdjustmentPoints: Math.round(totalAdjustmentPoints),
