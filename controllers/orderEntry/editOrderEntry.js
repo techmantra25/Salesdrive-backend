@@ -3,51 +3,103 @@ const asyncHandler = require("express-async-handler");
 const OrderEntry = require("../../models/orderEntry.model");
 const SecondaryOrderEntryLog = require("../../models/SecondaryOrderEntryLogSchema");
 const OutletApproved = require("../../models/outletApproved.model");
+const Distributor = require("../../models/distributor.model");
+const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
+
+// ─────────────────────────────────────────────────────────────────────────
+// GST helpers — identical to createOrderEntry.controller.js. Move to a
+// shared util and import from both places if you want a single copy.
+// ─────────────────────────────────────────────────────────────────────────
+
+const safeNumber = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+};
+
+const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
+
+const getStateIdentity = (state) => {
+    if (!state) return "";
+    if (typeof state === "object") {
+        return String(state.code || state.slug || state._id || state).trim();
+    }
+    return String(state).trim();
+};
+
+const getIsIgst = ({ distributor, retailer }) => {
+    const distributorState = getStateIdentity(distributor?.stateId);
+    const retailerState = getStateIdentity(retailer?.stateId);
+    return distributorState && retailerState && distributorState !== retailerState;
+};
+
+const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
+    let cgst = safeNumber(product?.cgst);
+    let sgst = safeNumber(product?.sgst);
+    let igst = safeNumber(product?.igst);
+
+    if (!cgst && !sgst && !igst) {
+        cgst = 9;
+        sgst = 9;
+        igst = 18;
+    }
+
+    const taxablePricePerProduct = qty > 0 ? taxableAmt / qty : 0;
+
+    if (taxablePricePerProduct >= 2500) {
+        if (cgst === 2.5) cgst = 9;
+        if (sgst === 2.5) sgst = 9;
+        if (igst === 5) igst = 18;
+    }
+
+    return { cgst, sgst, igst };
+};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Builds the FROZEN price snapshot written onto the line item. This is what
+// the order-detail page should render Base Rate / MRP / Std Disc% from —
+// NOT a live populate() of the price reference, which can drift after a
+// Price document is edited or reassigned post-save.
+// ─────────────────────────────────────────────────────────────────────────
+
+const buildPriceSnapshot = (priceDoc) => ({
+    mrp_price: safeNumber(priceDoc?.mrp_price),
+    rlp_price: safeNumber(priceDoc?.rlp_price),
+    dlp_price: safeNumber(priceDoc?.dlp_price),
+    L1DiscountPercentage: safeNumber(priceDoc?.L1DiscountPercentage),
+    L2DiscountPercentage: safeNumber(priceDoc?.L2DiscountPercentage),
+    price_type: priceDoc?.price_type || "",
+    snapshotDate: new Date(),
+});
 
 const editOrderEntry = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-   const {
-    salesmanName,
-    routeId,
-    retailerId,
-    paymentMode,
-    orderType,
-    lineItems,
-    grossAmount,
-    schemeDiscount,
-    distributorDiscount,
-    taxableAmount,
-    cgst,
-    sgst,
-    igst,
-    invoiceAmount,
-    roundOffAmount,
-    cashDiscount,
-    creditAmount,
-    netAmount,
-    totalBasePoints,
-    totalLines,
+    const {
+        salesmanName,
+        routeId,
+        retailerId,
+        paymentMode,
+        orderType,
+        lineItems,
+        creditAmount,
 
-    remark,
+        remark,
 
-    manualOrderDate,
-    shipToAddress,
-    validity,
-    deliveryTerms,
-    deliverySchedule,
-    paymentTerms,
-    remarks,
+        manualOrderDate,
+        shipToAddress,
+        validity,
+        deliveryTerms,
+        deliverySchedule,
+        paymentTerms,
+        remarks,
 
-    freightCharges,
-    handlingCharges,
-} = req.body;
+        freightCharges,
+        handlingCharges,
+    } = req.body;
 
-console.log("Edit Order Entry Request Body:", req.body);
-
-    console.log("All Body in Backend", req.body);
+    console.log("Edit Order Entry Request Body:", req.body);
 
     // ==================================================
     // FIND ORDER
@@ -61,7 +113,7 @@ console.log("Edit Order Entry Request Body:", req.body);
     }
 
     // ==================================================
-    // ONLY PENDING EDITABLE
+    // ONLY PENDING / PARTIALLY BILLED EDITABLE
     // ==================================================
 
     if (
@@ -69,13 +121,11 @@ console.log("Edit Order Entry Request Body:", req.body);
         existingOrder.status !== "Partially_Billed"
     ) {
         res.status(400);
-        throw new Error(
-            "Only Pending / Partially Billed orders can be edited"
-        );
+        throw new Error("Only Pending / Partially Billed orders can be edited");
     }
 
-    const retailerExists = await OutletApproved.findById(
-        retailerId
+    const retailerExists = await OutletApproved.findById(retailerId).populate(
+        "stateId"
     );
 
     if (!retailerExists) {
@@ -83,190 +133,148 @@ console.log("Edit Order Entry Request Body:", req.body);
         throw new Error("Retailer not found");
     }
 
+    const distributor = await Distributor.findById(existingOrder.distributorId).populate(
+        "stateId"
+    );
+
+    const isIGST = getIsIgst({ distributor, retailer: retailerExists });
+
+    // ==================================================
+    // LINE ITEMS
+    // ==================================================
+    // Price the client sends is trusted for WHICH price document applies
+    // (date-based resolution already happened client-side, same as create).
+    // This endpoint validates that product/price/inventory still exist,
+    // guards against a zero-rate price, recomputes GST server-side, and —
+    // NEW — writes a frozen priceSnapshot so the detail page never has to
+    // live-populate the price reference again.
+
     const formattedLineItems = await Promise.all(
         (lineItems || []).map(async (item) => {
+            const productId = item?.product?._id || item?.product || null;
+            const priceId = item?.price?._id || item?.price || null;
 
-            // ==========================================
-            // PRODUCT ID
-            // ==========================================
+            const product = await Product.findById(productId);
+            if (!product) {
+                throw new Error(`Product not found for ID ${productId}`);
+            }
 
-                    const productId =
-                item?.product?._id ||
-                item?.product ||
-                null;
+            const priceDoc = priceId ? await Price.findById(priceId) : null;
+            if (!priceDoc) {
+                throw new Error(`Price not found for ID ${priceId}`);
+            }
 
-            // ==========================================
-            // PRESERVE ORIGINAL PRICE FROM LINE ITEM
-            // ==========================================
+            // Reject a zero/placeholder rate outright — never let a ₹0
+            // price reach the saved order.
+            if (!(Number(priceDoc.rlp_price) > 0)) {
+                throw new Error(
+                    `Price ${priceId} for product ${productId} has no valid rate (rlp_price is ${priceDoc.rlp_price}). Refusing to save with a zero price — pick a different date or fix this price record.`
+                );
+            }
 
-            const priceId =
-                item?.price?._id ||
-                item?.price ||
-                null;
-
-
+            // ------------------------------------------
+            // INVENTORY
+            // ------------------------------------------
             let inventoryId =
                 typeof item?.inventoryId === "object"
-                    ? (
-                        item?.inventoryId?._id ||
-
-                        existingOrder?.lineItems?.find(
-                            (li) =>
-                                String(li?._id) ===
-                                String(item?._id)
-                        )?.inventoryId ||
-
-                        null
-                    )
+                    ? item?.inventoryId?._id ||
+                      existingOrder?.lineItems?.find(
+                          (li) => String(li?._id) === String(item?._id)
+                      )?.inventoryId ||
+                      null
                     : item?.inventoryId || null;
 
-
-            // ==========================================
-            // AUTO FIND INVENTORY IF NULL
-            // ==========================================
-
             if (!inventoryId && productId) {
-
-                const inventory =
-                    await Inventory.findOne({
-                        productId: productId,
-                        distributorId:
-                            existingOrder.distributorId,
-                    });
-
+                const inventory = await Inventory.findOne({
+                    productId: productId,
+                    distributorId: existingOrder.distributorId,
+                });
                 inventoryId = inventory?._id || null;
-
-                console.log(
-                    "AUTO INVENTORY",
-                    productId,
-                    inventoryId
-                );
             }
 
-
-            const grossAmt =
-                Number(item?.grossAmt || 0);
-
-            const taxableAmt =
-                Number(item?.taxableAmt || 0);
-
-
-            let priceDoc = null;
-
-            if (priceId) {
-                priceDoc = await Price.findById(
-                    priceId
-                );
+            if (item?.inventoryId && typeof item.inventoryId !== "object") {
+                const inventory = await Inventory.findById(item.inventoryId);
+                if (!inventory) {
+                    throw new Error(`Inventory not found for ID ${item.inventoryId}`);
+                }
             }
 
-            const mrpPrice = Number(
-                priceDoc?.mrp_price || 0
-            );
+            // ------------------------------------------
+            // AMOUNTS
+            // ------------------------------------------
+            const qty = Number(item?.oderQty || 0);
+            if (qty < 0) {
+                throw new Error(`Negative quantity not allowed for product ${productId}`);
+            }
 
-            const orderQty = Number(
-                item?.oderQty || 0
-            );
+            const grossAmt = Number(item?.grossAmt || 0);
+            const taxableAmt = Number(item?.taxableAmt || 0);
 
-            const totalMrpAmount =
-                mrpPrice * orderQty;
-
-            const discountAmount =
-                totalMrpAmount - taxableAmt;
-
+            const mrpPrice = Number(priceDoc?.mrp_price || 0);
+            const totalMrpAmount = mrpPrice * qty;
+            const discountAmount = totalMrpAmount - taxableAmt;
             const totalDiscountPercentage =
                 totalMrpAmount > 0
-                    ? Number(
-                        (
-                            (
-                                discountAmount /
-                                totalMrpAmount
-                            ) * 100
-                        ).toFixed(2)
-                    )
+                    ? Number(((discountAmount / totalMrpAmount) * 100).toFixed(2))
                     : 0;
 
+            // ------------------------------------------
+            // TAX — recomputed server-side from Product.cgst/sgst/igst
+            // ------------------------------------------
+            const taxRate = getApplicableTaxRate({ product, taxableAmt, qty });
+
+            const totalCGST = !isIGST
+                ? toTwoDecimal(taxableAmt * (taxRate.cgst / 100))
+                : 0;
+            const totalSGST = !isIGST
+                ? toTwoDecimal(taxableAmt * (taxRate.sgst / 100))
+                : 0;
+            const igstRate = taxRate.igst || taxRate.cgst + taxRate.sgst;
+            const totalIGST = isIGST
+                ? toTwoDecimal(taxableAmt * (igstRate / 100))
+                : 0;
+
+            const netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
+
             return {
-
-                // ======================================
-                // IDS
-                // ======================================
-
                 product: productId,
-
                 price: priceId,
+
+                // FROZEN snapshot — the detail page renders MRP / Base Rate /
+                // Std Disc% from THIS, not from populating `price` live.
+                priceSnapshot: buildPriceSnapshot(priceDoc),
 
                 inventoryId: inventoryId,
 
-                // ======================================
-                // BASIC
-                // ======================================
-
                 uom: item?.uom || "pcs",
+                goodsType: item?.goodsType || "Billed",
 
-                goodsType:
-                    item?.goodsType || "Billed",
+                oderQty: qty,
+                boxOrderQty: Number(item?.boxOrderQty || 0),
 
-                // ======================================
-                // QUANTITY
-                // ======================================
-
-                oderQty:
-                    Number(item?.oderQty || 0),
-
-                boxOrderQty:
-                    Number(item?.boxOrderQty || 0),
-
-                // ======================================
-                // DISCOUNT
-                // ======================================
-
-                schemeDisc:
-                    Number(item?.schemeDisc || 0),
-
-                distributorDisc:
-                    Number(item?.distributorDisc || 0),
-
-                distributorDiscUnit:
-                    item?.distributorDiscUnit ||
-                    "percent",
-
+                schemeDisc: Number(item?.schemeDisc || 0),
+                distributorDisc: Number(item?.distributorDisc || 0),
+                distributorDiscUnit: item?.distributorDiscUnit || "percent",
                 totalDiscountPercentage,
 
-                // ======================================
-                // AMOUNTS
-                // ======================================
-
                 grossAmt,
-
                 taxableAmt,
 
-                totalCGST:
-                    Number(item?.totalCGST || 0),
+                totalCGST,
+                totalSGST,
+                totalIGST,
 
-                totalSGST:
-                    Number(item?.totalSGST || 0),
+                netAmt,
 
-                totalIGST:
-                    Number(item?.totalIGST || 0),
-
-                netAmt:
-                    Number(item?.netAmt || 0),
-
-                // ======================================
-                // EXTRA
-                // ======================================
-
-                usedBasePoint:
-                    Number(item?.usedBasePoint || 0),
-
-                billPrice:
-                    Number(item?.billPrice || 0),
+                usedBasePoint: Number(item?.usedBasePoint || 0),
+                billPrice: Number(item?.billPrice || 0),
             };
         })
     );
-    // ======================================
+
+    // ======================================================
     // RECALCULATE TOTALS FROM LINE ITEMS
-    // ======================================
+    // ======================================================
 
     const calculatedGrossAmount = formattedLineItems.reduce(
         (sum, item) => sum + Number(item.grossAmt || 0),
@@ -278,93 +286,45 @@ console.log("Edit Order Entry Request Body:", req.body);
         0
     );
 
-    // Charges
-    const calculatedFreightCharges =
-        Number(freightCharges || 0);
+    const calculatedFreightCharges = Number(freightCharges || 0);
+    const calculatedHandlingCharges = Number(handlingCharges || 0);
+    const additionalCharges = calculatedFreightCharges + calculatedHandlingCharges;
 
+    const itemsCGST = formattedLineItems.reduce((s, i) => s + Number(i.totalCGST || 0), 0);
+    const itemsSGST = formattedLineItems.reduce((s, i) => s + Number(i.totalSGST || 0), 0);
+    const itemsIGST = formattedLineItems.reduce((s, i) => s + Number(i.totalIGST || 0), 0);
 
-    const calculatedHandlingCharges =
-        Number(handlingCharges || 0);
+    const chargeCGST = !isIGST ? Number((additionalCharges * 0.09).toFixed(2)) : 0;
+    const chargeSGST = !isIGST ? Number((additionalCharges * 0.09).toFixed(2)) : 0;
+    const chargeIGST = isIGST ? Number((additionalCharges * 0.18).toFixed(2)) : 0;
 
-    // GST Taxable Value
-    const gstTaxableAmount =
-        calculatedTaxableAmount +
-        calculatedFreightCharges +
-        calculatedHandlingCharges;
+    const calculatedCGST = Number((itemsCGST + chargeCGST).toFixed(2));
+    const calculatedSGST = Number((itemsSGST + chargeSGST).toFixed(2));
+    const calculatedIGST = Number((itemsIGST + chargeIGST).toFixed(2));
 
-    // Detect GST Type
-    const isIGST = formattedLineItems.some(
-        (item) => Number(item.totalIGST || 0) > 0
-    );
+    const gstTaxableAmount = calculatedTaxableAmount + additionalCharges;
 
-    // GST %
-    let gstPercentage = 18;
-
-    const firstLine = formattedLineItems[0];
-
-    if (firstLine?.taxableAmt > 0) {
-        const lineGST =
-            Number(firstLine.totalCGST || 0) +
-            Number(firstLine.totalSGST || 0) +
-            Number(firstLine.totalIGST || 0);
-
-        gstPercentage =
-            Number(
-                ((lineGST / Number(firstLine.taxableAmt)) * 100).toFixed(2)
-            ) || 18;
-    }
-
-    // Recalculate GST on Taxable + Charges
-    let calculatedCGST = 0;
-    let calculatedSGST = 0;
-    let calculatedIGST = 0;
-
-    const totalGST =
-        Number(
-            ((gstTaxableAmount * gstPercentage) / 100).toFixed(2)
-        );
-
-    if (isIGST) {
-        calculatedIGST = totalGST;
-    } else {
-        calculatedCGST = Number((totalGST / 2).toFixed(2));
-        calculatedSGST = Number((totalGST / 2).toFixed(2));
-    }
-
-    // Total discount amount
     const calculatedDiscount = formattedLineItems.reduce(
-        (sum, item) =>
-            sum +
-            (
-                (Number(item.grossAmt || 0) -
-                    Number(item.taxableAmt || 0))
-            ),
+        (sum, item) => sum + (Number(item.grossAmt || 0) - Number(item.taxableAmt || 0)),
         0
     );
 
-
-
-    // Invoice Amount
     const calculatedInvoiceAmount =
         calculatedTaxableAmount +
-        calculatedFreightCharges +
-        calculatedHandlingCharges +
+        additionalCharges +
         calculatedCGST +
         calculatedSGST +
         calculatedIGST;
 
-    // Round Off
-    const calculatedRoundOffAmount =
-        Math.round(calculatedInvoiceAmount);
+    const calculatedRoundOffAmount = Math.round(calculatedInvoiceAmount);
+    const calculatedCreditAmount = Number(creditAmount || 0);
+    const calculatedNetAmount = calculatedRoundOffAmount - calculatedCreditAmount;
 
-    // Credit
-    const calculatedCreditAmount =
-        Number(creditAmount || 0);
+    const calculatedTotalBasePoints = formattedLineItems.reduce(
+        (sum, item) => sum + Number(item.usedBasePoint || 0),
+        0
+    );
 
-    // Net Amount
-    const calculatedNetAmount =
-        calculatedRoundOffAmount -
-        calculatedCreditAmount;
     // ==================================================
     // UPDATE ORDER
     // ==================================================
@@ -375,93 +335,50 @@ console.log("Edit Order Entry Request Body:", req.body);
     existingOrder.paymentMode = paymentMode;
     existingOrder.orderType = orderType;
 
-    // VERY IMPORTANT
     existingOrder.lineItems = formattedLineItems;
-
     existingOrder.totalLines = formattedLineItems.length;
 
-    existingOrder.totalBasePoints =
-        Number(totalBasePoints || 0);
-    existingOrder.grossAmount =
-        Number(calculatedGrossAmount.toFixed(2));
+    existingOrder.totalBasePoints = calculatedTotalBasePoints;
+    existingOrder.grossAmount = Number(calculatedGrossAmount.toFixed(2));
 
-    existingOrder.distributorDiscount =
-        Number(calculatedDiscount.toFixed(2));
-    existingOrder.freightCharges =
-        calculatedFreightCharges;
+    existingOrder.distributorDiscount = Number(calculatedDiscount.toFixed(2));
+    existingOrder.freightCharges = calculatedFreightCharges;
+    existingOrder.handlingCharges = calculatedHandlingCharges;
 
+    existingOrder.taxableAmount = Number(gstTaxableAmount.toFixed(2));
+    existingOrder.cgst = calculatedCGST;
+    existingOrder.sgst = calculatedSGST;
+    existingOrder.igst = calculatedIGST;
 
-    existingOrder.handlingCharges =
-        calculatedHandlingCharges;
+    existingOrder.invoiceAmount = Number(calculatedInvoiceAmount.toFixed(2));
+    existingOrder.roundOffAmount = calculatedRoundOffAmount;
+    existingOrder.creditAmount = calculatedCreditAmount;
+    existingOrder.netAmount = Number(calculatedNetAmount.toFixed(2));
 
-    existingOrder.taxableAmount =
-        Number(gstTaxableAmount.toFixed(2));
+    existingOrder.remark = remark || "";
 
-    existingOrder.cgst =
-        Number(calculatedCGST.toFixed(2));
+    existingOrder.manualOrderDate = manualOrderDate || existingOrder.manualOrderDate;
+    existingOrder.shipToAddress = shipToAddress || "";
+    existingOrder.validity = validity || "";
+    existingOrder.deliveryTerms = deliveryTerms || "";
+    existingOrder.deliverySchedule = deliverySchedule || "";
+    existingOrder.paymentTerms = paymentTerms || "";
+    existingOrder.remarks = remarks || "";
 
-    existingOrder.sgst =
-        Number(calculatedSGST.toFixed(2));
-
-    existingOrder.igst =
-        Number(calculatedIGST.toFixed(2));
-
-    existingOrder.invoiceAmount =
-        Number(calculatedInvoiceAmount.toFixed(2));
-
-    existingOrder.roundOffAmount =
-        calculatedRoundOffAmount;
-
-    existingOrder.creditAmount =
-        calculatedCreditAmount;
-
-    existingOrder.netAmount =
-        Number(calculatedNetAmount.toFixed(2));
-        
-        existingOrder.remark = remark || "";
     // ==================================================
     // SAVE
     // ==================================================
-// Order Details
-existingOrder.manualOrderDate =
-    manualOrderDate || existingOrder.manualOrderDate;
 
-existingOrder.shipToAddress =
-    shipToAddress || "";
-
-existingOrder.validity =
-    validity || "";
-
-existingOrder.deliveryTerms =
-    deliveryTerms || "";
-
-existingOrder.deliverySchedule =
-    deliverySchedule || "";
-
-existingOrder.paymentTerms =
-    paymentTerms || "";
-
-existingOrder.remarks =
-    remarks || "";
-    const updatedOrder =
-        await existingOrder.save();
+    const updatedOrder = await existingOrder.save();
 
     // ==================================================
     // UPDATE SECONDARY LOG
     // ==================================================
 
-    if (
-        updatedOrder?.secondaryOrderEntryLogId
-    ) {
-        await SecondaryOrderEntryLog.findByIdAndUpdate(
-            updatedOrder.secondaryOrderEntryLogId,
-            {
-                $set: {
-                    updatedOrderId:
-                        updatedOrder._id,
-                },
-            }
-        );
+    if (updatedOrder?.secondaryOrderEntryLogId) {
+        await SecondaryOrderEntryLog.findByIdAndUpdate(updatedOrder.secondaryOrderEntryLogId, {
+            $set: { updatedOrderId: updatedOrder._id },
+        });
     }
 
     // ==================================================
@@ -470,12 +387,13 @@ existingOrder.remarks =
 
     res.status(200).json({
         success: true,
-        message:
-            "Order updated successfully",
+        message: "Order updated successfully",
         data: updatedOrder,
     });
 });
 
 module.exports = {
     editOrderEntry,
+    buildPriceSnapshot, // exported so createOrderEntry can reuse the same builder
 };
+
