@@ -56,7 +56,7 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
 
   query.$or = [
     { purchaseOrderNo: regex },
-    { "lineItems.soNumber": regex },     // ✅ SO number is stored per line item
+    { "lineItems.soNumber": regex },     
     { "sapStatusData.Vbeln": regex },
     { "sapStatusData.Vbelnso": regex },
   ];
