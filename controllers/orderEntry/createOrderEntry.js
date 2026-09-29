@@ -364,6 +364,10 @@ const createOrderEntry = asyncHandler(async (req, res) => {
     }
     // ─────────────────────────────────────────────────────────────────────────
 
+
+
+
+
     if (adjustedCreditNoteIds && adjustedCreditNoteIds.length > 0) {
       const creditNoteIds = adjustedCreditNoteIds.map(
         (item) => item.creditNoteId,
@@ -418,6 +422,48 @@ const createOrderEntry = asyncHandler(async (req, res) => {
         }
       }
     }
+
+
+// ─── Recalculate the new order from backend ───────────────────────────
+let recalcError = null;
+try {
+  const authHeader = req.headers["authorization"];
+  const bearerToken =
+    authHeader && authHeader.startsWith("Bearer ")
+      ? authHeader.split(" ")[1]
+      : null;
+  const recalcToken = req.cookies.DBToken || bearerToken;
+
+  if (!recalcToken) {
+    recalcError = "Authorization token is missing for recalculate";
+  } else {
+    await axios.post(
+      SERVER_URL + `/api/v1/order-entry/recalculate/${savedOrderEntry._id}`,
+      {},
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${recalcToken}`,
+        },
+      },
+    );
+
+    // Reload so the response (and bill creation) use the recalculated totals
+    const freshOrder = await OrderEntry.findById(savedOrderEntry._id);
+    if (freshOrder) {
+      savedOrderEntry.set(freshOrder.toObject());
+    }
+  }
+} catch (e) {
+  console.error(
+    "RECALCULATE_ERROR createOrderEntry:",
+    e?.response?.data?.message || e.message,
+  );
+  recalcError =
+    "Order created, but recalculation failed. " +
+    (e?.response?.data?.message || e.message);
+}
+// ──────────────────────────────────────────────────────────────────────
 
     let billData = null;
     let billError = null;

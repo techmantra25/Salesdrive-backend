@@ -41,6 +41,10 @@ const {
 const { dayBookReport } = require("../../controllers/orderEntry/dayBookReport.js");
 const { editOrderEntry } = require("../../controllers/orderEntry/editOrderEntry.js");
 const { advicePrint } = require("../../controllers/orderEntry/advicePrint.js");
+const {
+  recalculateOrderEntry,
+} = require("../../controllers/orderEntry/CorerctOrderEntryController.js");
+
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/advice-print/:orderId").get(protect, advicePrint);
@@ -49,6 +53,9 @@ orderEntryRoutes
   .route("/import-sales-order")
   .post(protectDisRoute, importSalesOrder);
 
+  orderEntryRoutes
+  .route("/recalculate/:orderEntryId")
+  .post(protectDisRoute, recalculateOrderEntry);
 orderEntryRoutes
   .route("/paginated-list")
   .get(protectDisRoute, paginatedOrderEntry);
