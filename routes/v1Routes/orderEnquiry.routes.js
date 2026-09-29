@@ -36,6 +36,9 @@ const {
 const {
   viewRemarksOrderEnquiry,
 } = require("../../controllers/orderEnquiry/viewRemarksOrderEnquiry.js");
+const {
+  recalculateOrderEnquiry,
+} = require("../../controllers/orderEnquiry/CorerctOrderEntquiryController.js");
 
 const orderEnquiryRoutes = express.Router();
 
@@ -47,6 +50,9 @@ orderEnquiryRoutes
   .route("/paginated-list")
   .get(protectDisRoute, paginatedOrderEnquiry);
 orderEnquiryRoutes.route("/detail/:id").get(protect, detailOrderEnquiry);
+orderEnquiryRoutes
+  .route("/recalculate/:enquiryId")
+  .post(protectDisRoute, recalculateOrderEnquiry);
 orderEnquiryRoutes.route("/update/:id").patch(protectDisRoute, updateOrderEnquiry);
 orderEnquiryRoutes.route("/edit/:id").patch(protectDisRoute, editOrderEnquiry);
 orderEnquiryRoutes

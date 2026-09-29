@@ -45,6 +45,7 @@ const {
   recalculateOrderEntry,
 } = require("../../controllers/orderEntry/CorerctOrderEntryController.js");
 
+
 const orderEntryRoutes = express.Router();
 
 orderEntryRoutes.route("/advice-print/:orderId").get(protect, advicePrint);
