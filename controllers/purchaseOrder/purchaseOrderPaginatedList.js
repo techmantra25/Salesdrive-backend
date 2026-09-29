@@ -49,17 +49,18 @@ const paginatedPurchaseOrderList = asyncHandler(async (req, res) => {
       }
     }
 
-    if (search) {
-      query.$or = [
-        { purchaseOrderNo: new RegExp(search, "i") },
+ if (search) {
+  // escape regex special chars so user input can't break the query
+  const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(escaped, "i");
 
-        { soNumber: new RegExp(search, "i") },
-
-        { "sapStatusData.Vbeln": new RegExp(search, "i") },
-
-        { "sapStatusData.Vbelnso": new RegExp(search, "i") },
-      ];
-    }
+  query.$or = [
+    { purchaseOrderNo: regex },
+    { "lineItems.soNumber": regex },     // ✅ SO number is stored per line item
+    { "sapStatusData.Vbeln": regex },
+    { "sapStatusData.Vbelnso": regex },
+  ];
+}
     // Filter by distributor
     if (distributorId) query.distributorId = distributorId;
     if (godownId) {
