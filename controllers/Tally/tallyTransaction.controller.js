@@ -6,8 +6,22 @@ const PurchaseReturn = require("../../models/purchaseReturn.model");
 const OutletApproved = require("../../models/outletApproved.model");
 const Product = require("../../models/product.model");
 const State = require("../../models/state.model");
+// NEW: needed to resolve Ref Doc No (supplier name) for Purchase / Purchase Return.
+// Adjust the file names/paths to match your project.
+const PurchaseOrder = require("../../models/purchaseOrder.model");
+const Supplier = require("../../models/supplier.model"); // required so populate("supplierId") can resolve
 const ExcelJS = require("exceljs");
 const moment = require("moment");
+
+/**
+ * Ref Doc No for Sales / Sales Return rows.
+ */
+const SALES_REF_DOC_NO = "Infrawal Projects Pvt Ltd";
+
+/**
+ * Party Name for Purchase / Purchase Return rows.
+ */
+const PURCHASE_PARTY_NAME = "Calcutta Metal Corporation";
 
 /**
  * Helper function to safely get nested object values
@@ -52,6 +66,38 @@ const formatGodown = (godownDoc) => {
   const code = godownDoc.godownCode || "";
   if (name && code) return `${name} (${code})`;
   return name || code || "";
+};
+
+/**
+ * NEW: Builds a Map of invoiceId (string) -> supplierName by looking at
+ * PurchaseOrders whose `invoiceIds` array contains any of the given
+ * invoice ids, then reading the supplier name from the PO's supplierId
+ * (Supplier.supplierName).
+ *
+ * Used for the "Ref Doc No" column on Purchase / Purchase Return rows.
+ * Returns an empty Map when there are no ids. Invoices with no matching
+ * PurchaseOrder simply won't be in the map (Ref Doc No shows blank).
+ */
+const buildInvoiceSupplierMap = async (invoiceIds) => {
+  const map = new Map();
+  if (!invoiceIds || invoiceIds.length === 0) return map;
+
+  const purchaseOrders = await PurchaseOrder.find({
+    invoiceIds: { $in: invoiceIds },
+  })
+    .select("invoiceIds supplierId")
+    .populate("supplierId", "supplierName")
+    .lean();
+
+  for (const po of purchaseOrders) {
+    const supplierName = po.supplierId?.supplierName || "";
+    for (const invId of po.invoiceIds || []) {
+      const key = String(invId);
+      if (!map.has(key)) map.set(key, supplierName);
+    }
+  }
+
+  return map;
 };
 
 /**
@@ -319,23 +365,11 @@ const sumLineItemsTax = (lineItems) =>
  * they are what gets displayed in those columns AND what Tax Amount is
  * derived from, so the two can never drift apart.
  *
- * FIX (CGST must always equal SGST): previously cgst and sgst were each
- * computed independently —
- *   cgst = originalCgst + perItemChargesGst / 2
- *   sgst = originalSgst + perItemChargesGst / 2
- * Two things could make these diverge by a paisa even though GST rules
- * require CGST === SGST for any intrastate line item:
- *   1. originalCgst and originalSgst can already differ by a paisa,
- *      since they were rounded independently when the line item was
- *      first stored (e.g. 9% of 14.59 rounds to 1.31 on each side, but
- *      that rounding doesn't always land the same way for both).
- *   2. Even starting equal, formatCurrency() (toFixed(2)) rounds each
- *      one separately downstream, and floating-point division can push
- *      one up and the other down.
- * Fix: compute ONE combined intrastate tax figure (original CGST +
- * original SGST + this line's share of Charges GST) and split it in
- * half ONCE, assigning the exact same number to both cgst and sgst —
- * so they are bit-for-bit identical before formatting, not just close.
+ * FIX (CGST must always equal SGST): compute ONE combined intrastate tax
+ * figure (original CGST + original SGST + this line's share of Charges
+ * GST) and split it in half ONCE, assigning the exact same number to
+ * both cgst and sgst — so they are bit-for-bit identical before
+ * formatting, not just close.
  */
 const distributeChargesGst = (
   lineItem,
@@ -421,14 +455,9 @@ exports.generateTallyReport = async (req, res) => {
     // now always sends plain "YYYY-MM-DD" strings (see TallyReport.jsx),
     // so the regex fast-paths below are the ones that should normally
     // fire. But as defense-in-depth, the catch-all `else` branch (for
-    // any ISO/Date-like string that slips through) now reads the
-    // Y/M/D using UTC getters instead of LOCAL getters. Using local
-    // getters is what caused the original bug: a Date serialized to
-    // e.g. "2026-09-05T18:30:00.000Z" (IST midnight of the 6th,
-    // converted to UTC) would have its calendar day silently pulled
-    // back to the 5th if the Node process's local timezone was UTC —
-    // getUTCDate() always reads the day embedded in the string itself,
-    // regardless of server timezone, so it can't drift like that.
+    // any ISO/Date-like string that slips through) reads the Y/M/D using
+    // UTC getters instead of LOCAL getters, so the calendar day encoded
+    // in the string can't drift with the server's timezone.
     const parseSelectedDate = (value, endOfDay = false) => {
       if (!value) return null;
 
@@ -446,9 +475,6 @@ exports.generateTallyReport = async (req, res) => {
         const parsed = new Date(str);
         if (isNaN(parsed.getTime())) return null;
 
-        // FIX: use UTC getters, not local getters, so the extracted
-        // calendar date matches what's actually encoded in the string
-        // regardless of the server's timezone configuration.
         year = parsed.getUTCFullYear();
         month = parsed.getUTCMonth() + 1;
         day = parsed.getUTCDate();
@@ -576,10 +602,8 @@ exports.generateTallyReport = async (req, res) => {
           // const roundOff = index === 0 ? bill.roundOffAmount || 0 : 0;
 
           // Unit Price = MRP of the product. The price sub-document stores
-          // this as `mrp_price` (a string, e.g. "240"), NOT `mrp` — that
-          // was the earlier bug causing this to always fall through to
-          // the average-price fallback below. Falls back only if no MRP
-          // was populated on the price doc at all.
+          // this as `mrp_price` (a string, e.g. "240"), NOT `mrp`. Falls
+          // back only if no MRP was populated on the price doc at all.
           const mrpPrice =
             parseFloat(lineItem.price?.mrp_price || 0) ||
             (lineItem.billQty
@@ -592,8 +616,7 @@ exports.generateTallyReport = async (req, res) => {
           // Discount % = the line item's own final stored discount
           // percentage, falling back to a direct calculation from this
           // line item's own itemValue (MRP * qty) vs its own taxableAmt
-          // when the stored value is 0 — see getSalesDiscountPercentage
-          // / calculateDiscountFromAmounts above.
+          // when the stored value is 0.
           const discountPercentage = getSalesDiscountPercentage(
             lineItem,
             itemValue,
@@ -602,27 +625,21 @@ exports.generateTallyReport = async (req, res) => {
 
           // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
           // Determined once and reused for GST %, Tax Amount, and the
-          // Charges-GST split below, so all three columns stay consistent
-          // with each other.
+          // Charges-GST split below, so all three columns stay consistent.
           const isInterstate = isInterstateLineItem(lineItem);
 
           // GST % comes directly from the PRODUCT's own stored
           // cgst/sgst/igst fields, not back-calculated from the line
-          // item's rounded rupee tax amounts (that approach drifted —
-          // e.g. 17.96% instead of the product's real 18.00%).
+          // item's rounded rupee tax amounts.
           const gstPercentage = getProductGSTPercentage(
             lineItem.product,
             isInterstate,
           );
 
           // CGST / SGST / IGST displayed values include this line
-          // item's PROPORTIONAL share of the bill's Charges GST — based
-          // on this line item's own tax amount vs the bill's total tax
-          // amount (see distributeChargesGst). These are the FINAL
-          // values used everywhere below — including Tax Amount — so
-          // the two can never disagree. CGST and SGST are also now
-          // guaranteed to be identical (see fix note on
-          // distributeChargesGst above).
+          // item's PROPORTIONAL share of the bill's Charges GST. These
+          // are the FINAL values used everywhere below — including Tax
+          // Amount. CGST and SGST are guaranteed identical.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
@@ -630,12 +647,9 @@ exports.generateTallyReport = async (req, res) => {
             billTotalTax,
           );
 
-          // FIX: Tax Amount = CGST + SGST for an intrastate line item,
-          // OR IGST alone for an interstate line item. Derived from the
-          // SAME final cgst/sgst/igst values shown in those columns
-          // (i.e. INCLUDING each line item's proportional share of
-          // Charges GST), so Tax Amount always equals what CGST+SGST
-          // (or IGST) add up to on the row.
+          // Tax Amount = CGST + SGST for an intrastate line item, OR IGST
+          // alone for an interstate line item. Derived from the SAME final
+          // cgst/sgst/igst values shown in those columns.
           const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
@@ -643,7 +657,8 @@ exports.generateTallyReport = async (req, res) => {
             // godown: formatGodown(bill.godownId),
             invoiceNo: bill.billNo || "",
             invoiceDate: formatDate(bill.createdAt),
-            refDocNo: "Calcutta Metal Corporation",
+            // CHANGED: Ref Doc No for Sales = "Infrawal Projects Pvt Ltd"
+            refDocNo: SALES_REF_DOC_NO,
             refDocDate: formatDate(bill.updatedAt),
             partyName: getNestedValue(bill, "retailerId.outletName", ""),
             gstin: getNestedValue(bill, "retailerId.gstin", ""),
@@ -665,19 +680,14 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
             igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
-            discount: discountPercentage, // final line-item discount %, with price-doc fallback
+            discount: discountPercentage, // final line-item discount %, with fallback
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
             // --- new columns ---
-            // charges: same charges value repeated across every line item
-            // belonging to this bill.
             charges: formatCurrency(chargesResult.chargesAmt),
-            // chargesGst: a PERCENTAGE (e.g. 18.00), not a rupee
-            // amount, repeated across every line item of this bill.
+            // chargesGst: a PERCENTAGE (e.g. 18.00), not a rupee amount
             chargesGst: chargesResult.gstRate.toFixed(2),
-            // totalNetAmount: BILL-LEVEL total (sum of all line items'
-            // netAmt + charges + charges GST amount), same on every row —
-            // not recalculated per line item.
+            // totalNetAmount: BILL-LEVEL total, same on every row.
             totalNetAmount: Math.round(billTotalNetAmount),
           });
         }
@@ -725,10 +735,8 @@ exports.generateTallyReport = async (req, res) => {
         // return's total tax amount is 0 (see distributeChargesGst above).
         const lineItemCount = salesReturn.lineItems.length;
 
-        // Document-level total tax amount (CGST+SGST+IGST across every
-        // line item), used as the weight base so each line item's share
-        // of the sales return's Charges GST is proportional to its OWN
-        // tax amount instead of being split equally.
+        // Document-level total tax amount, used as the weight base so each
+        // line item's share of Charges GST is proportional to its OWN tax.
         const returnTotalTax = sumLineItemsTax(salesReturn.lineItems);
 
         for (let index = 0; index < salesReturn.lineItems.length; index++) {
@@ -739,9 +747,8 @@ exports.generateTallyReport = async (req, res) => {
 
           const roundOff = index === 0 ? salesReturn.roundOffAmount || 0 : 0;
 
-          // Unit Price = MRP of the product. Field is `mrp_price` on the
-          // populated price sub-document, not `mrp` — see note in the
-          // Sales loop above for why this matters.
+          // Unit Price = MRP of the product (`mrp_price` on the populated
+          // price sub-document).
           const mrpPrice =
             parseFloat(lineItem.price?.mrp_price || 0) ||
             (lineItem.returnQty
@@ -751,16 +758,9 @@ exports.generateTallyReport = async (req, res) => {
           // Item Value = MRP * Return Qty.
           const itemValue = mrpPrice * (lineItem.returnQty || 0);
 
-          // Discount % = the line item's own final stored discount
-          // percentage, falling back to a direct calculation from this
-          // line item's own itemValue (MRP * returnQty) vs its own
-          // taxableAmt when the stored value is 0. This is the fix for
-          // SalesReturn rows: totalDiscountPercentage is only ever
-          // written on Bill line items, so on a SalesReturn line item it
-          // is always 0/missing and previously showed as 0.00 in the
-          // report even though a real discount applied to the order —
-          // see getSalesDiscountPercentage / calculateDiscountFromAmounts
-          // above.
+          // Discount % — totalDiscountPercentage is only ever written on
+          // Bill line items, so for SalesReturn it falls back to a direct
+          // calculation from itemValue vs taxableAmt.
           const discountPercentage = getSalesDiscountPercentage(
             lineItem,
             itemValue,
@@ -770,20 +770,14 @@ exports.generateTallyReport = async (req, res) => {
           // Is this line item interstate (IGST) or intrastate (CGST+SGST)?
           const isInterstate = isInterstateLineItem(lineItem);
 
-          // GST % read directly from the PRODUCT's own stored
-          // cgst/sgst/igst fields, same reasoning as the Sales loop above.
+          // GST % read directly from the PRODUCT's own stored fields.
           const gstPercentage = getProductGSTPercentage(
             lineItem.product,
             isInterstate,
           );
 
-          // CGST / SGST / IGST displayed values include this line
-          // item's PROPORTIONAL share of the sales return's Charges GST
-          // — based on this line item's own tax amount vs the sales
-          // return's total tax amount. These are the FINAL values used
-          // everywhere below — including Tax Amount — so the two can
-          // never disagree. CGST and SGST are also now guaranteed to be
-          // identical (see fix note on distributeChargesGst above).
+          // CGST / SGST / IGST include this line item's proportional
+          // share of the sales return's Charges GST.
           const { cgst, sgst, igst } = distributeChargesGst(
             lineItem,
             chargesResult,
@@ -791,11 +785,7 @@ exports.generateTallyReport = async (req, res) => {
             returnTotalTax,
           );
 
-          // FIX: Tax Amount = CGST + SGST (intrastate) OR IGST alone
-          // (interstate), derived from the SAME final cgst/sgst/igst
-          // values shown in those columns (i.e. INCLUDING each line
-          // item's proportional share of Charges GST) — see note in the
-          // Sales loop above for why this must be computed this way.
+          // Tax Amount derived from the SAME final cgst/sgst/igst values.
           const totalTax = isInterstate ? igst : cgst + sgst;
 
           reportData.push({
@@ -803,7 +793,8 @@ exports.generateTallyReport = async (req, res) => {
             godown: formatGodown(salesReturn.godownId),
             invoiceNo: salesReturn.salesReturnNo || "",
             invoiceDate: formatDate(salesReturn.createdAt),
-            refDocNo: "Calcutta Metal Corporation",
+            // CHANGED: Ref Doc No for Sales Return = "Infrawal Projects Pvt Ltd"
+            refDocNo: SALES_REF_DOC_NO,
             refDocDate: formatDate(salesReturn.updatedAt),
             partyName: getNestedValue(salesReturn, "retailerId.outletName", ""),
             gstin: getNestedValue(salesReturn, "retailerId.gstin", ""),
@@ -821,22 +812,16 @@ exports.generateTallyReport = async (req, res) => {
             qty: lineItem.returnQty || 0,
             price: formatCurrency(mrpPrice), // Unit Price = MRP
             grossAmount: formatCurrency(itemValue), // Item Value = MRP * Qty
-            cgst: formatCurrency(cgst), // includes this line's proportional share of Charges GST
-            sgst: formatCurrency(sgst), // includes this line's proportional share of Charges GST
-            igst: formatCurrency(igst), // includes this line's proportional share of Charges GST
-            taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
-            discount: discountPercentage, // final line-item discount %, with price-doc fallback
+            cgst: formatCurrency(cgst),
+            sgst: formatCurrency(sgst),
+            igst: formatCurrency(igst),
+            taxAmount: formatCurrency(totalTax),
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(lineItem.netAmt),
             // --- new columns ---
-            // charges: same charges value repeated across every line item
-            // belonging to this sales return.
             charges: formatCurrency(chargesResult.chargesAmt),
-            // chargesGst: PERCENTAGE (e.g. 18.00), not a rupee amount.
             chargesGst: chargesResult.gstRate.toFixed(2),
-            // totalNetAmount: DOCUMENT-LEVEL total (sum of all line
-            // items' netAmt + charges + charges GST amount), same on
-            // every row.
             totalNetAmount: formatCurrency(returnTotalNetAmount),
           });
         }
@@ -849,25 +834,10 @@ exports.generateTallyReport = async (req, res) => {
     // same way as Sales / Sales Return above). Purchase has no
     // Freight/Handling charges concept applied here, so charges /
     // chargesGst are 0 and totalNetAmount stays the line item's own
-    // netAmount (no document-level charges to add in). No charges-GST to
-    // split here either, since there are no charges. Its Tax Amount is
-    // therefore already consistent with cgst+sgst / igst (both come
-    // straight from the line item's own stored fields with nothing added
-    // on top).
+    // netAmount.
     //
-    // Discount % now falls back the same way Sales/Sales Return does:
-    // calculateDiscountPercentage(lineItem, "purchase") is tried first
-    // (derived from the line item's own discountAmount /
-    // specialDiscountAmount rupee fields); when that comes out 0 —
-    // typically because those rupee fields aren't populated on the
-    // Invoice line item — fall back to a direct calculation from this
-    // line item's own mrp * qty vs its own grossAmount. See
-    // getPurchaseDiscountPercentage / calculateDiscountFromAmounts
-    // above for why this is preferred over a Price-collection lookup
-    // (Invoice line items have no `price` ref field to populate at all,
-    // and a date/region-based lookup picked up the wrong, currently-
-    // active price doc instead of the one in effect on the transaction's
-    // own date — confirmed on real data).
+    // Discount % falls back to a direct calculation from mrp * qty vs
+    // grossAmount when the rupee discount fields aren't populated.
     if (includeTypes.includes("purchase")) {
       const invoices = await Invoice.find({
         distributorId,
@@ -878,7 +848,17 @@ exports.generateTallyReport = async (req, res) => {
         .populate("godownId", "godownName godownCode")
         .lean();
 
+      // NEW: invoiceId -> supplierName (from the linked PurchaseOrder's
+      // supplier), used for the Ref Doc No column on Purchase rows.
+      const invoiceSupplierMap = await buildInvoiceSupplierMap(
+        invoices.map((inv) => inv._id),
+      );
+
       for (const invoice of invoices) {
+        // Resolved once per invoice, reused on every line item row.
+        const purchaseRefDocNo =
+          invoiceSupplierMap.get(String(invoice._id)) || "";
+
         for (let index = 0; index < invoice.lineItems.length; index++) {
           const lineItem = invoice.lineItems[index];
 
@@ -889,9 +869,8 @@ exports.generateTallyReport = async (req, res) => {
           if (purchaseQty === 0) continue;
 
           // MRP * Qty, used ONLY as the base for the discount fallback
-          // below — the displayed "Item Value"/grossAmount column for
-          // Purchase is unchanged (still lineItem.grossAmount, per the
-          // NOTE above).
+          // below — the displayed "Item Value" column for Purchase is
+          // unchanged (still lineItem.grossAmount).
           const mrpItemValue = parseFloat(lineItem.mrp || 0) * purchaseQty;
 
           const discountPercentage = getPurchaseDiscountPercentage(
@@ -900,7 +879,7 @@ exports.generateTallyReport = async (req, res) => {
             lineItem.grossAmount,
           );
           const roundOff = index === 0 ? invoice.roundOff || 0 : 0;
-          // Calculate GST percentage (unchanged for Purchase — see NOTE above)
+          // Calculate GST percentage (unchanged for Purchase)
           const taxableAmount = parseFloat(lineItem.grossAmount || 0);
           const totalTax =
             parseFloat(lineItem.cgst || 0) +
@@ -913,9 +892,11 @@ exports.generateTallyReport = async (req, res) => {
             godown: formatGodown(invoice.godownId),
             invoiceNo: invoice.invoiceNo || "",
             invoiceDate: formatDate(invoice.date || invoice.createdAt),
-            refDocNo: "Calcutta Metal Corporation",
+            // CHANGED: Ref Doc No for Purchase = supplier name from the PO
+            refDocNo: purchaseRefDocNo,
             refDocDate: formatDate(invoice.date || invoice.updatedAt),
-            partyName: "Infrawal Projects Pvt Ltd",
+            // CHANGED: Party Name for Purchase = "Calcutta Metal Corporation"
+            partyName: PURCHASE_PARTY_NAME,
             gstin: invoice.supplierGSTIN || "",
             state: invoice.supplierState || "",
             address: invoice.supplieraddress1 || "",
@@ -937,11 +918,11 @@ exports.generateTallyReport = async (req, res) => {
             sgst: formatCurrency(lineItem.sgst),
             igst: formatCurrency(lineItem.igst),
             taxAmount: formatCurrency(totalTax),
-            discount: discountPercentage, // stored discount %, with mrp-vs-grossAmount fallback
+            discount: discountPercentage,
             taxableAmount: formatCurrency(lineItem.taxableAmount),
             netAmount: formatCurrency(lineItem.netAmount),
             // Purchase has no Freight/Handling charges concept applied
-            // here, so these new columns are simply 0 for this type.
+            // here, so these columns are simply 0 for this type.
             charges: formatCurrency(0),
             chargesGst: (0).toFixed(2), // percentage, 0 when no charges
             totalNetAmount: formatCurrency(lineItem.netAmount),
@@ -951,9 +932,7 @@ exports.generateTallyReport = async (req, res) => {
     }
 
     // Fetch Purchase Return data
-    // NOTE: Left unchanged, same reasoning as Purchase above. No charges
-    // GST to split here either, so Tax Amount already matches cgst+sgst
-    // / igst as-is.
+    // NOTE: Otherwise unchanged, same reasoning as Purchase above.
     if (includeTypes.includes("purchaseReturn")) {
       let purchaseReturns = await PurchaseReturn.find({
         distributorId,
@@ -981,7 +960,17 @@ exports.generateTallyReport = async (req, res) => {
         });
       }
 
+      // NEW: invoiceId -> supplierName, so a Purchase Return shows the
+      // same supplier as its original Purchase.
+      const prSupplierMap = await buildInvoiceSupplierMap(
+        purchaseReturns.map((pr) => pr.invoiceId?._id).filter(Boolean),
+      );
+
       for (const purchaseReturn of purchaseReturns) {
+        // Resolved once per purchase return, reused on every row.
+        const purchaseReturnRefDocNo =
+          prSupplierMap.get(String(purchaseReturn.invoiceId?._id)) || "";
+
         for (let index = 0; index < purchaseReturn.lineItems.length; index++) {
           const lineItem = purchaseReturn.lineItems[index];
 
@@ -993,7 +982,7 @@ exports.generateTallyReport = async (req, res) => {
             "purchaseReturn",
           );
           const roundOff = index === 0 ? purchaseReturn.roundOff || 0 : 0;
-          // Calculate GST percentage (unchanged for Purchase Return — see NOTE above)
+          // Calculate GST percentage (unchanged for Purchase Return)
           const taxableAmount = parseFloat(lineItem.grossAmt || 0);
           const totalTax =
             parseFloat(lineItem.cgst || 0) +
@@ -1006,9 +995,11 @@ exports.generateTallyReport = async (req, res) => {
             godown: formatGodown(purchaseReturn.invoiceId?.godownId),
             invoiceNo: purchaseReturn.code || "",
             invoiceDate: formatDate(purchaseReturn.createdAt),
-            refDocNo: "Calcutta Metal Corporation",
+            // CHANGED: Ref Doc No for Purchase Return = supplier name
+            refDocNo: purchaseReturnRefDocNo,
             refDocDate: formatDate(purchaseReturn.updatedAt),
-            partyName: "Infrawal Projects Pvt Ltd",
+            // CHANGED: Party Name for Purchase Return = "Calcutta Metal Corporation"
+            partyName: PURCHASE_PARTY_NAME,
             gstin: "",
             state: "",
             address: "",
@@ -1034,7 +1025,7 @@ exports.generateTallyReport = async (req, res) => {
             taxableAmount: formatCurrency(lineItem.taxableAmt),
             netAmount: formatCurrency(lineItem.netAmt),
             // Purchase Return has no Freight/Handling charges concept
-            // applied here, so these new columns are simply 0.
+            // applied here, so these columns are simply 0.
             charges: formatCurrency(0),
             chargesGst: (0).toFixed(2), // percentage, 0 when no charges
             totalNetAmount: formatCurrency(lineItem.netAmt),
@@ -1098,16 +1089,14 @@ const generateExcelReport = async (reportData, distributorId) => {
   const worksheet = workbook.addWorksheet("Tally Master Sheet");
 
   // Define columns based on the sample format.
-  // All original headers/keys are unchanged. Three new columns are
-  // appended at the end for the per-document Freight + Handling charges.
   // NOTE: "Charges GST" is a PERCENTAGE column (e.g. 18.00), not a
-  // rupee amount — header updated to "Charges GST %" to reflect that.
+  // rupee amount — header is "Charges GST %" to reflect that.
   worksheet.columns = [
     { header: "Transaction Type", key: "transactionType", width: 18 },
     // { header: "Godown", key: "godown", width: 20 },
     { header: "Invoice No", key: "invoiceNo", width: 15 },
     { header: "Invoice Date", key: "invoiceDate", width: 20 },
-    { header: "Ref Doc No", key: "refDocNo", width: 15 },
+    { header: "Ref Doc No", key: "refDocNo", width: 25 },
     { header: "Ref Date", key: "refDocDate", width: 20 },
     { header: "Party Name", key: "partyName", width: 30 },
     { header: "GSTIN", key: "gstin", width: 18 },
@@ -1162,9 +1151,7 @@ const generateExcelReport = async (reportData, distributorId) => {
       row.alignment = { vertical: "middle" };
 
       // Format numeric (currency) columns — "discount" and "chargesGst"
-      // intentionally excluded here since they're percentages, not
-      // rupee amounts; they're formatted separately below alongside the
-      // GST % column.
+      // intentionally excluded since they're percentages.
       [
         "qty",
         "price",
@@ -1218,10 +1205,8 @@ const generateExcelReport = async (reportData, distributorId) => {
     });
   });
 
-  // Auto-filter across the FULL column range. The sheet now has 31
-  // columns (past column Z), so a fixed "to: Z1" would drop the last
-  // three (Charges / Charges GST % / Total Net Amount) from the filter.
-  // Computed dynamically from the actual column count instead.
+  // Auto-filter across the FULL column range, computed dynamically from
+  // the actual column count (the sheet extends past column Z).
   const lastColumnLetter = worksheet.getColumn(
     worksheet.columns.length,
   ).letter;
