@@ -21,7 +21,7 @@ const SALES_REF_DOC_NO = "Infrawal Projects Pvt Ltd";
 /**
  * Party Name for Purchase / Purchase Return rows.
  */
-const PURCHASE_PARTY_NAME = "Calcutta Metal Corporation";
+const PURCHASE_PARTY_NAME = "Infrawal Projects Pvt Ltd";
 
 /**
  * Helper function to safely get nested object values
@@ -689,6 +689,8 @@ exports.generateTallyReport = async (req, res) => {
             chargesGst: chargesResult.gstRate.toFixed(2),
             // totalNetAmount: BILL-LEVEL total, same on every row.
             totalNetAmount: Math.round(billTotalNetAmount),
+            // NEW: vehicle number from the Bill (last column in the report)
+            vehicleNumber: bill.vehicleNumber || "",
           });
         }
       }
@@ -895,7 +897,7 @@ exports.generateTallyReport = async (req, res) => {
             // CHANGED: Ref Doc No for Purchase = supplier name from the PO
             refDocNo: purchaseRefDocNo,
             refDocDate: formatDate(invoice.date || invoice.updatedAt),
-            // CHANGED: Party Name for Purchase = "Calcutta Metal Corporation"
+            // Party Name for Purchase = "Infrawal Projects Pvt Ltd"
             partyName: PURCHASE_PARTY_NAME,
             gstin: invoice.supplierGSTIN || "",
             state: invoice.supplierState || "",
@@ -998,7 +1000,7 @@ exports.generateTallyReport = async (req, res) => {
             // CHANGED: Ref Doc No for Purchase Return = supplier name
             refDocNo: purchaseReturnRefDocNo,
             refDocDate: formatDate(purchaseReturn.updatedAt),
-            // CHANGED: Party Name for Purchase Return = "Calcutta Metal Corporation"
+            // Party Name for Purchase Return = "Infrawal Projects Pvt Ltd"
             partyName: PURCHASE_PARTY_NAME,
             gstin: "",
             state: "",
@@ -1126,6 +1128,9 @@ const generateExcelReport = async (reportData, distributorId) => {
     { header: "Freight & Delivery Charges & Handling Fee)", key: "charges", width: 20 },
     { header: "Charges GST %", key: "chargesGst", width: 14 },
     { header: "Total Net Amount (Inc. GST)", key: "totalNetAmount", width: 18 },
+    // NEW: last column — vehicle number from the Sales bill (blank for
+    // other transaction types)
+    { header: "Vehicle No", key: "vehicleNumber", width: 18 },
   ];
 
   // Style header row
