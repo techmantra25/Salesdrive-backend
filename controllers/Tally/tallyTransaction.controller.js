@@ -371,6 +371,19 @@ const sumLineItemsTax = (lineItems) =>
  * both cgst and sgst — so they are bit-for-bit identical before
  * formatting, not just close.
  */
+
+const getLineNetWithCharges = (lineItem, chargesResult, lineItemCount, totalDocTax) => {
+  const lineTax =
+    parseFloat(lineItem.totalCGST || lineItem.cgst || 0) +
+    parseFloat(lineItem.totalSGST || lineItem.sgst || 0) +
+    parseFloat(lineItem.totalIGST || lineItem.igst || 0);
+
+  const weight =
+    totalDocTax > 0 ? lineTax / totalDocTax : 1 / (lineItemCount || 1);
+
+  return parseFloat(lineItem.netAmt || 0) + chargesResult.totalWithGst * weight;
+};
+
 const distributeChargesGst = (
   lineItem,
   chargesResult,
@@ -378,6 +391,13 @@ const distributeChargesGst = (
   totalDocTax,
 ) => {
   const count = lineItemCount > 0 ? lineItemCount : 1;
+
+  /**
+ * Line-item Net Amount INCLUDING this line's proportional share of the
+ * document's Freight + Handling charges and their GST. Uses the same weight
+ * as distributeChargesGst, so the line Net Amounts of a bill add up exactly
+ * to the bill's total (before rounding).
+ */
 
   const originalCgst = parseFloat(lineItem.totalCGST || lineItem.cgst || 0);
   const originalSgst = parseFloat(lineItem.totalSGST || lineItem.sgst || 0);
@@ -682,7 +702,9 @@ exports.generateTallyReport = async (req, res) => {
             taxAmount: formatCurrency(totalTax), // CGST+SGST or IGST, matches cgst/sgst/igst columns exactly
             discount: discountPercentage, // final line-item discount %, with fallback
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
-            netAmount: formatCurrency(lineItem.netAmt),
+            netAmount: formatCurrency(
+  getLineNetWithCharges(lineItem, chargesResult, lineItemCount, billTotalTax),
+),
             // --- new columns ---
             charges: formatCurrency(chargesResult.chargesAmt),
             // chargesGst: a PERCENTAGE (e.g. 18.00), not a rupee amount
