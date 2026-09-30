@@ -7,6 +7,88 @@ const Inventory = require("../../models/inventory.model");
 const axios = require("axios");
 const SERVER_URL = process.env.SERVER_URL || "http://localhost:5000";
 
+// =========================
+// 📦 IN-TRANSIT HELPERS
+// =========================
+
+// Read-only check: is there enough in-transit qty to deduct?
+const getIntransitAvailable = async (filter) => {
+  const inv = await Inventory.findOne(filter).select("intransitQty").lean();
+  return inv ? Number(inv.intransitQty || 0) : null; // null = no inventory doc
+};
+
+// Atomic deduct: only succeeds if intransitQty >= qty. Returns null if it fails.
+const deductIntransit = (filter, qty) =>
+  Inventory.findOneAndUpdate(
+    { ...filter, intransitQty: { $gte: qty } },
+    { $inc: { intransitQty: -qty } },
+    { new: true }
+  );
+
+// Used for rollback
+const addBackIntransit = (filter, qty) =>
+  Inventory.findOneAndUpdate(
+    filter,
+    { $inc: { intransitQty: qty } },
+    { new: true }
+  );
+
+// Validate a list of { filter, qty, name } BEFORE touching anything.
+// Returns an array of error strings (empty = all good).
+const validateIntransit = async (entries) => {
+  // merge duplicate products so totals are checked correctly
+  const merged = new Map();
+  for (const e of entries) {
+    const key = JSON.stringify(e.filter);
+    if (merged.has(key)) {
+      merged.get(key).qty += e.qty;
+    } else {
+      merged.set(key, { ...e });
+    }
+  }
+
+  const errors = [];
+  for (const e of merged.values()) {
+    if (e.qty <= 0) continue;
+    const available = await getIntransitAvailable(e.filter);
+
+    if (available === null) {
+      errors.push(`${e.name}: inventory record not found`);
+    } else if (available < e.qty) {
+      errors.push(
+        `${e.name}: insufficient in-transit qty (available ${available}, required ${e.qty})`
+      );
+    }
+  }
+  return errors;
+};
+
+// Deduct all entries; if any fails (e.g. race condition), roll back the ones done.
+// Returns { ok: true } or { ok: false, message }
+const deductAllOrRollback = async (entries) => {
+  const done = [];
+
+  for (const e of entries) {
+    if (e.qty <= 0) continue;
+
+    const updated = await deductIntransit(e.filter, e.qty);
+
+    if (!updated) {
+      for (const d of done) {
+        await addBackIntransit(d.filter, d.qty);
+      }
+      return {
+        ok: false,
+        message: `${e.name}: insufficient in-transit qty to deduct ${e.qty}`,
+      };
+    }
+
+    done.push(e);
+  }
+
+  return { ok: true };
+};
+
 const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
   try {
     const { purchaseOrderId } = req.params;
@@ -34,6 +116,9 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       });
     }
 
+    // =========================
+    // ✂️ FORECLOSE (SHORT CLOSE)
+    // =========================
     if (foreclose === true) {
       const {
         productIds = [],
@@ -53,45 +138,83 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         });
       }
 
+      // Step 1: build the list of changes (no DB writes yet)
+      const forecloseEntries = [];
+      const itemsToUpdate = [];
+
       for (const item of purchaseOrder.lineItems) {
         const currentProductId = String(item.product);
 
-        if (productIds.includes(currentProductId)) {
-          const matchedQty = forecloseUom.find(
-            (q) => String(q.productId) === currentProductId
-          );
+        if (!productIds.includes(currentProductId)) continue;
 
-          const shortCloseQty = Number(matchedQty?.forecloseUom || 0);
+        // already foreclosed -> skip so it can't be deducted twice
+        if (item.foreclose) continue;
 
-          item.foreclose = true;
-          item.forecloseReason = forecloseReason;
-          item.forecloseUom = shortCloseQty;
+        const matchedQty = forecloseUom.find(
+          (q) => String(q.productId) === currentProductId
+        );
 
-          // Fetch product to get conversion factor
-          const product = await Product.findById(item.product);
+        const shortCloseQty = Number(matchedQty?.forecloseUom || 0);
 
-          const pcsPerUom = Number(product?.no_of_pieces_in_a_box || 1);
+        const product = await Product.findById(item.product);
+        const pcsPerUom = Number(product?.no_of_pieces_in_a_box || 1);
 
-          // Convert UOM to Pieces
-          const shortClosePcs = shortCloseQty * pcsPerUom;
+        // Convert UOM to Pieces
+        const shortClosePcs = shortCloseQty * pcsPerUom;
 
-          // Reduce In-Transit Qty in Pieces
-          await Inventory.findOneAndUpdate(
-            {
-              distributorId: purchaseOrder.distributorId,
-              productId: item.product,
-              godownId: purchaseOrder.godownId,
-            },
-            {
-              $inc: {
-                intransitQty: -shortClosePcs,
-              },
-            }
-          );
-        }
+        forecloseEntries.push({
+          name: product?.name || product?.productName || String(item.product),
+          qty: shortClosePcs,
+          filter: {
+            distributorId: purchaseOrder.distributorId,
+            productId: item.product,
+            godownId: purchaseOrder.godownId,
+          },
+        });
+
+        itemsToUpdate.push({ item, shortCloseQty });
       }
 
-      await purchaseOrder.save();
+      if (!itemsToUpdate.length) {
+        return res.status(400).json({
+          message: "Selected products are already foreclosed or not in this PO",
+        });
+      }
+
+      // Step 2: validate in-transit BEFORE changing anything
+      const forecloseErrors = await validateIntransit(forecloseEntries);
+
+      if (forecloseErrors.length) {
+        return res.status(400).json({
+          message: `Foreclose failed. ${forecloseErrors.join(" | ")}`,
+        });
+      }
+
+      // Step 3: deduct atomically (rolls back if anything fails)
+      const result = await deductAllOrRollback(forecloseEntries);
+
+      if (!result.ok) {
+        return res.status(400).json({
+          message: `Foreclose failed. ${result.message}`,
+        });
+      }
+
+      // Step 4: update PO items and save
+      for (const { item, shortCloseQty } of itemsToUpdate) {
+        item.foreclose = true;
+        item.forecloseReason = forecloseReason;
+        item.forecloseUom = shortCloseQty;
+      }
+
+      try {
+        await purchaseOrder.save();
+      } catch (saveErr) {
+        // save failed -> put in-transit back
+        for (const e of forecloseEntries) {
+          if (e.qty > 0) await addBackIntransit(e.filter, e.qty);
+        }
+        throw saveErr;
+      }
 
       return res.status(200).json({
         message: "Products Shortclosed Successfully",
@@ -102,8 +225,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔥 VALIDATE invoiceNo EARLY (before any heavy work)
     // =========================
-    // Frontend payload sends invoiceNo like "INVabc11" - can be alphanumeric,
-    // not strictly numeric, so we just check for exact duplicates.
     let finalInvoiceNo =
       typeof invoiceNo === "string" ? invoiceNo.trim() : invoiceNo;
 
@@ -141,18 +262,14 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔢 GENERATE GRN NUMBER (with uniqueness check)
     // =========================
-
-    // Get current year (last 2 digits)
     const year = new Date().getFullYear().toString().slice(-2);
 
-    // Find last GRN of this year
     const lastGrnInvoice = await Invoice.findOne({
       grnNumber: { $regex: `^GRN-${year}` },
     })
       .sort({ createdAt: -1 })
       .lean();
 
-    // Default sequence
     let grnSequence = 1;
 
     if (lastGrnInvoice?.grnNumber) {
@@ -161,13 +278,9 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       grnSequence = Number.isFinite(lastSeq) && lastSeq > 0 ? lastSeq + 1 : 1;
     }
 
-    // Pad sequence → 00001
     let paddedSeq = String(grnSequence).padStart(5, "0");
-
-    // Final GRN
     let grnNumber = `GRN-${year}${paddedSeq}`;
 
-    // ✅ Ensure GRN number is unique (guards against gaps / concurrent requests)
     while (await Invoice.exists({ grnNumber })) {
       grnSequence += 1;
       paddedSeq = String(grnSequence).padStart(5, "0");
@@ -184,7 +297,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     const invoiceLineItems = [];
     const productSummary = [];
 
-    // ✅ NEW ARRAYS
     const failedProducts = [];
     const completedProducts = [];
     const zeroQtyProducts = [];
@@ -209,7 +321,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         resolvedSoNumbers.add(String(poItem.soNumber).trim());
       }
 
-      // ✅ FETCH PRODUCT
       const product = await Product.findById(item.productId);
       const productName =
         product?.name || product?.productName || "Unknown Product";
@@ -218,9 +329,19 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
 
       const alreadyReceived = receivedMap[String(item.productId)] || 0;
 
-      // ✅ Case 3: ignore zero qty (important)
+      // ignore zero qty
       if (!requestedQty || requestedQty <= 0) {
         zeroQtyProducts.push(productName);
+        continue;
+      }
+
+      // ❌ Over-receipt check
+      const remainingQty = Number(poItem.orderQty || 0) - alreadyReceived;
+
+      if (requestedQty > remainingQty) {
+        failedProducts.push(
+          `${productName} (exceeds pending qty: ${Math.max(remainingQty, 0)})`
+        );
         continue;
       }
 
@@ -309,6 +430,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       // =========================
       invoiceLineItems.push({
         product: item.productId,
+        productName, // used only for error messages, stripped before save
         plant: poItem.plant || null,
         goodsType: "billed",
         mrp,
@@ -339,7 +461,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       });
     }
 
-    // ❌ STRICT OVER-QTY VALIDATION (NEW)
     if (hasValidationError) {
       return res.status(400).json({
         message: `Invoice failed. Issues: ${failedProducts.join(", ")}`,
@@ -350,7 +471,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       let message = "Cannot create invoice.";
 
       if (failedProducts.length) {
-        message += ` Exceeded qty: ${failedProducts.join(", ")}`;
+        message += ` Issues: ${failedProducts.join(", ")}`;
       } else {
         message += ` No valid quantity provided.`;
       }
@@ -360,6 +481,27 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       }
 
       return res.status(400).json({ message });
+    }
+
+    // =========================
+    // 🛑 CHECK IN-TRANSIT BEFORE CREATING INVOICE
+    // =========================
+    const grnEntries = invoiceLineItems.map((li) => ({
+      name: li.productName,
+      qty: Number(li.receivedQty || li.qty || 0),
+      filter: {
+        distributorId: purchaseOrder.distributorId,
+        productId: li.product,
+        godownId: purchaseOrder.godownId,
+      },
+    }));
+
+    const intransitErrors = await validateIntransit(grnEntries);
+
+    if (intransitErrors.length) {
+      return res.status(400).json({
+        message: `GRN failed. ${intransitErrors.join(" | ")}`,
+      });
     }
 
     // =========================
@@ -382,8 +524,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     // =========================
     // 🔢 GENERATE INVOICE NUMBER (only if frontend didn't send one)
     // =========================
-    // NOTE: duplicate check for a frontend-supplied invoiceNo already
-    // happened at the top of this function, right after we found the PO.
     if (!finalInvoiceNo) {
       const lastInvoiceDoc = await Invoice.findOne({})
         .sort({ createdAt: -1 })
@@ -392,7 +532,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       let nextSequence = 1;
 
       if (lastInvoiceDoc?.invoiceNo) {
-        // Extract number from INV000001
         const numericPart = lastInvoiceDoc.invoiceNo.replace(/\D/g, "");
 
         if (numericPart) {
@@ -400,20 +539,21 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         }
       }
 
-      // Generate sequential invoice number
       finalInvoiceNo = `INV${String(nextSequence).padStart(6, "0")}`;
 
-      // ✅ Ensure uniqueness even if there are gaps or manually inserted
-      // invoiceNos (e.g. "INVabc11", "INV010101")
       while (await Invoice.exists({ invoiceNo: finalInvoiceNo })) {
         nextSequence += 1;
         finalInvoiceNo = `INV${String(nextSequence).padStart(6, "0")}`;
       }
     }
 
-
     const roundedInvoiceAmount = Math.round(totalNet);
     const roundOff = roundedInvoiceAmount - totalNet;
+
+    // strip helper-only field before saving
+    const invoiceLineItemsToSave = invoiceLineItems.map(
+      ({ productName, ...rest }) => rest
+    );
 
     // =========================
     // 🧾 CREATE INVOICE
@@ -434,7 +574,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
           ? new Date(`${grnDate}T00:00:00.000Z`)
           : new Date(),
         grnNumber,
-        lineItems: invoiceLineItems,
+        lineItems: invoiceLineItemsToSave,
         vehicleNumber: vehicleNumber || "",
         grossAmount: totalGross,
         taxableAmount: totalTaxable,
@@ -455,9 +595,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         },
       });
     } catch (err) {
-      // ✅ Handles the race-condition case: two requests passing the
-      // pre-checks above at (almost) the same time. Requires unique
-      // indexes on invoiceNo and grnNumber in invoice.model.js - see notes.
       if (err.code === 11000) {
         const dupField = Object.keys(err.keyPattern || {})[0];
 
@@ -481,34 +618,29 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       throw err;
     }
 
-    // Reduce In-Transit Qty after GRN
-    for (const item of invoiceLineItems) {
-      await Inventory.findOneAndUpdate(
-        {
-          distributorId: purchaseOrder.distributorId,
-          productId: item.product,
-          godownId: purchaseOrder.godownId,
-        },
-        {
-          $inc: {
-            intransitQty: -Number(item.receivedQty || item.qty || 0),
-          },
-        },
-        {
-          new: true,
-        }
-      );
+    // =========================
+    // 📉 REDUCE IN-TRANSIT (atomic, never goes below 0)
+    // =========================
+    const deductResult = await deductAllOrRollback(grnEntries);
+
+    if (!deductResult.ok) {
+      // Another request used up the stock between our check and now.
+      // Remove the invoice we just created so nothing is left half-done.
+      await Invoice.findByIdAndDelete(invoice._id);
+
+      return res.status(400).json({
+        message: `GRN failed. ${deductResult.message}`,
+      });
     }
 
     // =========================
-    // 🔥 UPDATE PURCHASE ORDER INVOICE STATUS (ONLY THIS CHANGE)
+    // 🔥 UPDATE PURCHASE ORDER INVOICE IDS
     // =========================
     await PurchaseOrder.findByIdAndUpdate(purchaseOrder._id, {
       $push: { invoiceIds: invoice._id },
     });
 
     console.log("🚀 AUTO CALLING INVOICE UPDATE API");
-    console.log("TOKEN:", req.headers.authorization);
 
     try {
       const updateResponse = await axios.patch(
@@ -531,7 +663,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       purchaseOrderId: purchaseOrder._id,
     });
 
-    // Build total received qty map
     const totalReceivedMap = {};
 
     for (const inv of allInvoices) {
@@ -567,7 +698,6 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       poInvoiceStatus = "Partially-Invoiced";
     }
 
-    // Update ONLY invoicestatus
     await PurchaseOrder.findByIdAndUpdate(purchaseOrder._id, {
       $set: { invoicestatus: poInvoiceStatus },
     });
