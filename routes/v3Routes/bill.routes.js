@@ -10,7 +10,7 @@ const { protectDisRoute } = require("../../middlewares/protectDisRoute");
 
 const billRoutes = express.Router();
 
-billRoutes.route("/create-single-bill").post(protectDisRoute, createSingleBill);
+billRoutes.route("/create-single-billl").post(protectDisRoute, createSingleBill);
 billRoutes.route("/create-bulk-bill").post(protectDisRoute, multipleBillCreate);
 billRoutes.route("/bill_update/:bid").patch(protectDisRoute, billUpdate);
 billRoutes.route("/cancel_bill_update").patch(protectDisRoute, cancelBillUpdate);
