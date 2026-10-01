@@ -70,6 +70,7 @@ const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
 
 // Create Order Entry
 const createOrderEntry = asyncHandler(async (req, res) => {
+
   try {
     const {
       salesmanName,
@@ -109,7 +110,6 @@ const createOrderEntry = asyncHandler(async (req, res) => {
     // req.body anymore — they are always recomputed server-side below,
     // both per line item and at the order header level.
 
-    console.log("Received createOrderEntry request with data:", req.body);
 
     const distributorId = req.user.id;
 
