@@ -47,6 +47,104 @@ const escapeRegex = (value) =>
  */
 const AUTO_INVOICE_KEY = "__AUTO__";
 
+// =========================
+// 📦 IN-TRANSIT HELPERS
+// =========================
+
+// Read-only check: current in-transit qty (null = no inventory doc)
+const getIntransitAvailable = async (filter) => {
+  const inv = await Inventory.findOne(filter).select("intransitQty").lean();
+  return inv ? Number(inv.intransitQty || 0) : null;
+};
+
+// Atomic deduct: only succeeds if intransitQty >= qty. Returns null if it fails.
+const deductIntransit = (filter, qty) =>
+  Inventory.findOneAndUpdate(
+    { ...filter, intransitQty: { $gte: qty } },
+    { $inc: { intransitQty: -qty } },
+    { new: true }
+  );
+
+// Used for rollback
+const addBackIntransit = (filter, qty) =>
+  Inventory.findOneAndUpdate(
+    filter,
+    { $inc: { intransitQty: qty } },
+    { new: true }
+  );
+
+// Validate BEFORE touching anything.
+// entries: [{ filter, qty, name, productCode }]
+// Returns [{ productCode, reason }] (empty = all good)
+const validateIntransit = async (entries) => {
+  // merge duplicate products so totals are checked correctly
+  const merged = new Map();
+  for (const e of entries) {
+    const key = JSON.stringify(e.filter);
+    if (merged.has(key)) {
+      merged.get(key).qty += e.qty;
+    } else {
+      merged.set(key, { ...e });
+    }
+  }
+
+  const errors = [];
+  for (const e of merged.values()) {
+    if (e.qty <= 0) continue;
+    const available = await getIntransitAvailable(e.filter);
+
+    if (available === null) {
+      errors.push({
+        productCode: e.productCode,
+        reason: `${e.name}: inventory record not found`,
+      });
+    } else if (available < e.qty) {
+      errors.push({
+        productCode: e.productCode,
+        reason: `${e.name}: insufficient in-transit qty (available ${available}, required ${e.qty})`,
+      });
+    }
+  }
+  return errors;
+};
+
+// Deduct all entries; if any fails (e.g. race condition), roll back the ones done.
+const deductAllOrRollback = async (entries) => {
+  const done = [];
+
+  for (const e of entries) {
+    if (e.qty <= 0) continue;
+
+    const updated = await deductIntransit(e.filter, e.qty);
+
+    if (!updated) {
+      for (const d of done) {
+        await addBackIntransit(d.filter, d.qty);
+      }
+      return {
+        ok: false,
+        message: `${e.name}: insufficient in-transit qty to deduct ${e.qty}`,
+      };
+    }
+
+    done.push(e);
+  }
+
+  return { ok: true };
+};
+
+const rollbackAll = async (entries) => {
+  for (const e of entries) {
+    if (e.qty > 0) {
+      try {
+        await addBackIntransit(e.filter, e.qty);
+      } catch (rbErr) {
+        console.error("In-transit rollback failed:", rbErr.message);
+      }
+    }
+  }
+};
+
 /**
  * 🔁 Merge duplicate product rows
  */
@@ -120,6 +218,11 @@ const generateInvoiceNumber = async () => {
  * `godownType: "main"` lookup across the whole distributor, which would
  * either miss the right doc or fail Inventory's required-field
  * validation when creating a new one.
+ *
+ * NOTE: in-transit qty is NOT touched here anymore. It is reserved
+ * (deducted atomically, never below 0) in generateGRNForPO BEFORE the
+ * invoice is created. If an item fails here before its stock was saved,
+ * its reserved in-transit qty is added back.
  */
 const processInvoiceAdjustments = async ({
   invoice,
@@ -128,20 +231,10 @@ const processInvoiceAdjustments = async ({
 
   const distributorId = invoice.distributorId;
 
-  // Fetched once up front — used both for price resolution (regional
-  // price is scoped by the distributor's regionId, not by distributorId
-  // itself) and later for the reward-points section, so we don't hit
-  // the DB twice for the same document.
   const distributor = await Distributor.findById(distributorId);
 
   const stockId = await transactionCode("LXSTA");
 
-  // One item's failure (e.g. a missing Price doc) must not stop the loop
-  // for every OTHER item in this same invoice — previously a bare `throw`
-  // inside this loop propagated straight out of processInvoiceAdjustments
-  // and silently left every later item's Inventory (totalStockamtDlp,
-  // totalStockamtRlp, intransitQty) completely untouched, even though the
-  // Invoice itself had already been created and looked successful.
   const stockSummary = [];
   const stockAdjustmentErrors = [];
 
@@ -150,6 +243,9 @@ const processInvoiceAdjustments = async ({
     if (item.receivedQty <= 0) {
       continue;
     }
+
+    // true once inventory.save() succeeded (stock really moved)
+    let stockSaved = false;
 
     try {
 
@@ -180,17 +276,6 @@ const processInvoiceAdjustments = async ({
       /**
        * ✅ Price — 3-tier fallback: distributor-specific -> regional
        * (scoped by the distributor's OWN regionId) -> national.
-       *
-       * A price doc with price_type "regional" always has
-       * distributorId: null (it's shared by every distributor in that
-       * region), so it will never match a `{ distributorId }` query.
-       * Skipping the regional tier meant any product priced only at the
-       * regional level (no distributor override, no national price)
-       * either threw "Price not found" here — silently skipping its
-       * Inventory update entirely — or, worse, could pick up an unrelated
-       * Price doc with blank dlp_price/rlp_price, resolving the rate to 0
-       * without erroring. Either way totalStockamtDlp/totalStockamtRlp
-       * came out 0 even while availableQty moved normally.
        */
       let priceEntry = await Price.findOne({
         productId: item.product,
@@ -298,16 +383,6 @@ const processInvoiceAdjustments = async ({
        * totalStockamtDlp/totalStockamtRlp represent the CURRENT value of
        * stock on hand — availableQty * price-per-piece — not a running
        * sum of per-receipt (qty * price-at-that-time) amounts.
-       *
-       * The old `+=` accumulator approach meant that if ANY earlier
-       * receipt resolved dlpbyPcs/rlpbyPcs to 0 (e.g. a Price doc whose
-       * dlp_price/rlp_price is null — only mrp_price is required on the
-       * Price schema), that receipt's contribution was permanently baked
-       * in as 0 and never corrected, and the total also drifted out of
-       * sync whenever the price changed between GRNs for the same
-       * product/distributor. Recomputing from the current availableQty
-       * and current price keeps the figure always correct and self-heals
-       * a previously-zeroed total the next time stock moves.
        */
       inventory.totalStockamtDlp =
         inventory.availableQty * dlpbyPcs;
@@ -315,13 +390,11 @@ const processInvoiceAdjustments = async ({
       inventory.totalStockamtRlp =
         inventory.availableQty * rlpbyPcs;
 
-      // Received stock also clears out of "in transit" once it lands.
-      inventory.intransitQty = Math.max(
-        0,
-        Number(inventory.intransitQty || 0) - Number(item.receivedQty || 0)
-      );
+      // intransitQty was already deducted (atomically) before the invoice
+      // was created, so it is intentionally not modified here.
 
       await inventory.save();
+      stockSaved = true;
 
       stockSummary.push({
         product: item.product,
@@ -378,13 +451,27 @@ const processInvoiceAdjustments = async ({
       }
 
     } catch (itemError) {
-      // Don't let one product's failure (missing Price, missing Product,
-      // etc.) silently skip every item after it — record which product
-      // failed and why, and move on to the next line item.
       console.error(
         `Stock adjustment failed for product ${item.product} on invoice ${invoice.invoiceNo}:`,
         itemError.message
       );
+
+      // Stock never landed for this item -> give back the in-transit qty
+      // that was reserved for it, so it isn't lost.
+      if (!stockSaved) {
+        try {
+          await addBackIntransit(
+            {
+              distributorId,
+              productId: item.product,
+              godownId,
+            },
+            Number(item.receivedQty || 0)
+          );
+        } catch (rbErr) {
+          console.error("In-transit add-back failed:", rbErr.message);
+        }
+      }
 
       stockAdjustmentErrors.push({
         product: item.product,
@@ -399,9 +486,6 @@ const processInvoiceAdjustments = async ({
    * 🎁 REWARD POINTS
    * ===================================
    */
-
-  // `distributor` was already fetched at the top of this function for
-  // price resolution — reused here rather than querying it again.
   if (
     distributor &&
     distributor.RBPSchemeMapped === "yes"
@@ -490,6 +574,7 @@ const processInvoiceAdjustments = async ({
 
   return { stockSummary, stockAdjustmentErrors };
 };
+
 /**
  * 🔥 CORE GRN CREATION
  *
@@ -531,11 +616,6 @@ const generateGRNForPO = async ({
     const validationErrors = [];
     const productSummary = [];
 
-    // Fetched once, used for the same distributor -> regional -> national
-    // price fallback as processInvoiceAdjustments below — a "regional"
-    // Price doc is scoped by regionId with distributorId: null, so it
-    // only ever matches via the distributor's OWN regionId, never via a
-    // `{ distributorId }` query.
     const poDistributor = await Distributor.findById(
       purchaseOrder.distributorId
     );
@@ -565,10 +645,6 @@ const generateGRNForPO = async ({
 
       /**
        * ❌ Product not mapped in PO — match by product AND soNumber
-       * (both normalized) when the PO line item carries one, so a PO
-       * spanning multiple SOs doesn't cross-credit the wrong SO's line
-       * item, and so trivial whitespace/case differences don't cause a
-       * false "not mapped in SO" mismatch either.
        */
       const poItem = purchaseOrder.lineItems.find(
         (p) =>
@@ -597,13 +673,8 @@ const generateGRNForPO = async ({
 
       /**
        * 💰 Price Resolution — the PO's own lineItem (`poItem.price`) is a
-       * ref to the EXACT Price doc the PO was raised against, frozen at
-       * that moment. A GRN confirmed later must bill off that same doc,
-       * not whatever Price doc currently matches this product/distributor
-       * — a newer/superseding Price doc (even one marked `status: true`)
-       * can carry a different dlp_price than the one shown on the PO, and
-       * querying fresh would silently bill the SO at that different rate.
-       * The distributor -> regional -> national fallback below only runs
+       * ref to the EXACT Price doc the PO was raised against. The
+       * distributor -> regional -> national fallback below only runs
        * if the PO line item has no price ref at all.
        */
       let priceDoc = poItem.price
@@ -660,13 +731,8 @@ const generateGRNForPO = async ({
        * 💵 Pricing
        *
        * Gross value is the SO qty priced at the distributor list price
-       * (dlp_price on the Price doc) — the same rate
-       * processInvoiceAdjustments below uses for stock valuation — NOT a
-       * recompute from mrp_price and whatever L1% happens to be on this
-       * CSV row/PO line item. dlp_price is stored at the UOM level (e.g.
-       * per box), so for box-UOM products it's brought down to a
-       * per-piece rate first, exactly like dlpbyPcs is derived further
-       * down in this file.
+       * (dlp_price on the Price doc). For box-UOM products it's brought
+       * down to a per-piece rate first.
        *
        * If a Price doc has no dlp_price configured, fall back to the
        * mrp - L1% calc rather than silently invoicing the line at ₹0.
@@ -725,9 +791,12 @@ const generateGRNForPO = async ({
 
       /**
        * ✅ Invoice Line
+       * (productCode / productName are helper-only, stripped before save)
        */
       invoiceLineItems.push({
         product: product._id,
+        productCode: cleanCode,
+        productName: product.name,
         plant: poItem.plant || null,
         goodsType: "billed",
         mrp,
@@ -807,19 +876,61 @@ const generateGRNForPO = async ({
     }
 
     // =========================
+    // 🛑 IN-TRANSIT CHECK (before anything is saved)
+    // =========================
+    if (!purchaseOrder.godownId) {
+      throw {
+        message: "Purchase Order has no Godown assigned. Cannot proceed with GRN.",
+        validationErrors: lineItems.map((item) => ({
+          ...item,
+          originalRow: item.originalRow,
+          reason: "Purchase Order has no Godown assigned",
+        })),
+      };
+    }
+
+    const grnEntries = invoiceLineItems.map((li) => ({
+      name: li.productName,
+      productCode: li.productCode,
+      qty: Number(li.receivedQty || li.qty || 0),
+      filter: {
+        distributorId: purchaseOrder.distributorId,
+        productId: li.product,
+        godownId: purchaseOrder.godownId,
+      },
+    }));
+
+    const intransitErrors = await validateIntransit(grnEntries);
+
+    if (intransitErrors.length > 0) {
+      throw {
+        message: `GRN failed. ${intransitErrors
+          .map((e) => e.reason)
+          .join(" | ")}`,
+        validationErrors: lineItems.map((item) => {
+          const matched = intransitErrors
+            .filter(
+              (e) =>
+                String(e.productCode).trim() ===
+                String(item.productCode).trim()
+            )
+            .map((e) => e.reason);
+
+          return {
+            ...item,
+            originalRow: item.originalRow,
+            reason:
+              matched.length > 0
+                ? matched.join(" | ")
+                : "Cancelled because another product in same SO failed",
+          };
+        }),
+      };
+    }
+
+    // =========================
     // 🏷️ DETERMINE INVOICE TYPE
     // =========================
-    // Scoped to just THIS soNumber's line items — a PO that happens to
-    // mix multiple SOs shouldn't have one SO's completeness decided by
-    // another SO's unrelated items.
-    //
-    // NOTE: because the same SO can now be split across several
-    // invoices/GRNs (one per distinct Invoice Number in the upload),
-    // "complete" here is judged only against what THIS invoice's
-    // lineItems cover. The PO-level `invoicestatus` further down still
-    // looks across ALL invoices ever raised against the PO, so the
-    // SO/PO as a whole is only marked Complete-Invoiced once every
-    // invoice combined has received the full ordered qty.
     const relevantPoItems = purchaseOrder.lineItems.filter(
       (p) =>
         p.soNumber
@@ -837,9 +948,7 @@ const generateGRNForPO = async ({
           .reduce((sum, li) => sum + (li.qty || 0), 0);
 
         // orderQty is already stored pcs-level (see bulk/single PO
-        // controllers), so it's used directly rather than recomputed
-        // from boxOrderQty * pcsPerBox — that recompute silently gave 0
-        // for products ordered in "pcs" uom, since boxOrderQty is 0 then.
+        // controllers).
         const poQtyInPcs = Number(poItem.orderQty || 0);
 
         return currentReceived >= poQtyInPcs;
@@ -853,97 +962,120 @@ const generateGRNForPO = async ({
     // =========================
     // 🔢 ROUND OFF
     // =========================
-    // Same gap as the single-GRN confirm controller: `invoiceAmount`
-    // keeps the raw, un-rounded totalNet (e.g. ₹79,983.35), and only
-    // `totalInvoiceAmount` ("Net Amount") gets rounded, with `roundOff`
-    // storing the exact adjustment — previously `roundOff` was never
-    // computed and just sat at the schema default of 0 no matter what.
-    // This keeps a bulk-confirmed invoice's Invoice Amount / Round off /
-    // Net Amount reconciling the same way a single-confirmed one does.
     const roundedInvoiceAmount = Math.round(totalNet);
     const roundOff = roundedInvoiceAmount - totalNet;
 
-    /**
-     * 🧾 Create Invoice
-     */
-    const [invoice] = await Invoice.create(
-      [
-        {
-          distributorId: purchaseOrder.distributorId,
-
-          godownId: purchaseOrder.godownId,
-
-          invoiceNo:
-            invoiceNo ||
-            (await generateInvoiceNumber()),
-
-          date: invoiceDate
-            ? moment(invoiceDate, "DD-MM-YYYY")
-              .format("YYYY-MM-DD")
-            : new Date(),
-
-          invoiceDate: invoiceDate
-            ? moment(invoiceDate, "DD-MM-YYYY")
-              .format("YYYY-MM-DD")
-            : null,
-
-          grnDate: grnDate
-            ? moment(grnDate, "DD-MM-YYYY")
-              .format("YYYY-MM-DD")
-            : new Date(),
-
-          vehicleNumber: vehicleNumber || "",
-
-          grnNumber,
-
-          purchaseOrderId: purchaseOrder._id,
-
-          soNumber: soNumber || "",
-
-          lineItems: invoiceLineItems,
-
-          grossAmount: totalGross,
-
-          taxableAmount: totalTaxable,
-
-          cgst: totalCGST,
-
-          sgst: totalSGST,
-
-          igst: totalIGST,
-
-          invoiceAmount: totalNet,
-
-          roundOff,
-
-          totalInvoiceAmount: roundedInvoiceAmount,
-
-          GRNLogId: new mongoose.Types.ObjectId(),
-
-          GRNFKDATE: new Date(),
-
-          grnStatus: "success",
-
-          invoicetype,
-
-          adjustmentSummary: {
-            totalProducts: invoiceLineItems.length,
-            successfulAdjustments: invoiceLineItems.length,
-            failedAdjustments: failedProducts.length,
-            lastRetryAttempt: new Date(),
-          },
-        },
-      ],
+    // strip helper-only fields before saving
+    const invoiceLineItemsToSave = invoiceLineItems.map(
+      ({ productCode, productName, ...rest }) => rest
     );
 
+    // =========================
+    // 📉 RESERVE IN-TRANSIT (atomic, never goes below 0)
+    // =========================
+    const reserve = await deductAllOrRollback(grnEntries);
+
+    if (!reserve.ok) {
+      // Another request used the stock between our check and now.
+      throw {
+        message: `GRN failed. ${reserve.message}`,
+        validationErrors: lineItems.map((item) => ({
+          ...item,
+          originalRow: item.originalRow,
+          reason: reserve.message,
+        })),
+      };
+    }
+
     /**
- * 🔥 STOCK UPDATE + TRANSACTION + LEDGER
- * 🔥 REWARD POINTS
- * 🔥 TARGET ACHIEVEMENT
- *
- * godownId comes from the PO itself — stock always lands in the same
- * godown the purchase order was raised against.
- */
+     * 🧾 Create Invoice
+     * If this fails for any reason, the reserved in-transit is put back.
+     */
+    let invoice;
+
+    try {
+      [invoice] = await Invoice.create(
+        [
+          {
+            distributorId: purchaseOrder.distributorId,
+
+            godownId: purchaseOrder.godownId,
+
+            invoiceNo:
+              invoiceNo ||
+              (await generateInvoiceNumber()),
+
+            date: invoiceDate
+              ? moment(invoiceDate, "DD-MM-YYYY")
+                .format("YYYY-MM-DD")
+              : new Date(),
+
+            invoiceDate: invoiceDate
+              ? moment(invoiceDate, "DD-MM-YYYY")
+                .format("YYYY-MM-DD")
+              : null,
+
+            grnDate: grnDate
+              ? moment(grnDate, "DD-MM-YYYY")
+                .format("YYYY-MM-DD")
+              : new Date(),
+
+            vehicleNumber: vehicleNumber || "",
+
+            grnNumber,
+
+            purchaseOrderId: purchaseOrder._id,
+
+            soNumber: soNumber || "",
+
+            lineItems: invoiceLineItemsToSave,
+
+            grossAmount: totalGross,
+
+            taxableAmount: totalTaxable,
+
+            cgst: totalCGST,
+
+            sgst: totalSGST,
+
+            igst: totalIGST,
+
+            invoiceAmount: totalNet,
+
+            roundOff,
+
+            totalInvoiceAmount: roundedInvoiceAmount,
+
+            GRNLogId: new mongoose.Types.ObjectId(),
+
+            GRNFKDATE: new Date(),
+
+            grnStatus: "success",
+
+            invoicetype,
+
+            adjustmentSummary: {
+              totalProducts: invoiceLineItems.length,
+              successfulAdjustments: invoiceLineItems.length,
+              failedAdjustments: failedProducts.length,
+              lastRetryAttempt: new Date(),
+            },
+          },
+        ],
+      );
+    } catch (createErr) {
+      await rollbackAll(grnEntries);
+      throw createErr;
+    }
+
+    /**
+     * 🔥 STOCK UPDATE + TRANSACTION + LEDGER
+     * 🔥 REWARD POINTS
+     * 🔥 TARGET ACHIEVEMENT
+     *
+     * godownId comes from the PO itself — stock always lands in the same
+     * godown the purchase order was raised against.
+     */
     const { stockSummary, stockAdjustmentErrors } =
       await processInvoiceAdjustments({
         invoice,
@@ -961,13 +1093,8 @@ const generateGRNForPO = async ({
     );
 
     /**
-     * 🔄 Update PO Invoice Status (whole-PO status, across all of its
-     * line items regardless of soNumber — invoicestatus is a PO-root
-     * field, not per-SO). This aggregates across EVERY invoice ever
-     * created against this PO — including any earlier invoices raised
-     * under a different Invoice Number for the same SO — so splitting
-     * one SO across multiple invoices still converges to the correct
-     * PO-level status once all of them are in.
+     * 🔄 Update PO Invoice Status (whole-PO status, aggregated across
+     * EVERY invoice ever created against this PO).
      */
     const allInvoices = await Invoice.find({
       purchaseOrderId: purchaseOrder._id,
@@ -992,7 +1119,6 @@ const generateGRNForPO = async ({
       const received =
         totalReceivedMap[String(poItem.product)] || 0;
 
-      // orderQty is already the pcs-level PO quantity.
       const poQtyInPcs = Number(poItem.orderQty || 0);
 
       if (received === 0) {
@@ -1033,12 +1159,7 @@ const generateGRNForPO = async ({
           : ""
         }`,
       data: invoice,
-      // Per-product available/in-transit qty + running total DLP/RLP
-      // stock value for every item that DID get its stock adjusted.
       stockSummary,
-      // Items whose stock adjustment failed (e.g. missing Price doc) —
-      // the invoice line item itself still exists, but its Inventory
-      // (totalStockamtDlp/totalStockamtRlp/intransitQty) was NOT touched.
       stockAdjustmentErrors,
     };
   } catch (error) {
@@ -1066,12 +1187,9 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
      * 📦 Group by SO Number, then by Invoice Number.
      *
      * `grouped[soNumber][invoiceKey]` holds the rows for one GRN/Invoice.
-     * A single SO can now legitimately be split across several distinct
-     * Invoice Numbers — each such subgroup is confirmed as its own GRN
-     * further down, instead of being rejected with a "must have same
-     * Invoice Number" error. Rows that don't carry an Invoice Number at
-     * all still fall into ONE shared AUTO_INVOICE_KEY bucket per SO, so
-     * they keep getting a single auto-generated invoice, same as before.
+     * A single SO can be split across several distinct Invoice Numbers —
+     * each subgroup is confirmed as its own GRN. Rows without an Invoice
+     * Number fall into ONE shared AUTO_INVOICE_KEY bucket per SO.
      */
     const grouped = {};
 
@@ -1123,19 +1241,11 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
       /**
        * 📦 Qty resolution — GRN Qty (PCS) vs GRN Qty (UOM)
        *
-       * The GRN sheet can now carry a piece-level qty directly (GRN Qty
-       * (PCS)) instead of (or as well as) a UOM-level qty (GRN Qty
-       * (UOM)) — e.g. a "box"/"bndl" product might be received in whole
-       * pieces rather than whole boxes/bundles.
-       *
        * If GRN Qty (PCS) is present on the row, it's already piece-level
-       * and is used as-is, regardless of the product's own uom — no
-       * multiplication by no_of_pieces_in_a_box, since that would double
-       * count. Only when PCS isn't supplied do we fall back to the
-       * previous behaviour: GRN Qty (UOM) * pieces-per-box for any uom
-       * other than "pcs" (a plain "pcs" product's UOM qty is already
-       * piece-level, so multiplying by a 0/undefined pcsPerBox would
-       * silently zero it out).
+       * and is used as-is. Only when PCS isn't supplied do we fall back
+       * to GRN Qty (UOM) * pieces-per-box for any uom other than "pcs".
+       * The final qty is always in PIECES, which is the same unit
+       * intransitQty is kept in.
        */
       const uomQtyRaw = row["GRN Qty (UOM)"];
       const pcsQtyRaw = row["GRN Qty (PCS)"];
@@ -1192,11 +1302,6 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
      * subgroup as its own GRN/Invoice.
      */
     for (const soNumber of Object.keys(grouped)) {
-      // soNumber lives on lineItems, not on the PurchaseOrder root —
-      // find the PO that actually has a line item carrying this SO.
-      // Case-insensitive + already-trimmed `soNumber` guards against
-      // the exact same value being typed with different casing across
-      // the bulk-PO-create sheet and this GRN sheet.
       const purchaseOrder = await PurchaseOrder.findOne({
         "lineItems.soNumber": new RegExp(
           `^${escapeRegex(soNumber)}$`,
@@ -1251,12 +1356,7 @@ const importGrnforPoOrder = asyncHandler(async (req, res) => {
             invoiceNo: result.data?.invoiceNo || null,
             purchaseOrderNo: purchaseOrder.purchaseOrderNo,
             message: result.message,
-            // Per-product available/in-transit qty + running total DLP/RLP
-            // stock value — same figures a single-GRN confirm tracks.
             stockSummary: result.stockSummary,
-            // Which products (if any) failed their stock adjustment and why
-            // — this is what to check when a product's DLP/RLP total looks
-            // stale after a bulk GRN upload.
             stockAdjustmentErrors: result.stockAdjustmentErrors,
           });
         } catch (err) {
