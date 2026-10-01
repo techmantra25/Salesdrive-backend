@@ -8,6 +8,7 @@ const Inventory = require("../../models/inventory.model");
 const axios = require("axios");
 const { SERVER_URL } = require("../../config/server.config");
 const Godown = require("../../models/godown.model");
+const { recalculatePurchaseOrder } = require("./Recalculatepurchaseorder");
 const {
   purchaseOrderNumberGenerator,
   generateCode,
@@ -289,11 +290,19 @@ for (const item of lineItems) {
     });
   }
 }
+    // check and fix the calculation
+    try {
+      await recalculatePurchaseOrder(savedPurchaseOrder._id);
+    } catch (e) {
+      console.error("Recalculate failed:", e.message);
+    }
+
+    const freshPO = await PurchaseOrder.findById(savedPurchaseOrder._id);
 
     res.status(200).json({
       status: 200,
       message: "Purchase Order created successfully",
-      data: savedPurchaseOrder,
+      data: freshPO,
     });
 
   } catch (error) {
