@@ -7,6 +7,7 @@ const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
+const { recalculatePurchaseOrder } = require("./Recalculatepurchaseorder");
 
 // FIX: "plant" is no longer required/used for Purchase Order line items.
 // Previously, if a line item had no plant assigned, the frontend sent
@@ -449,11 +450,26 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     req.body.approved_by = approved_by;
 
     // Update the purchase order
-    const updatedPurchaseOrder = await PurchaseOrder.findOneAndUpdate(
+    let updatedPurchaseOrder = await PurchaseOrder.findOneAndUpdate(
       { _id: purchaseOrderId },
       req.body,
       { new: true }
     );
+
+    // check and fix the calculation (only when line items were part of this
+    // update, so a status-only change like Cancel never rewrites old amounts)
+    if (req.body.lineItems) {
+      try {
+        const recalcResult = await recalculatePurchaseOrder(purchaseOrderId);
+
+        if (recalcResult.corrected) {
+          // DB was corrected, so reload the latest version for the response
+          updatedPurchaseOrder = await PurchaseOrder.findById(purchaseOrderId);
+        }
+      } catch (e) {
+        console.error("Recalculate failed:", e.message);
+      }
+    }
 
     try {
       // hit the send quotation API
