@@ -7,12 +7,10 @@ const Price = require("../../models/price.model");
 
 // ============================================================
 // CONFIG
-// Which field of the Price document is the per-unit rate used
-// for a PO line (gross = orderQty x this rate).
-// Options on your Price model: "mrp_price" | "dlp_price" | "rlp_price"
-// >>> Set this to whatever your frontend sends as `basicAmt`. <<<
+// Per-unit rate of a PO line = mrp - (mrp x l1Basic% / 100)
+//   mrp      -> from the exact Price doc the line points to
+//   l1Basic  -> the discount % saved on the line (user-editable on screen)
 // ============================================================
-const PRICE_FIELD = "dlp_price";
 
 // Same fallback slab as createPurchaseOrder when a product has no GST set
 const DEFAULT_GST = { cgst: 9, sgst: 9, igst: 18 };
@@ -132,7 +130,7 @@ const recalculatePurchaseOrder = async (
       .lean(),
     // exact price doc referenced by the line, regardless of its status
     Price.find({ _id: { $in: priceIds } })
-      .select(PRICE_FIELD)
+      .select("mrp_price L1DiscountPercentage")
       .lean(),
   ]);
 
@@ -163,11 +161,20 @@ const recalculatePurchaseOrder = async (
       throw httpError(404, `Price not found for line ${index + 1}`);
     }
 
-    const unitPrice = num(price[PRICE_FIELD]);
+    // MRP comes from the exact Price doc. The L1 discount % is the one saved
+    // on the line (l1Basic), because the user can edit it on the PO screen.
+    // Falls back to the Price doc's L1 only if the line has no l1Basic saved.
+    const mrp = num(price.mrp_price);
+    const l1 =
+      item.l1Basic !== undefined && item.l1Basic !== null
+        ? num(item.l1Basic)
+        : num(price.L1DiscountPercentage);
+    const unitPrice = mrp - (mrp * l1) / 100;
+
     if (unitPrice <= 0) {
       throw httpError(
         422,
-        `Price ${price._id} has no valid ${PRICE_FIELD} (line ${index + 1})`,
+        `Price ${price._id} has no valid mrp_price (line ${index + 1})`,
       );
     }
 
