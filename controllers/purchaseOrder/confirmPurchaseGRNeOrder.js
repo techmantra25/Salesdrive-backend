@@ -7,6 +7,9 @@ const Inventory = require("../../models/inventory.model");
 const axios = require("axios");
 const SERVER_URL = process.env.SERVER_URL || "http://localhost:5000";
 
+// round to 2 decimals so floats like 119.99999999 don't get stored
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
 // =========================
 // 📦 IN-TRANSIT HELPERS
 // =========================
@@ -293,6 +296,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
     let totalSGST = 0;
     let totalIGST = 0;
     let totalNet = 0;
+    let totalDiscount = 0;
 
     const invoiceLineItems = [];
     const productSummary = [];
@@ -373,33 +377,67 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       // =========================
       // 🎯 L1 DISCOUNT
       // =========================
-      const l1 = Number(item.l1Basic ?? poItem.l1Basic ?? 0);
+      // The screen sends l1Basic (0 is a real value = "no discount").
+      // Only fall back to the PO's L1 if the screen didn't send it at all.
+      const rawL1 = item.l1Basic ?? poItem.l1Basic ?? 0;
+      const l1 = Math.min(100, Math.max(0, Number(rawL1) || 0));
 
       let basicRate = mrp;
       if (l1 > 0) {
         basicRate = mrp - (mrp * l1) / 100;
       }
 
-      if (!basicRate || basicRate < 0) {
+      if (!Number.isFinite(basicRate) || basicRate < 0) {
         basicRate = mrp;
       }
+
+      basicRate = round2(basicRate);
+
+      // discount on this line = (MRP - basic rate) x pcs
+      const discountAmount = round2((mrp - basicRate) * requestedQty);
 
       // =========================
       // 🧾 TAX
       // =========================
-      let cgstPercent = Number(product?.cgst || 0);
-      let sgstPercent = Number(product?.sgst || 0);
-      let igstPercent = Number(product?.igst || 0);
+      // Follow the PO line: same tax type (IGST vs CGST+SGST) and same rate.
+      // Falls back to the product's tax fields (then 9% + 9%) only if the
+      // PO line has no tax recorded.
+      const poIsIgst = Number(poItem.totalIGST || 0) > 0;
+      const poGross = Number(poItem.grossAmt || 0);
+      const poGstTotal =
+        Number(poItem.totalIGST || 0) +
+        Number(poItem.totalCGST || 0) +
+        Number(poItem.totalSGST || 0);
 
-      if (!cgstPercent && !sgstPercent && !igstPercent) {
-        cgstPercent = 9;
-        sgstPercent = 9;
+      let cgstPercent = 0;
+      let sgstPercent = 0;
+      let igstPercent = 0;
+
+      if (poGross > 0 && poGstTotal > 0) {
+        const gstPercent = round2((poGstTotal / poGross) * 100);
+        if (poIsIgst) {
+          igstPercent = gstPercent;
+        } else {
+          cgstPercent = gstPercent / 2;
+          sgstPercent = gstPercent / 2;
+        }
+      } else {
+        cgstPercent = Number(product?.cgst || 0);
+        sgstPercent = Number(product?.sgst || 0);
+        igstPercent = Number(product?.igst || 0);
+
+        if (!cgstPercent && !sgstPercent && !igstPercent) {
+          cgstPercent = 9;
+          sgstPercent = 9;
+        }
       }
 
       // =========================
       // 🧮 CALCULATIONS
+      // grossAmount / taxableAmount are AFTER discount (qty x basicRate).
+      // discountAmount is stored for reference only.
       // =========================
-      const grossAmount = basicRate * requestedQty;
+      const grossAmount = round2(basicRate * requestedQty);
       const taxableAmount = grossAmount;
 
       let cgst = 0,
@@ -407,13 +445,13 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         igst = 0;
 
       if (igstPercent > 0) {
-        igst = (grossAmount * igstPercent) / 100;
+        igst = round2((grossAmount * igstPercent) / 100);
       } else {
-        cgst = (grossAmount * cgstPercent) / 100;
-        sgst = (grossAmount * sgstPercent) / 100;
+        cgst = round2((grossAmount * cgstPercent) / 100);
+        sgst = round2((grossAmount * sgstPercent) / 100);
       }
 
-      const netAmount = grossAmount + cgst + sgst + igst;
+      const netAmount = round2(grossAmount + cgst + sgst + igst);
 
       // =========================
       // ➕ TOTALS
@@ -424,6 +462,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       totalSGST += sgst;
       totalIGST += igst;
       totalNet += netAmount;
+      totalDiscount += discountAmount;
 
       // =========================
       // 📦 PUSH LINE ITEM
@@ -434,13 +473,14 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         plant: poItem.plant || null,
         goodsType: "billed",
         mrp,
-        basicRate,
+        l1Basic: l1, // discount %
+        basicRate, // MRP after discount, per pc
         qty: requestedQty,
         receivedQty: requestedQty,
         poNumber: purchaseOrder.purchaseOrderNo,
         soNumber: poItem.soNumber || "",
         grossAmount,
-        discountAmount: 0,
+        discountAmount, // was hardcoded 0
         specialDiscountAmount: 0,
         taxableAmount,
         cgst,
@@ -547,8 +587,15 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       }
     }
 
+    totalGross = round2(totalGross);
+    totalTaxable = round2(totalTaxable);
+    totalCGST = round2(totalCGST);
+    totalSGST = round2(totalSGST);
+    totalIGST = round2(totalIGST);
+    totalNet = round2(totalNet);
+
     const roundedInvoiceAmount = Math.round(totalNet);
-    const roundOff = roundedInvoiceAmount - totalNet;
+    const roundOff = round2(roundedInvoiceAmount - totalNet);
 
     // strip helper-only field before saving
     const invoiceLineItemsToSave = invoiceLineItems.map(
@@ -577,6 +624,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         lineItems: invoiceLineItemsToSave,
         vehicleNumber: vehicleNumber || "",
         grossAmount: totalGross,
+        tradeDiscount: round2(totalDiscount), // sum of line discounts
         taxableAmount: totalTaxable,
         cgst: totalCGST,
         sgst: totalSGST,
