@@ -1,8 +1,10 @@
 const asyncHandler = require("express-async-handler");
+const axios = require("axios");
 const OrderEnquiry = require("../../models/orderEnquiry.model");
 const Product = require("../../models/product.model");
 const Price = require("../../models/price.model");
 const Inventory = require("../../models/inventory.model");
+const { SERVER_URL } = require("../../config/server.config.js");
 
 const getId = (maybeObjOrId) => {
   if (!maybeObjOrId) return null;
@@ -142,7 +144,7 @@ const editOrderEnquiry = asyncHandler(async (req, res) => {
 
       newOrderEnquiryData.manualDate = selectedDate;
 
-      console.log("Saving:", selectedDate);
+    
     }
     const updatedOrderEnquiry = await OrderEnquiry.findOneAndUpdate(
       { _id: id },
@@ -157,10 +159,60 @@ const editOrderEnquiry = asyncHandler(async (req, res) => {
       });
     }
 
+    // ==================================================
+    // RECALCULATE ORDER ENQUIRY
+    // ==================================================
+
+    let recalcError = null;
+    let finalOrderEnquiry = updatedOrderEnquiry;
+
+    try {
+      const authHeader = req.headers["authorization"];
+
+      const bearerToken =
+        authHeader && authHeader.startsWith("Bearer ")
+          ? authHeader.split(" ")[1]
+          : null;
+
+      const recalcToken = req.cookies?.DBToken || bearerToken;
+
+      if (!recalcToken) {
+        recalcError = "Authorization token is missing for recalculation";
+      } else {
+        await axios.post(
+          SERVER_URL +
+            `/api/v1/order-enquiry/recalculate/${updatedOrderEnquiry._id}`,
+          {},
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${recalcToken}`,
+            },
+          }
+        );
+
+        // Reload recalculated enquiry
+        const freshEnquiry = await OrderEnquiry.findById(
+          updatedOrderEnquiry._id
+        );
+
+        if (freshEnquiry) {
+          finalOrderEnquiry = freshEnquiry;
+        }
+      }
+    } catch (e) {
+  
+
+      recalcError =
+        "Order Enquiry edited, but recalculation failed. " +
+        (e?.response?.data?.message || e.message);
+    }
+
     return res.status(200).json({
       status: 200,
       message: "Order Enquiry edited successfully",
-      data: updatedOrderEnquiry,
+      data: finalOrderEnquiry,
+      ...(recalcError && { recalcError }),
     });
   } catch (error) {
     res.status(res.statusCode && res.statusCode !== 200 ? res.statusCode : 400);

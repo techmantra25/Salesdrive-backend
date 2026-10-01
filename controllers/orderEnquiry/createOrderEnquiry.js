@@ -12,6 +12,7 @@ const Godown = require("../../models/godown.model");
 const { enquiryNumberGenerator } = require("../../utils/codeGenerator");
 const { SERVER_URL } = require("../../config/server.config.js");
 
+
 const createOrderEnquiry = asyncHandler(async (req, res) => {
   try {
     const {
@@ -244,10 +245,7 @@ const createOrderEnquiry = asyncHandler(async (req, res) => {
         }
       }
     } catch (e) {
-      console.error(
-        "RECALCULATE_ERROR createOrderEnquiry:",
-        e?.response?.data?.message || e.message
-      );
+    
 
       recalcError =
         "Order Enquiry created, but recalculation failed. " +
