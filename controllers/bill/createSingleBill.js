@@ -27,6 +27,24 @@ const safeNumber = (value) => {
 
 const toTwoDecimal = (value) => Number(safeNumber(value).toFixed(2));
 
+// GST slabs are multiples of 0.5%. Snap a rate derived from rounded rupee
+// amounts (e.g. 79.98 / 888.62 = 8.9997%) back to the real slab (9%), so
+// recomputed GST matches exactly what the frontend shows.
+const snapRate = (pct) => {
+  const nearest = Math.round(pct * 2) / 2;
+  return Math.abs(pct - nearest) < 0.15 ? nearest : Number(pct.toFixed(4));
+};
+
+// Report (not trust) any amount where the client's number differs from the
+// server's recalculated number.
+const logMismatch = (label, clientValue, serverValue) => {
+  if (Math.abs(safeNumber(clientValue) - safeNumber(serverValue)) > 0.01) {
+    console.warn(
+      `BILL_TOTAL_MISMATCH [${label}]: client sent ${clientValue}, server recalculated ${serverValue} (server value saved)`,
+    );
+  }
+};
+
 // Match a bill line item to the corresponding order line item.
 // Priority:
 //   1. Explicit link field, if the frontend sends one (orderLineItemId).
@@ -111,9 +129,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
       adjustedReplacementIds,
       adviceSlipLinks,
     } = req.body;
-    // NOTE: cgst / sgst / igst are intentionally NOT destructured from
-    // req.body anymore. GST for a bill is always derived from the order
-    // being converted (see helpers above) — never trusted from the client.
+    // NOTE: every monetary total below (gross, discount, taxable, GST,
+    // invoice, round-off, credit, net, line count, base points) is
+    // RECALCULATED on the server. The values above are only used to log a
+    // warning when the client disagrees with the server.
 
     console.log("Received request body2222:", req.body);
 
@@ -134,12 +153,12 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // Validate required fields
-    if (lineItems.length === 0) {
+    if (!Array.isArray(lineItems) || lineItems.length === 0) {
       res.status(400);
       throw new Error("At least one line item is required");
     }
 
-    // Check if the order exists — this is now also our GST source of truth.
+    // Check if the order exists — this is also our GST source of truth.
     const order = await OrderEntry.findById(orderId);
     if (!order) {
       res.status(404);
@@ -154,10 +173,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // ─── Resolve the godown this bill is billed against ───────────────────────
-    // Prefer whatever the client explicitly sent (e.g. a bill created from a
-    // different godown than the order's default), otherwise fall back to the
-    // order's godown. This is the value persisted on Bill.godownId and used
-    // by the bill list's godown filter / godown name column.
     const finalGodownId = godownId || order?.godownId || null;
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -184,168 +199,284 @@ const createSingleBill = asyncHandler(async (req, res) => {
     const isSameState = distributorStateId === retailerStateId;
     // ──────────────────────────────────────────────────────────────────────────
 
-    // validate lineItems, and build the recalculated (GST-corrected) line
-    // items in the same pass.
+    // validate lineItems, and build the fully recalculated line items in the
+    // same pass.
     const orderLineItems = Array.isArray(order.lineItems)
       ? order.lineItems
       : [];
     const usedOrderLineIds = new Set();
     const recalculatedLineItems = [];
 
-    if (lineItems.length > 0) {
-      for (const item of lineItems) {
-        const product = await Product.findById(item?.product);
+    for (const item of lineItems) {
+      const product = await Product.findById(item?.product);
 
-        if (!product) {
+      if (!product) {
+        return res.status(404).json({
+          message: `Product not found for ID ${item?.product} as provided in line items payload`,
+        });
+      }
+
+      const isReplacement = item?.itemBillType === "Replacement";
+
+      let priceDoc = null;
+      if (!isReplacement) {
+        priceDoc = await Price.findById(item?.price);
+        if (!priceDoc) {
           return res.status(404).json({
-            message: `Product not found for ID ${item?.product} as provided in line items payload`,
+            message: `Price not found for ID ${item?.price} as provided in line items payload`,
           });
         }
+      }
 
-        if (item?.itemBillType !== "Replacement") {
-          const price = await Price.findById(item?.price);
-          if (!price) {
-            return res.status(404).json({
-              message: `Price not found for ID ${item?.price} as provided in line items payload`,
-            });
-          }
-        }
+      const billQtyNum = safeNumber(item.billQty);
+      if (billQtyNum < 0) {
+        return res.status(400).json({
+          message: `Bill quantity cannot be negative for product ${product?.product_code}`,
+        });
+      }
 
-        if (item.inventoryId) {
-          const inventory = await Inventory.findById(item?.inventoryId);
+      if (item.inventoryId) {
+        const inventory = await Inventory.findById(item?.inventoryId);
 
-          if (!inventory) {
-            return res.status(400).json({
-              message: `Inventory not found for ID ${item?.inventoryId} as provided in line items payload`,
-            });
-          } else {
-            if (item.billQty > 0 && inventory.availableQty < item.billQty) {
-              return res.status(400).json({
-                message: `Insufficient stock for product ID ${product?.product_code}. Available: ${inventory.availableQty}, Requested: ${item.billQty}`,
-              });
-            }
-          }
-        } else {
+        if (!inventory) {
           return res.status(400).json({
-            message: `Inventory not found for product ID ${product?.product_code}. Please ensure inventory is there for the product for distributor with db code ${distributor.dbCode}.`,
+            message: `Inventory not found for ID ${item?.inventoryId} as provided in line items payload`,
+          });
+        } else {
+          if (item.billQty > 0 && inventory.availableQty < item.billQty) {
+            return res.status(400).json({
+              message: `Insufficient stock for product ID ${product?.product_code}. Available: ${inventory.availableQty}, Requested: ${item.billQty}`,
+            });
+          }
+        }
+      } else {
+        return res.status(400).json({
+          message: `Inventory not found for product ID ${product?.product_code}. Please ensure inventory is there for the product for distributor with db code ${distributor.dbCode}.`,
+        });
+      }
+
+      // Replacement lines never match a normal order line.
+      const matchedOrderLine = isReplacement
+        ? null
+        : matchOrderLineItem(orderLineItems, item, usedOrderLineIds);
+
+      if (matchedOrderLine) {
+        usedOrderLineIds.add(String(matchedOrderLine._id));
+      }
+
+      let grossAmt = 0;
+      let taxableAmt = 0;
+      let totalCGST = 0;
+      let totalSGST = 0;
+      let totalIGST = 0;
+      let netAmt = 0;
+      let lineDiscount = 0;
+      let totalDiscountPercentage = safeNumber(item?.totalDiscountPercentage);
+
+      // Only lines that are actually billed carry amounts. Stock Out,
+      // Item Removed (billQty 0) and Replacement lines stay at zero.
+      if (!isReplacement && billQtyNum > 0) {
+        const rlp = safeNumber(priceDoc?.rlp_price);
+        const mrp = safeNumber(priceDoc?.mrp_price);
+
+        // 1) GROSS: always list price (from DB) x bill qty.
+        grossAmt = toTwoDecimal(rlp * billQtyNum);
+
+        // 2) TAXABLE: the effective price the user actually billed at
+        //    (reflects any discount edit at bill time). If the client did
+        //    not send one, fall back to the order line scaled by qty.
+        const hasSentPrice =
+          item.billPrice !== undefined &&
+          item.billPrice !== null &&
+          item.billPrice !== "";
+        const sentPrice = hasSentPrice ? safeNumber(item.billPrice) : null;
+
+        if (sentPrice !== null && sentPrice < 0) {
+          return res.status(400).json({
+            message: `Effective price cannot be negative for product ${product?.product_code}`,
           });
         }
 
-        // ── GST: scaled copy from the matching order line item ──
-        // ratio = billQty / orderQty. 1 when billing the full quantity
-        // (exact copy), <1 when qty was reduced/edited at bill time.
-        const matchedOrderLine = matchOrderLineItem(
-          orderLineItems,
-          item,
-          usedOrderLineIds,
-        );
-
-        let totalCGST = 0;
-        let totalSGST = 0;
-        let totalIGST = 0;
-        let taxableAmt = safeNumber(item.taxableAmt);
-        let netAmt = taxableAmt;
-
-        if (matchedOrderLine) {
-          usedOrderLineIds.add(String(matchedOrderLine._id));
-
+        if (sentPrice !== null) {
+          taxableAmt = toTwoDecimal(sentPrice * billQtyNum);
+        } else if (matchedOrderLine) {
           const orderQty = safeNumber(matchedOrderLine.oderQty);
-          const billQty = safeNumber(item.billQty);
-          const qtyRatio = orderQty > 0 ? billQty / orderQty : 0;
-
+          const qtyRatio = orderQty > 0 ? billQtyNum / orderQty : 0;
           taxableAmt = toTwoDecimal(
             safeNumber(matchedOrderLine.taxableAmt) * qtyRatio,
           );
-          totalCGST = toTwoDecimal(
-            safeNumber(matchedOrderLine.totalCGST) * qtyRatio,
-          );
-          totalSGST = toTwoDecimal(
-            safeNumber(matchedOrderLine.totalSGST) * qtyRatio,
-          );
-          totalIGST = toTwoDecimal(
-            safeNumber(matchedOrderLine.totalIGST) * qtyRatio,
-          );
-          netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
-
-          if (billQty > orderQty) {
-            console.warn(
-              `GST_QTY_OVERBILL: billQty (${billQty}) exceeds orderQty (${orderQty}) for product ${item?.product} on order ${orderId}; scaling anyway, please verify.`,
-            );
-          }
-                } else {
-          // No matching order line found — this item was added directly
-          // during bill creation (e.g. via the product catalogue) and was
-          // never part of the original order, so there is nothing to scale
-          // GST from. Compute GST from the product's own tax rates instead
-          // of leaving it at 0.
           console.warn(
-            `GST_COPY_MISS: no matching order line found for product ${item?.product} on order ${orderId}; computing GST from product tax rates directly.`,
+            `BILL_PRICE_MISSING: no billPrice sent for product ${item?.product}; scaled taxable from order line.`,
           );
-
+        } else {
           taxableAmt = toTwoDecimal(safeNumber(item.taxableAmt));
-
-          const productCgstRate = safeNumber(product?.cgst);
-          const productSgstRate = safeNumber(product?.sgst);
-          const productIgstRate = safeNumber(product?.igst);
-
-          if (isSameState) {
-            totalCGST = toTwoDecimal((taxableAmt * productCgstRate) / 100);
-            totalSGST = toTwoDecimal((taxableAmt * productSgstRate) / 100);
-            totalIGST = 0;
-          } else {
-            totalCGST = 0;
-            totalSGST = 0;
-            totalIGST = toTwoDecimal((taxableAmt * productIgstRate) / 100);
-          }
-
-          netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
+          console.warn(
+            `BILL_PRICE_MISSING: no billPrice and no order line for product ${item?.product}; using client taxableAmt.`,
+          );
         }
 
-        recalculatedLineItems.push({
-          ...item,
-          taxableAmt,
-          totalCGST,
-          totalSGST,
-          totalIGST,
-          netAmt,
-          totalDiscountAmount: Number(item?.totalDiscountAmount || 0),
-          totalDiscountPercentage: Number(item?.totalDiscountPercentage || 0),
-        });
+        // 3) DISCOUNT: derived, so it can never disagree with gross/taxable.
+        //    (Negative = reverse/special discount, kept as is.)
+        lineDiscount = toTwoDecimal(grossAmt - taxableAmt);
+
+        // 4) GST RATES: reuse the order line's effective rate when there is
+        //    one (keeps the slab the order was priced with); otherwise use
+        //    the product's own rates with the same 2500/unit slab rule the
+        //    frontend uses.
+        const orderTaxable = safeNumber(matchedOrderLine?.taxableAmt);
+        const orderRate = (orderGstAmt) =>
+          snapRate((safeNumber(orderGstAmt) / orderTaxable) * 100);
+
+        let cgstRate = safeNumber(product?.cgst);
+        let sgstRate = safeNumber(product?.sgst);
+        let igstRate = safeNumber(product?.igst);
+
+        if (matchedOrderLine && orderTaxable > 0) {
+          if (isSameState) {
+            cgstRate = orderRate(matchedOrderLine.totalCGST);
+            sgstRate = orderRate(matchedOrderLine.totalSGST);
+          } else {
+            igstRate = orderRate(matchedOrderLine.totalIGST);
+          }
+        } else {
+          if (igstRate <= 0 && (cgstRate > 0 || sgstRate > 0)) {
+            igstRate = cgstRate + sgstRate;
+          }
+          if ((cgstRate <= 0 || sgstRate <= 0) && igstRate > 0) {
+            cgstRate = cgstRate > 0 ? cgstRate : igstRate / 2;
+            sgstRate = sgstRate > 0 ? sgstRate : igstRate / 2;
+          }
+          const perUnit = taxableAmt / billQtyNum;
+          if (perUnit >= 2500) {
+            if (cgstRate === 2.5) cgstRate = 9;
+            if (sgstRate === 2.5) sgstRate = 9;
+            if (igstRate === 5) igstRate = 18;
+          }
+        }
+
+        if (isSameState) {
+          totalCGST = toTwoDecimal((taxableAmt * cgstRate) / 100);
+          totalSGST = toTwoDecimal((taxableAmt * sgstRate) / 100);
+          totalIGST = 0;
+        } else {
+          totalCGST = 0;
+          totalSGST = 0;
+          totalIGST = toTwoDecimal((taxableAmt * igstRate) / 100);
+        }
+
+        netAmt = toTwoDecimal(taxableAmt + totalCGST + totalSGST + totalIGST);
+
+        // 5) Total discount % vs MRP, from the real effective price.
+        if (mrp > 0) {
+          totalDiscountPercentage = toTwoDecimal(
+            ((mrp - taxableAmt / billQtyNum) / mrp) * 100,
+          );
+        }
+
+        if (matchedOrderLine && billQtyNum > safeNumber(matchedOrderLine.oderQty)) {
+          console.warn(
+            `QTY_OVERBILL: billQty (${billQtyNum}) exceeds orderQty (${safeNumber(
+              matchedOrderLine.oderQty,
+            )}) for product ${item?.product} on order ${orderId}; please verify.`,
+          );
+        }
       }
+
+      recalculatedLineItems.push({
+        ...item,
+        grossAmt,
+        // stored as a rupee amount AND labelled as one
+        distributorDisc: lineDiscount,
+        distributorDiscUnit: "amount",
+        taxableAmt,
+        totalCGST,
+        totalSGST,
+        totalIGST,
+        netAmt,
+        totalDiscountAmount: toTwoDecimal(lineDiscount),
+        totalDiscountPercentage,
+        // base point per unit comes from the product, not the client
+        usedBasePoint: safeNumber(product?.base_point),
+      });
     }
 
-    // ── Header-level GST: sum of the SCALED line items above, plus tax on
-    // this bill's own freight/delivery/handling charges. NOT a copy of the
-    // order's header — the order's header reflects the full order quantity,
-    // which may not equal what this specific bill is covering.
-    const computedCGST = toTwoDecimal(
-      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalCGST), 0),
+    // ── Header totals: ALL derived from the recalculated lines ──
+    const billedLines = recalculatedLineItems.filter(
+      (li) => safeNumber(li.billQty) > 0 && li.itemBillType !== "Replacement",
     );
-    const computedSGST = toTwoDecimal(
-      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalSGST), 0),
+    const sumOf = (rows, key) =>
+      toTwoDecimal(rows.reduce((s, li) => s + safeNumber(li[key]), 0));
+
+    const finalGrossAmount = sumOf(billedLines, "grossAmt");
+    const finalTaxableAmount = sumOf(billedLines, "taxableAmt");
+    const finalDistributorDiscount = toTwoDecimal(
+      finalGrossAmount - finalTaxableAmount,
     );
-    const computedIGST = toTwoDecimal(
-      recalculatedLineItems.reduce((sum, li) => sum + safeNumber(li.totalIGST), 0),
+    const finalTotalLines = billedLines.length;
+    const finalTotalBasePoints = Math.round(
+      billedLines.reduce(
+        (s, li) => s + safeNumber(li.usedBasePoint) * safeNumber(li.billQty),
+        0,
+      ),
     );
 
-    // Same flat 9/9/18 treatment on freight/delivery/handling as createOrderEntry,
-    // so a bill's header GST stays consistent with how the order computed it.
+    const computedCGST = sumOf(billedLines, "totalCGST");
+    const computedSGST = sumOf(billedLines, "totalSGST");
+    const computedIGST = sumOf(billedLines, "totalIGST");
+
+    // Same flat 9/9/18 treatment on freight/delivery/handling as createOrderEntry.
     const additionalCharges =
       Number(freightCharges || 0) +
       Number(deliveryCharges || 0) +
       Number(handlingCharges || 0);
 
     const finalCgst = isSameState
-      ? Number((computedCGST + additionalCharges * 0.09).toFixed(2))
+      ? toTwoDecimal(computedCGST + additionalCharges * 0.09)
       : 0;
     const finalSgst = isSameState
-      ? Number((computedSGST + additionalCharges * 0.09).toFixed(2))
+      ? toTwoDecimal(computedSGST + additionalCharges * 0.09)
       : 0;
     const finalIgst = isSameState
       ? 0
-      : Number((computedIGST + additionalCharges * 0.18).toFixed(2));
+      : toTwoDecimal(computedIGST + additionalCharges * 0.18);
 
-    console.log("=== GST SCALED FROM ORDER ENTRY (by qty) ===");
+    // Taxable shown on the bill includes the extra charges (same as before).
+    const finalTaxableWithCharges = toTwoDecimal(
+      finalTaxableAmount + additionalCharges,
+    );
+
+    const finalInvoiceAmount = toTwoDecimal(
+      finalTaxableWithCharges + finalCgst + finalSgst + finalIgst,
+    );
+    const finalRoundOffAmount = Math.round(finalInvoiceAmount);
+
+    // Credit comes from the adjustments themselves, not from a client total.
+    const finalCreditAmount = toTwoDecimal(
+      (adjustedCreditNoteIds || []).reduce(
+        (s, c) => s + safeNumber(c.adjustedAmount),
+        0,
+      ),
+    );
+    const finalNetAmount = finalRoundOffAmount - finalCreditAmount;
+
+    if (finalNetAmount < 0) {
+      return res.status(400).json({
+        message: "Net amount cannot be negative",
+      });
+    }
+
+    // Log every place the client disagreed with the server.
+    logMismatch("totalLines", totalLines, finalTotalLines);
+    logMismatch("totalBasePoints", totalBasePoints, finalTotalBasePoints);
+    logMismatch("grossAmount", grossAmount, finalGrossAmount);
+    logMismatch("distributorDiscount", distributorDiscount, finalDistributorDiscount);
+    logMismatch("taxableAmount", taxableAmount, finalTaxableWithCharges);
+    logMismatch("invoiceAmount", invoiceAmount, finalInvoiceAmount);
+    logMismatch("roundOffAmount", roundOffAmount, finalRoundOffAmount);
+    logMismatch("creditAmount", creditAmount, finalCreditAmount);
+    logMismatch("netAmount", netAmount, finalNetAmount);
+
+    console.log("=== BILL TOTALS RECALCULATED ON SERVER ===");
     console.log("orderId:", orderId);
     console.log(
       "matched order lines:",
@@ -353,9 +484,20 @@ const createSingleBill = asyncHandler(async (req, res) => {
       "of",
       orderLineItems.length,
     );
-    console.log("finalCgst:", finalCgst, "finalSgst:", finalSgst, "finalIgst:", finalIgst);
+    console.log({
+      finalGrossAmount,
+      finalDistributorDiscount,
+      finalTaxableWithCharges,
+      finalCgst,
+      finalSgst,
+      finalIgst,
+      finalInvoiceAmount,
+      finalRoundOffAmount,
+      finalCreditAmount,
+      finalNetAmount,
+    });
     console.log("finalGodownId:", finalGodownId);
-    console.log("=============================================");
+    console.log("==========================================");
     // ──────────────────────────────────────────────────────────────────────────
 
     const billNo = await generateBillNo("INV", distributorId);
@@ -367,8 +509,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
     }
 
     // ─── Reserve stock atomically BEFORE bill creation ────────────────────────
-    // Mirrors the multipleBillCreate pattern: reserve first, then create the bill,
-    // and rollback reservations if the bill save (or any subsequent step) fails.
     const reservedInventories = [];
     try {
       for (const item of lineItems) {
@@ -485,26 +625,26 @@ const createSingleBill = asyncHandler(async (req, res) => {
         vehicleNumber,
         adviceSlipLinks,
         lineItems: recalculatedLineItems,
-        totalLines,
-        totalBasePoints,
-        grossAmount,
+        totalLines: finalTotalLines,
+        totalBasePoints: finalTotalBasePoints,
+        grossAmount: finalGrossAmount,
         schemeDiscount,
-        distributorDiscount,
-        taxableAmount,
+        distributorDiscount: finalDistributorDiscount,
+        taxableAmount: finalTaxableWithCharges,
         cgst: finalCgst,
         sgst: finalSgst,
         igst: finalIgst,
-        invoiceAmount,
-        roundOffAmount,
+        invoiceAmount: finalInvoiceAmount,
+        roundOffAmount: finalRoundOffAmount,
         cashDiscount,
         freightCharges,
         deliveryCharges,
         handlingCharges,
-        netAmount,
+        netAmount: finalNetAmount,
         billedType: "Single",
         adjustedCreditNoteIds,
         adjustedReplacementIds,
-        creditAmount,
+        creditAmount: finalCreditAmount,
         cashDiscountApplied: req.body.cashDiscountApplied || false,
         cashDiscountType: req.body.cashDiscountType || "amount",
         cashDiscountValue: req.body.cashDiscountValue || 0,
@@ -528,9 +668,9 @@ const createSingleBill = asyncHandler(async (req, res) => {
       );
     }
 
-    // update the order with the new bill — GST here is the SAME
-    // order-derived finalCgst/finalSgst/finalIgst used on the bill, never
-    // anything from req.body.
+    // update the order with the new bill — same server-calculated values
+    // that were saved on the bill (now including distributorDiscount, so the
+    // order header stays internally consistent).
     await OrderEntry.findByIdAndUpdate(
       orderId,
       {
@@ -541,15 +681,16 @@ const createSingleBill = asyncHandler(async (req, res) => {
           deliveryCharges,
           handlingCharges,
 
-          grossAmount,
-          taxableAmount,
+          grossAmount: finalGrossAmount,
+          distributorDiscount: finalDistributorDiscount,
+          taxableAmount: finalTaxableWithCharges,
           cgst: finalCgst,
           sgst: finalSgst,
           igst: finalIgst,
-          invoiceAmount,
-          roundOffAmount,
-          netAmount,
-          creditAmount,
+          invoiceAmount: finalInvoiceAmount,
+          roundOffAmount: finalRoundOffAmount,
+          netAmount: finalNetAmount,
+          creditAmount: finalCreditAmount,
 
           lineItems: recalculatedLineItems,
         },
@@ -563,8 +704,6 @@ const createSingleBill = asyncHandler(async (req, res) => {
 
     const billList = orderEntry?.billIds;
     const LineItems = orderEntry?.lineItems;
-
-    const billLineItems = newBill?.lineItems;
 
     const getOrderStatus = getOrderStatusToBe(billList, LineItems);
 
