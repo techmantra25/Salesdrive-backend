@@ -60,7 +60,7 @@ const getExistingGstRates = (item) => {
 exports.recalculateOrderEntry = async (req, res) => {
   try {
     const { orderEntryId } = req.params;
-    console.log("🔄 RECALCULATE API CALLED | orderEntryId:", orderEntryId);
+   
 
     // ========================================================
     // VALIDATE ID
@@ -694,7 +694,7 @@ exports.recalculateOrderEntry = async (req, res) => {
     // ========================================================
 
     if (!hasMismatch) {
-        console.log("✅ RECALCULATE: already correct, no DB update | orderNo:", orderEntry.orderNo);
+       
 
       return res.status(200).json({
         success: true,
@@ -774,14 +774,10 @@ exports.recalculateOrderEntry = async (req, res) => {
       new Date();
 
     await orderEntry.save();
-        console.log(
-      `⚠️ RECALCULATE: ${mismatches.length} mismatch(es) found for orderNo ${orderEntry.orderNo}, updating DB`,
-    );
-    console.log("RECALCULATE MISMATCHES:", JSON.stringify(mismatches, null, 2));
+   
 
     await orderEntry.save();
 
-    console.log("💾 RECALCULATE: order corrected and saved | orderNo:", orderEntry.orderNo);
 
     // ========================================================
     // RESPONSE
@@ -839,10 +835,6 @@ exports.recalculateOrderEntry = async (req, res) => {
 
   } catch (error) {
 
-    console.error(
-      "RECALCULATE ORDER ENTRY ERROR:",
-      error
-    );
 
     return res.status(500).json({
       success: false,

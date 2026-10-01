@@ -49,10 +49,11 @@ const isPercentUnit = (unit) => {
 // RECALCULATE ORDER ENQUIRY
 // ============================================================
 
+
 exports.recalculateOrderEnquiry = async (req, res) => {
   try {
     const { enquiryId } = req.params;
-    console.log("🔄 RECALCULATE ENQUIRY API CALLED | enquiryId:", enquiryId);
+   
 
     // --------------------------------------------------------
     // VALIDATE ID
@@ -64,21 +65,11 @@ exports.recalculateOrderEnquiry = async (req, res) => {
       });
     }
 
-    // --------------------------------------------------------
-    // FIND ENQUIRY
-    // --------------------------------------------------------
-    console.log("🔍 Finding Order Enquiry...");
-console.log("📌 Enquiry ID:", enquiryId);
+
 
 const enquiry = await OrderEnquiry.findById(enquiryId);
 
-if (enquiry) {
-  console.log("✅ Order Enquiry found");
-  console.log("📌 Enquiry No:", enquiry.enquiryNo);
-  console.log("📦 Line Items:", enquiry.lineItems?.length || 0);
-} else {
-  console.log("❌ Order Enquiry NOT FOUND");
-}
+
 
     if (!enquiry) {
       return res.status(404).json({
@@ -275,10 +266,7 @@ if (enquiry) {
     // EVERYTHING CORRECT -> DO NOT TOUCH THE DATABASE
     // --------------------------------------------------------
     if (!hasMismatch) {
-      console.log(
-        "✅ RECALCULATE ENQUIRY: already correct, no DB update | enquiryNo:",
-        enquiry.enquiryNo,
-      );
+    
 
       return res.status(200).json({
         success: true,
@@ -293,17 +281,6 @@ if (enquiry) {
         },
       });
     }
-
-    // --------------------------------------------------------
-    // MISMATCH FOUND -> UPDATE DATABASE (single save)
-    // --------------------------------------------------------
-    console.log(
-      `⚠️ RECALCULATE ENQUIRY: ${mismatches.length} mismatch(es) found for enquiryNo ${enquiry.enquiryNo}, updating DB`,
-    );
-    console.log(
-      "RECALCULATE ENQUIRY MISMATCHES:",
-      JSON.stringify(mismatches, null, 2),
-    );
 
     enquiry.lineItems = calculatedLineItems;
     enquiry.totalLines = totalLines;
@@ -320,10 +297,7 @@ if (enquiry) {
 
     await enquiry.save();
 
-    console.log(
-      "💾 RECALCULATE ENQUIRY: corrected and saved | enquiryNo:",
-      enquiry.enquiryNo,
-    );
+  
 
     return res.status(200).json({
       success: true,
@@ -348,7 +322,7 @@ if (enquiry) {
       },
     });
   } catch (error) {
-    console.error("RECALCULATE ORDER ENQUIRY ERROR:", error);
+    
 
     return res.status(500).json({
       success: false,
