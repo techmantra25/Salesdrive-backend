@@ -270,7 +270,8 @@ const createSingleBill = asyncHandler(async (req, res) => {
       let totalSGST = 0;
       let totalIGST = 0;
       let netAmt = 0;
-      let lineDiscount = 0;
+      let lineDiscount = 0; // rupee discount for the whole line
+      let lineDiscountPercent = 0; // same discount as a % of list price (saved on the line)
       let totalDiscountPercentage = safeNumber(item?.totalDiscountPercentage);
 
       // Only lines that are actually billed carry amounts. Stock Out,
@@ -318,6 +319,15 @@ const createSingleBill = asyncHandler(async (req, res) => {
         // 3) DISCOUNT: derived, so it can never disagree with gross/taxable.
         //    (Negative = reverse/special discount, kept as is.)
         lineDiscount = toTwoDecimal(grossAmt - taxableAmt);
+
+        // 3b) The same discount expressed as a percentage of list price.
+        //     This is what gets saved on the line (distributorDisc, unit
+        //     "percent"). It is per-unit, so it does not depend on qty.
+        //     4 decimals keeps the effective price reconstructable.
+        lineDiscountPercent =
+          grossAmt > 0
+            ? Number(((lineDiscount / grossAmt) * 100).toFixed(4))
+            : 0;
 
         // 4) GST RATES: reuse the order line's effective rate when there is
         //    one (keeps the slab the order was priced with); otherwise use
@@ -385,9 +395,10 @@ const createSingleBill = asyncHandler(async (req, res) => {
       recalculatedLineItems.push({
         ...item,
         grossAmt,
-        // stored as a rupee amount AND labelled as one
-        distributorDisc: lineDiscount,
-        distributorDiscUnit: "amount",
+        // Special discount is saved as a PERCENTAGE of list price per item.
+        // The rupee value of the line discount is kept in totalDiscountAmount.
+        distributorDisc: lineDiscountPercent,
+        distributorDiscUnit: "percent",
         taxableAmt,
         totalCGST,
         totalSGST,
