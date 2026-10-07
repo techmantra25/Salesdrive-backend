@@ -65,9 +65,11 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
 
     // --- LIVE INVENTORY OVERRIDE ---
     // Re-fetch live inventory per product for this distributor, across ALL
-    // godowns, so the response reflects current stock rather than a stale
-    // inventoryId that may point at an empty/wrong godown.
+    // godowns, and always show the stock of the ORDER's godown on each line,
+    // even if the saved inventoryId points at a different godown.
     const distributorId = orderData.distributorId?._id;
+    const orderGodownId = orderData.godownId ? String(orderData.godownId) : null;
+    const gid = (g) => (g ? String(g._id || g) : null);
 
     if (distributorId && Array.isArray(orderData.lineItems)) {
       const productIds = orderData.lineItems
@@ -78,32 +80,35 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
         distributorId,
         productId: { $in: productIds },
       })
-        .populate("godownId", "name") // adjust field name if different
+        .populate("godownId", "godownName godownCode")
         .lean();
 
       // Group live inventory records by productId
       const inventoryByProduct = {};
       for (const inv of liveInventories) {
         const pid = String(inv.productId);
-        if (!inventoryByProduct[pid]) inventoryByProduct[pid] = [];
-        inventoryByProduct[pid].push(inv);
+        (inventoryByProduct[pid] ||= []).push(inv);
       }
 
       orderData.lineItems = orderData.lineItems.map((li) => {
-        const pid = String(li.product?._id);
-        const records = inventoryByProduct[pid] || [];
-
-        // Pick the godown record with stock, if the currently-linked one is empty.
-        // Preference: keep original if it has stock; otherwise use the first
-        // record with availableQty > 0; otherwise fall back to original.
+        const records = inventoryByProduct[String(li.product?._id)] || [];
         const original = li.inventoryId;
-        const originalHasStock = original && original.availableQty > 0;
 
-        const bestAlternate = records.find((r) => r.availableQty > 0);
+        // Always prefer the record belonging to the ORDER's godown
+        const orderGodownRecord = orderGodownId
+          ? records.find((r) => gid(r.godownId) === orderGodownId)
+          : null;
+
+        // true = saved inventoryId belongs to a different godown than the order
+        const inventoryMismatch =
+          !!original &&
+          !!orderGodownId &&
+          gid(original.godownId) !== orderGodownId;
 
         return {
           ...li,
-          inventoryId: originalHasStock ? original : bestAlternate || original,
+          inventoryId: orderGodownRecord || original,
+          inventoryMismatch,
           liveInventoryAcrossGodowns: records, // optional: expose all godown stock for transparency
         };
       });
