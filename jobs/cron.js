@@ -82,7 +82,7 @@ const syncInventoryWithProductMasterJob = new cron.CronJob(
 
 // Correct inventory intransitQty daily at 2:00 AM
 const correctInventoryIntransitQtyJob = new cron.CronJob(
-    "50 13 * * *",
+   "0 7 * * *",
   async function () {
     try {
       console.log(
