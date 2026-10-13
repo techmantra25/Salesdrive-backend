@@ -4,6 +4,7 @@ const {
   createPurchaseOrder,
 } = require("../../controllers/purchaseOrder/createPurchaseOrder.js");
 
+const {correctInventoryIntransitQty} = require("../../controllers/purchaseOrder/correctInventoryIntransitQty.js");
 const {
   getGrnPrimeryOrder,
 } = require("../../controllers/purchaseOrder/getGrnPrimeryOrder.js");
@@ -57,6 +58,7 @@ const purchaseOrderRoutes = express.Router();
 
 purchaseOrderRoutes.route("/bulk-create-purchase-orders").post(protectDisRoute, bulkCreatePurchaseOrders);
 purchaseOrderRoutes.route("/create-purchase-order").post(protect, createPurchaseOrder);
+purchaseOrderRoutes.route("/correct-intransit-qty").post( correctInventoryIntransitQty);
 
 purchaseOrderRoutes
   .route("/detail-purchase-order/:purchaseOrderId")
