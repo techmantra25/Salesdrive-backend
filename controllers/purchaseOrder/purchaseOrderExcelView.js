@@ -160,9 +160,10 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       },
     ]);
 
-    // ---- Compute GRN qty / GRN L1 % / GRN status per line item ------------
-    // NOTE: grnQty / grnBoxQty / grnL1 / grnStatus are NOT stored on the
-    // PurchaseOrder document. They are derived from Invoice line items.
+    // ---- Compute GRN qty / GRN L1 % / GRN status / in-transit per line -----
+    // NOTE: grnQty / grnBoxQty / grnL1 / grnStatus / poIntransitQty are NOT
+    // stored on the PurchaseOrder document. They are derived from Invoice
+    // line items.
     //
     // Batch-fetch every invoice tied to any PO on this page in a single
     // query (instead of one query per PO/line item), then aggregate per
@@ -176,21 +177,31 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
     // Invoice.find({ purchaseOrderId: { $in: poIds }, status: { $ne: "Cancelled" } })
 
     // All maps are keyed by "<purchaseOrderId>_<productId>"
-    const receivedMap = {}; // total qty (PCS) received via invoices
-    const grnGrossMap = {}; // total invoiced gross amount
-    const grnMrpValueMap = {}; // total (qty * mrp), used to derive GRN L1 %
+    const receivedMap = {}; // total qty (PCS) received via ALL invoices
+    const latestGrnMap = {}; // gross + MRP value of the LATEST invoice only
 
     for (const inv of invoices) {
       const poKey = String(inv.purchaseOrderId);
+      const invId = String(inv._id);
+      const invTime = new Date(inv.createdAt || inv.grnDate || 0).getTime();
+
       for (const li of inv.lineItems || []) {
         const mapKey = `${poKey}_${String(li.product)}`;
         const qty = Number(li.qty || 0);
+        const gross = Number(li.grossAmount || 0);
+        const mrpValue = qty * Number(li.mrp || 0);
 
         receivedMap[mapKey] = (receivedMap[mapKey] || 0) + qty;
-        grnGrossMap[mapKey] =
-          (grnGrossMap[mapKey] || 0) + Number(li.grossAmount || 0);
-        grnMrpValueMap[mapKey] =
-          (grnMrpValueMap[mapKey] || 0) + qty * Number(li.mrp || 0);
+
+        const latest = latestGrnMap[mapKey];
+        if (!latest || invTime > latest.time) {
+          // newer invoice -> replaces the previous one
+          latestGrnMap[mapKey] = { invId, time: invTime, gross, mrpValue };
+        } else if (latest.invId === invId) {
+          // same invoice listing this product more than once -> add together
+          latest.gross += gross;
+          latest.mrpValue += mrpValue;
+        }
       }
     }
 
@@ -204,15 +215,15 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         const piecesPerBox = Number(item?.product?.no_of_pieces_in_a_box || 1);
         const orderQty = Number(item?.orderQty || 0);
 
-        // GRN L1 % = (1 - invoiced gross / (qty * MRP)) * 100
-        // null when nothing has been invoiced for this line yet.
-        const mrpValue = grnMrpValueMap[mapKey] || 0;
+        // GRN L1 % of the LATEST invoice for this line
+        // = (1 - gross / (qty * MRP)) * 100. null if nothing invoiced yet.
+        const latestGrn = latestGrnMap[mapKey];
         const grnL1 =
-          mrpValue > 0
+          latestGrn && latestGrn.mrpValue > 0
             ? Number(
-                ((1 - (grnGrossMap[mapKey] || 0) / mrpValue) * 100).toFixed(2),
-              )
-            : null;
+              ((1 - latestGrn.gross / latestGrn.mrpValue) * 100).toFixed(2),
+            )
+            : Number(item?.l1Basic ?? 0);   // no GRN yet -> same as PO L1
 
         // Per-line GRN / invoice status
         //   Fully-Invoiced : received >= ordered
@@ -224,11 +235,15 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         } else if (alreadyReceived > 0) {
           grnStatus = "Partial-GRN";
         }
- const isClosed =
+
+        // PO-wise In-Transit Qty (PCS): ordered but not yet received on THIS
+        // PO line. 0 when the line is shortclosed or the PO is cancelled.
+        const isClosed =
           item?.foreclose === true || poObj?.status === "Cancelled";
         const poIntransitQty = isClosed
           ? 0
           : Math.max(orderQty - alreadyReceived, 0);
+
         return {
           ...item,
           grnQty: alreadyReceived,
