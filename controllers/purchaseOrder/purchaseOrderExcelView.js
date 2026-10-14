@@ -15,8 +15,8 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       distributorId,
       godownId, // single godown filter
       godownIds, // comma-separated list of godown filters
-      invoiceStatus, // "Pending" | "Partially-Invoiced" | "Complete-Invoiced"
-      purchaseOrderId, // array
+      invoiceStatus, // "Pending" | "Partially-Invoiced" | "Complete-Invoiced" | "Cancelled"
+      purchaseOrderId, // comma-separated list of PO ids
       purchaseOrderNo,
     } = req.query;
 
@@ -72,6 +72,7 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       }
     }
 
+    // Filter by specific purchase order ids
     if (purchaseOrderId) {
       const ids = [
         ...new Set(
@@ -79,7 +80,7 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
             .split(",")
             .map((id) => id.trim())
             .filter((id) => mongoose.Types.ObjectId.isValid(id))
-            .map((id) => new mongoose.Types.ObjectId(id))
+            .map((id) => new mongoose.Types.ObjectId(id)),
         ),
       ];
 
@@ -93,8 +94,8 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
         });
       }
     }
-    // Fetch data with pagination
 
+    // Fetch data with pagination
     const purchaseOrders = await PurchaseOrder.find(query)
       .populate([
         {
@@ -141,9 +142,6 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
           strictPopulate: false,
         },
       ])
-      // NOTE: lineItems.grnQty / lineItems.grnBoxQty are NOT stored on the
-      // PurchaseOrder document — they're derived below from Invoice
-      // lineItems, the same way getGrnPrimeryOrder computes them.
       .sort({ _id: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit));
@@ -162,24 +160,37 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       },
     ]);
 
-    // ---- Compute grnQty / grnBoxQty per line item -------------------------
+    // ---- Compute GRN qty / GRN L1 % / GRN status per line item ------------
+    // NOTE: grnQty / grnBoxQty / grnL1 / grnStatus are NOT stored on the
+    // PurchaseOrder document. They are derived from Invoice line items.
+    //
     // Batch-fetch every invoice tied to any PO on this page in a single
-    // query (rather than one query per PO/line item like getGrnPrimeryOrder
-    // does), then aggregate received qty per PO+product.
+    // query (instead of one query per PO/line item), then aggregate per
+    // PO + product.
     const poIds = populatedOrders.map((po) => po._id);
 
     const invoices = poIds.length
       ? await Invoice.find({ purchaseOrderId: { $in: poIds } })
       : [];
+    // If cancelled invoices must NOT count as received, use:
+    // Invoice.find({ purchaseOrderId: { $in: poIds }, status: { $ne: "Cancelled" } })
 
-    // receivedMap: "<purchaseOrderId>_<productId>" -> total qty received
-    const receivedMap = {};
+    // All maps are keyed by "<purchaseOrderId>_<productId>"
+    const receivedMap = {}; // total qty (PCS) received via invoices
+    const grnGrossMap = {}; // total invoiced gross amount
+    const grnMrpValueMap = {}; // total (qty * mrp), used to derive GRN L1 %
+
     for (const inv of invoices) {
       const poKey = String(inv.purchaseOrderId);
       for (const li of inv.lineItems || []) {
-        const productKey = String(li.product);
-        const mapKey = `${poKey}_${productKey}`;
-        receivedMap[mapKey] = (receivedMap[mapKey] || 0) + Number(li.qty || 0);
+        const mapKey = `${poKey}_${String(li.product)}`;
+        const qty = Number(li.qty || 0);
+
+        receivedMap[mapKey] = (receivedMap[mapKey] || 0) + qty;
+        grnGrossMap[mapKey] =
+          (grnGrossMap[mapKey] || 0) + Number(li.grossAmount || 0);
+        grnMrpValueMap[mapKey] =
+          (grnMrpValueMap[mapKey] || 0) + qty * Number(li.mrp || 0);
       }
     }
 
@@ -188,15 +199,43 @@ const purchaseOrderExcelView = asyncHandler(async (req, res) => {
       const poKey = String(poObj._id);
 
       const lineItems = (poObj.lineItems || []).map((item) => {
-        const productId = item?.product?._id;
-        const mapKey = `${poKey}_${String(productId)}`;
+        const mapKey = `${poKey}_${String(item?.product?._id)}`;
         const alreadyReceived = receivedMap[mapKey] || 0;
         const piecesPerBox = Number(item?.product?.no_of_pieces_in_a_box || 1);
+        const orderQty = Number(item?.orderQty || 0);
 
+        // GRN L1 % = (1 - invoiced gross / (qty * MRP)) * 100
+        // null when nothing has been invoiced for this line yet.
+        const mrpValue = grnMrpValueMap[mapKey] || 0;
+        const grnL1 =
+          mrpValue > 0
+            ? Number(
+                ((1 - (grnGrossMap[mapKey] || 0) / mrpValue) * 100).toFixed(2),
+              )
+            : null;
+
+        // Per-line GRN / invoice status
+        //   Fully-Invoiced : received >= ordered
+        //   Partial-GRN    : some received, but less than ordered
+        //   Pending        : nothing received
+        let grnStatus = "Pending";
+        if (alreadyReceived > 0 && alreadyReceived >= orderQty) {
+          grnStatus = "Fully-Invoiced";
+        } else if (alreadyReceived > 0) {
+          grnStatus = "Partial-GRN";
+        }
+ const isClosed =
+          item?.foreclose === true || poObj?.status === "Cancelled";
+        const poIntransitQty = isClosed
+          ? 0
+          : Math.max(orderQty - alreadyReceived, 0);
         return {
           ...item,
           grnQty: alreadyReceived,
           grnBoxQty: Math.floor(alreadyReceived / piecesPerBox),
+          grnL1,
+          grnStatus,
+          poIntransitQty,
         };
       });
 
