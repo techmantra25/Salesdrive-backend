@@ -62,10 +62,7 @@ const formatRoundOff = (value) => {
  */
 const formatGodown = (godownDoc) => {
   if (!godownDoc || typeof godownDoc !== "object") return "";
-  const name = godownDoc.godownName || "";
-  const code = godownDoc.godownCode || "";
-  if (name && code) return `${name} (${code})`;
-  return name || code || "";
+  return godownDoc.godownName || "";
 };
 
 /**
@@ -674,7 +671,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Sales",
-            // godown: formatGodown(bill.godownId),
+            godown: formatGodown(bill.godownId),
             invoiceNo: bill.billNo || "",
             invoiceDate: formatDate(bill.createdAt),
             // CHANGED: Ref Doc No for Sales = "Infrawal Projects Pvt Ltd"
@@ -703,8 +700,8 @@ exports.generateTallyReport = async (req, res) => {
             discount: discountPercentage, // final line-item discount %, with fallback
             taxableAmount: formatCurrency(lineItem.taxableAmt), // = SO Value
             netAmount: formatCurrency(
-  getLineNetWithCharges(lineItem, chargesResult, lineItemCount, billTotalTax),
-),
+              getLineNetWithCharges(lineItem, chargesResult, lineItemCount, billTotalTax),
+            ),
             // --- new columns ---
             charges: formatCurrency(chargesResult.chargesAmt),
             // chargesGst: a PERCENTAGE (e.g. 18.00), not a rupee amount
@@ -1016,7 +1013,7 @@ exports.generateTallyReport = async (req, res) => {
 
           reportData.push({
             transactionType: "Purchase Return",
-            godown: formatGodown(purchaseReturn.invoiceId?.godownId),
+            godown: formatGodown(purchaseReturn.godownId),
             invoiceNo: purchaseReturn.code || "",
             invoiceDate: formatDate(purchaseReturn.createdAt),
             // CHANGED: Ref Doc No for Purchase Return = supplier name
@@ -1153,6 +1150,7 @@ const generateExcelReport = async (reportData, distributorId) => {
     // NEW: last column — vehicle number from the Sales bill (blank for
     // other transaction types)
     { header: "Vehicle No", key: "vehicleNumber", width: 18 },
+    { header: "Godown Name", key: "godown", width: 22 },
   ];
 
   // Style header row
