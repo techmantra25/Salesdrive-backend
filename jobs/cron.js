@@ -78,6 +78,43 @@ const syncInventoryWithProductMasterJob = new cron.CronJob(
   true,
   "Asia/Kolkata"
 );
+
+
+// Correct inventory intransitQty daily at 2:00 AM
+const correctInventoryIntransitQtyJob = new cron.CronJob(
+   "0 7 * * *",
+  async function () {
+    try {
+      console.log(
+        "🔄 Starting Inventory In-Transit Quantity Correction..."
+      );
+
+      const res = await axios.post(
+        `${API_URL}/api/v1/purchase-order/correct-intransit-qty`
+      );
+
+      if (res.status === 200 || res.status === 201) {
+        console.log(
+          "✅ Inventory In-Transit Quantity Correction Completed"
+        );
+        console.log("Summary:", res.data?.summary || res.data);
+      } else {
+        console.error(
+          "❌ Inventory In-Transit Quantity Correction Failed:",
+          res.status
+        );
+      }
+    } catch (error) {
+      console.error(
+        "🔥 Error correcting inventory intransitQty:",
+        error.response?.data || error.message
+      );
+    }
+  },
+  null,
+  true,
+  "Asia/Kolkata"
+);
 // // to fetch primary invoices every 3 hours 23 minutes between 6am to 7pm
 // const fetchPrimaryInvoicesJob = new cron.CronJob(
 //   "23 6-19/3 * * *",
@@ -1059,5 +1096,6 @@ module.exports = {
   //   syncOutletCodeUpdatesJob,
   // rebuildDistributorBalanceJob,
   // rebuildRetailerBalanceJob,
-  syncInventoryWithProductMasterJob 
+  syncInventoryWithProductMasterJob ,
+  correctInventoryIntransitQtyJob
 };
