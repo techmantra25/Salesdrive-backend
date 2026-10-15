@@ -76,7 +76,7 @@ const parseOrderDate = (value) => {
       "M/D/YYYY",
       moment.ISO_8601,
     ],
-    true
+    true,
   );
 
   if (!parsed.isValid()) return null;
@@ -216,12 +216,9 @@ const getApplicableTaxRate = ({ product, taxableAmt, qty }) => {
  *        distributorDisc = rlpPrice - effectivePrice
  *    This is intentionally NOT clamped to >= 0. If Effective Price is uploaded
  *    HIGHER than RLP, distributorDisc comes out negative (a markup), and taxableAmt
- *    correctly comes out ABOVE grossAmt — exactly like the "-9.46" example in the UI
- *    where Effective Price (140) > Base Rate (130.54).
+ *    correctly comes out ABOVE grossAmt.
  *  - Total Discount % / Amount are always measured against MRP using the actual
  *    effective price, matching getTotalDiscountData() on the manual entry screen.
- *    When Effective Price isn't uploaded, effPrice defaults to RLP, so Total Discount
- *    naturally shows the baseline MRP→RLP discount every product already carries.
  */
 const buildLineItem = ({
   product,
@@ -298,19 +295,13 @@ const mergeRowsByProduct = (rows) => {
     if (!map[productCode]) {
       map[productCode] = { ...row };
     } else {
-      const existingQty = safeNumber(map[productCode].orderQty);
-      const newQty = safeNumber(row.orderQty);
-      const totalQty = existingQty + newQty;
-
-      // Weighted-average the Effective Price across merged rows for the same
-      // product code. If EITHER row omitted Effective Price, we can't weight it
-      // meaningfully (we don't know RLP yet at merge time), so we leave it null —
-      // buildLineItem() will then fall back to RLP for the whole merged quantity,
-      // same as if Effective Price had simply never been supplied.
+      // Effective Price in the sheet is the line total, so merged rows are
+      // summed. If EITHER row omitted Effective Price, leave it null so
+      // buildLineItem() falls back to RLP for the whole merged quantity.
       const combinedEffectivePrice =
         map[productCode].effectivePrice !== null && row.effectivePrice !== null
           ? safeNumber(map[productCode].effectivePrice) +
-          safeNumber(row.effectivePrice)
+            safeNumber(row.effectivePrice)
           : null;
 
       map[productCode].orderQty += row.orderQty;
@@ -332,9 +323,8 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
   // regionId is raw ObjectId (not populated) — safe to toString() directly
   const regionId = distributor?.regionId?.toString() || null;
 
-  // Parsed up-front (moved ahead of the line-item loop) so the order date
-  // is available to the price lookup below — pricing must be resolved
-  // against THIS date, not "now".
+  // Parsed up-front so the order date is available to the price lookup —
+  // pricing must be resolved against THIS date, not "now".
   const orderDate = parseOrderDate(orderMeta.orderDate);
 
   if (!orderDate) {
@@ -375,7 +365,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       quotationDate: orderDate,
     });
 
-    // ✅ Reject if price missing OR rlp_price is zero
+    // Reject if price missing OR rlp_price is zero
     if (!price || safeNumber(price.rlp_price) <= 0) {
       validationErrors.push({
         ...item,
@@ -386,32 +376,18 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
       continue;
     }
 
-    // Resolve inventory against the SAME godown this order is placed
-    // against (orderMeta.godownId, from the CSV's Godown Code). This must
-    // mirror EntryProductCatalogue.jsx's manual-entry resolution — falling
-    // back to godownType "main" only when no Godown Code was supplied.
-    // Using the wrong godown here silently attaches an unrelated godown's
-    // inventoryId to the line item, and createSingleBill's stock check
-    // trusts that inventoryId as-is — so a bill can pass and be delivered
-    // even when the actually-ordered godown has zero stock.
-    const inventory = orderMeta.godownId
-      ? await Inventory.findOne({
-          productId: product._id,
-          distributorId: distributor._id,
-          godownId: orderMeta.godownId,
-        })
-      : await Inventory.findOne({
-          productId: product._id,
-          distributorId: distributor._id,
-          godownType: "main",
-        });
+    // Godown Code is mandatory, so inventory is always resolved against the
+    // specified godown (no fallback to the "main" godown).
+    const inventory = await Inventory.findOne({
+      productId: product._id,
+      distributorId: distributor._id,
+      godownId: orderMeta.godownId,
+    });
 
     if (!inventory) {
       validationErrors.push({
         ...item,
-        reason: orderMeta.godownId
-          ? `Inventory not found for Product Code ${item.productCode} in the specified Godown`
-          : `Inventory not found for Product Code ${item.productCode}`,
+        reason: `Inventory not found for Product Code ${item.productCode} in the specified Godown`,
       });
       continue;
     }
@@ -428,17 +404,26 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     );
   }
 
-  const orderNo = await orderNumberGeneratorNew("ORD");
-
   if (!lineItems.length) {
     throw {
       message: "No valid line items",
-      validationErrors: rows.map((row) => ({
-        ...row,
-        reason: "No valid line items",
-      })),
+      validationErrors: [
+        ...validationErrors,
+        ...rows
+          .filter(
+            (row) =>
+              !validationErrors.some(
+                (v) => String(v.productCode).trim() === String(row.productCode).trim(),
+              ),
+          )
+          .map((row) => ({ ...row, reason: "No valid line items" })),
+      ],
     };
   }
+
+  // Generated only after we know the order will actually be created,
+  // so failed groups don't burn order numbers.
+  const orderNo = await orderNumberGeneratorNew("ORD");
 
   const total = (field) =>
     toTwoDecimal(
@@ -455,9 +440,8 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
 
   const netAmount = total("netAmt");
 
-  // distributorDisc is now a ₹-per-unit AMOUNT (can be negative for a markup),
-  // so the order-level total is simply the sum of (distributorDisc * qty) per line —
-  // equivalent to total(grossAmt) - total(taxableAmt).
+  // distributorDisc is a ₹-per-unit AMOUNT (can be negative for a markup),
+  // so the order-level total is the sum of (distributorDisc * qty) per line.
   const totalDistributorDiscount = toTwoDecimal(
     lineItems.reduce(
       (sum, item) =>
@@ -472,7 +456,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
     salesmanName: orderMeta.employee._id,
     routeId: orderMeta.routeId,
     retailerId: orderMeta.retailer._id,
-    godownId: orderMeta.godownId ?? null,
+    godownId: orderMeta.godownId, // always present now
     cso: orderMeta.retailer?.cso ?? null,
     orderType: orderMeta.orderType,
     orderSource: "Distributor",
@@ -504,7 +488,7 @@ const createImportedOrder = async ({ distributor, rows, orderMeta }) => {
           manualOrderDate: orderDate,
           updatedAt: orderDate,
         },
-      }
+      },
     );
 
     createdOrder.manualOrderDate = orderDate;
@@ -527,7 +511,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
 
     const distributorId = req.user.id;
 
-    // ✅ Only populate stateId — regionId stays as raw ObjectId
+    // Only populate stateId — regionId stays as raw ObjectId
     const distributor =
       await Distributor.findById(distributorId).populate("stateId");
 
@@ -546,15 +530,13 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       const retailerCode = String(getFirstValue(row, ["Retailer Code"])).trim();
       const retailerName = String(getFirstValue(row, ["Retailer Name"])).trim();
       const orderDate = getFirstValue(row, ["Order Date"]);
-      const godownCode = String(
-        getFirstValue(row, ["Godown Code"]),
-      ).trim();
+      const godownCode = String(getFirstValue(row, ["Godown Code"])).trim();
       const productCode = String(getFirstValue(row, ["Product Code"])).trim();
       const orderQty = safeNumber(getFirstValue(row, ["Order Quantity"]));
       const orderType = DEFAULT_ORDER_TYPE;
       const paymentMode = DEFAULT_PAYMENT_MODE;
       // Positive-only: a 0 or negative Effective Price in the sheet is treated as
-      // "not supplied" and falls back to RLP, same guard as before.
+      // "not supplied" and falls back to RLP.
       const effectivePrice = safeOptionalPositiveNumber(
         getFirstValue(row, ["Effective Price"]),
       );
@@ -563,24 +545,30 @@ const importSalesOrder = asyncHandler(async (req, res) => {
       );
       const remark = String(getFirstValue(row, ["Remark"])).trim();
 
-      if (!salesmanCode || !retailerCode || !retailerName || !productCode) {
+      // Godown Code is now mandatory
+      if (
+        !salesmanCode ||
+        !retailerCode ||
+        !retailerName ||
+        !productCode ||
+        !godownCode
+      ) {
         skippedRowCount += 1;
         errorCsv.push({
           ...row,
           Reason:
-            "Salesman Code, Retailer Code, Retailer Name and Product Code are required",
+            "Salesman Code, Retailer Code, Retailer Name, Godown Code and Product Code are required",
         });
         continue;
       }
 
-      // Godown Code is optional — rows for the same salesman/retailer/date but
-      // different godown codes are split into separate orders, same as if the
-      // Order Date differed.
+      // Rows for the same salesman/retailer/date but different godown codes
+      // are split into separate orders.
       const groupKey = [
         salesmanCode,
         retailerCode,
         orderDate || "",
-        godownCode || "",
+        godownCode,
         orderType,
         paymentMode,
       ].join("||");
@@ -667,29 +655,26 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           };
         }
 
-        // Godown Code is optional. When supplied, it must resolve to an
-        // active godown belonging to this distributor (mirrors the
-        // distributorId+godownCode uniqueness on the Godown model).
-        let godownId = null;
-        if (group.godownCode) {
-          const godown = await Godown.findOne({
-            distributorId: distributor._id,
-            godownCode: group.godownCode,
-            isActive: true,
-          });
+        // Godown Code is mandatory and must resolve to an active godown
+        // belonging to this distributor (mirrors the distributorId+godownCode
+        // uniqueness on the Godown model).
+        const godown = await Godown.findOne({
+          distributorId: distributor._id,
+          godownCode: group.godownCode,
+          isActive: true,
+        });
 
-          if (!godown) {
-            throw {
-              message: `Godown not found for Godown Code ${group.godownCode}`,
-              validationErrors: group.rows.map((row) => ({
-                ...row,
-                reason: `Godown not found for Godown Code ${group.godownCode}`,
-              })),
-            };
-          }
-
-          godownId = godown._id;
+        if (!godown) {
+          throw {
+            message: `Godown not found for Godown Code ${group.godownCode}`,
+            validationErrors: group.rows.map((row) => ({
+              ...row,
+              reason: `Godown not found for Godown Code ${group.godownCode}`,
+            })),
+          };
         }
+
+        const godownId = godown._id;
 
         const { order, validationErrors } = await createImportedOrder({
           distributor,
@@ -710,9 +695,11 @@ const importSalesOrder = asyncHandler(async (req, res) => {
           orderNo: order.orderNo,
           salesmanCode: group.salesmanCode,
           retailerCode: group.retailerCode,
+          godownCode: group.godownCode,
           lineItems: order.lineItems.length,
           message: "Sales order created",
         });
+
         if (validationErrors.length) {
           validationErrors.forEach((item) => {
             errorCsv.push({
@@ -725,6 +712,7 @@ const importSalesOrder = asyncHandler(async (req, res) => {
         errors.push({
           salesmanCode: group.salesmanCode,
           retailerCode: group.retailerCode,
+          godownCode: group.godownCode,
           message: error.message || "Sales order import failed",
         });
 
