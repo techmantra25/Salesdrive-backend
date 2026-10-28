@@ -43,7 +43,13 @@ const inventoryPaginatedList = asyncHandler(async (req, res) => {
       zeroStockFilter,
       sortField,
       sortOrder,
+      splitByGodown,
     } = req.query;
+
+    // When "true" and no specific godown is selected, return one row per
+    // (product, godown) instead of one combined row per product. Used by the
+    // export so each godown's stock is reported separately.
+    const splitGodowns = splitByGodown === "true" || splitByGodown === true;
 
     const distributorId = req.user._id;
 
@@ -126,7 +132,8 @@ const godownMatchFragment = godownId
     // When a specific godownId IS selected, we skip this — each doc is
     // already scoped to exactly that godown, so per-godown rows are shown
     // as-is (matches previous, expected behavior for a single godown).
-    const combineAcrossGodowns = !godownId;
+    // Skipped when splitByGodown=true so each godown keeps its own row.
+    const combineAcrossGodowns = !godownId && !splitGodowns;
 
     if (combineAcrossGodowns) {
       pipeline.push({
@@ -422,9 +429,12 @@ const godownMatchFragment = godownId
     const sortKey =
       SORTABLE_FIELDS[sortField] || "product.name";
 
+    // In split mode, keep a product's godown rows next to each other
+    // (godownId as tie-breaker before _id).
     pipeline.push({
       $sort: {
         [sortKey]: sortDirection,
+        ...(splitGodowns ? { productId: 1, godownId: 1 } : {}),
         _id: 1,
       },
     });
@@ -598,7 +608,10 @@ const godownMatchFragment = godownId
   },
   {
     $group: {
-      _id: "$lineItems.product",
+      // Split mode: pending qty per (product, godown); otherwise per product.
+      _id: splitGodowns
+        ? { product: "$lineItems.product", godownId: "$godownId" }
+        : "$lineItems.product",
       pendingOrderQty: { $sum: "$lineItems.oderQty" },
     },
   },
@@ -612,15 +625,19 @@ const godownMatchFragment = godownId
       const pendingQtyMap = {};
 
       pendingOrderQtyResult.forEach((item) => {
-        pendingQtyMap[item._id.toString()] =
-          item.pendingOrderQty;
+        const key = splitGodowns
+          ? `${item._id.product}_${item._id.godownId}`
+          : item._id.toString();
+        pendingQtyMap[key] = item.pendingOrderQty;
       });
 
       inventories = inventories.map((invItem) => ({
         ...invItem,
         pendingOrderQty:
           pendingQtyMap[
-            invItem.productId.toString()
+            splitGodowns
+              ? `${invItem.productId}_${invItem.godownId}`
+              : invItem.productId.toString()
           ] || 0,
       }));
     } else {
