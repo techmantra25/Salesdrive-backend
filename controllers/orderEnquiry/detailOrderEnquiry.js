@@ -1,6 +1,15 @@
 const asyncHandler = require("express-async-handler");
 const OrderEnquiry = require("../../models/orderEnquiry.model");
-const Inventory = require("../../models/inventory.model"); // adjust path/name as needed
+const Inventory = require("../../models/inventory.model");
+
+// Builds "Name (CODE)" from a populated godown doc, trying common field names.
+const formatGodown = (g) => {
+  if (!g || typeof g !== "object") return "";
+  const name = g.godownName || g.godown_name || g.name || g.title || "";
+  const code = g.godownCode || g.godown_code || g.code || "";
+  if (name && code) return `${name} (${code})`;
+  return name || code || "";
+};
 
 const detailOrderEnquiry = asyncHandler(async (req, res) => {
   try {
@@ -8,6 +17,7 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
       { path: "distributorId", select: "" },
       { path: "salesmanName", select: "" },
       { path: "routeId", select: "" },
+      { path: "godownId", select: "" },
       {
         path: "retailerId",
         select: "",
@@ -23,7 +33,11 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
       },
       { path: "lineItems.product", select: "" },
       { path: "lineItems.price", select: "" },
-      { path: "lineItems.inventoryId", select: "" },
+      {
+        path: "lineItems.inventoryId",
+        select: "",
+        populate: { path: "godownId", select: "" },
+      },
       { path: "convertedOrderEntryId", select: "" },
       {
         path: "adjustedCreditNoteIds.creditNoteId",
@@ -39,13 +53,9 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
     }
 
     const responseData = orderEnquiry.toObject();
-
     responseData.createdAt = responseData.manualDate;
 
     // --- LIVE INVENTORY OVERRIDE ---
-    // Re-fetch live inventory per product for this distributor, across ALL
-    // godowns, so the response reflects current stock rather than a stale
-    // inventoryId that may point at an empty/wrong godown.
     const distributorId = responseData.distributorId?._id;
 
     if (distributorId && Array.isArray(responseData.lineItems)) {
@@ -57,10 +67,9 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
         distributorId,
         productId: { $in: productIds },
       })
-        .populate("godownId", "name") // adjust field name if different
+        .populate("godownId", "")
         .lean();
 
-      // Group live inventory records by productId
       const inventoryByProduct = {};
       for (const inv of liveInventories) {
         const pid = String(inv.productId);
@@ -72,20 +81,36 @@ const detailOrderEnquiry = asyncHandler(async (req, res) => {
         const pid = String(li.product?._id);
         const records = inventoryByProduct[pid] || [];
 
-        // Pick the godown record with stock, if the currently-linked one is empty.
         const original = li.inventoryId;
         const originalHasStock = original && original.availableQty > 0;
-
         const bestAlternate = records.find((r) => r.availableQty > 0);
+
+        const chosenInventory = originalHasStock
+          ? original
+          : bestAlternate || original;
+
+        const godownLabel =
+          formatGodown(chosenInventory?.godownId) ||
+          formatGodown(
+            records.find((r) => String(r._id) === String(chosenInventory?._id))
+              ?.godownId
+          );
 
         return {
           ...li,
-          inventoryId: originalHasStock ? original : bestAlternate || original,
-          liveInventoryAcrossGodowns: records, // optional: full breakdown for transparency
+          inventoryId: chosenInventory,
+          godownName: godownLabel,
+          liveInventoryAcrossGodowns: records,
         };
       });
     }
     // --- END LIVE INVENTORY OVERRIDE ---
+
+    // Header-level label: saved godown on the enquiry, else first line item's
+    responseData.godownName =
+      formatGodown(responseData.godownId) ||
+      responseData.lineItems?.find((li) => li.godownName)?.godownName ||
+      "";
 
     return res.status(200).json({
       status: 200,

@@ -2,7 +2,14 @@ const asyncHandler = require("express-async-handler");
 const OrderEntry = require("../../models/orderEntry.model");
 const OutletApproved = require("../../models/outletApproved.model");
 const Beat = require("../../models/beat.model");
-const Inventory = require("../../models/inventory.model"); // adjust path/name as needed
+const Inventory = require("../../models/inventory.model");
+const Godown = require("../../models/godown.model"); // adjust path/name
+
+// "Rajarhat (GD001)"
+const formatGodown = (g) =>
+  g?.godownName
+    ? `${g.godownName}${g.godownCode ? ` (${g.godownCode})` : ""}`
+    : "";
 
 // Get Order Entry Details by ID
 const detailOrderEntry = asyncHandler(async (req, res) => {
@@ -63,13 +70,13 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
       orderData.createdAt = orderData.manualOrderDate;
     }
 
-    // --- LIVE INVENTORY OVERRIDE ---
-    // Re-fetch live inventory per product for this distributor, across ALL
-    // godowns, and always show the stock of the ORDER's godown on each line,
-    // even if the saved inventoryId points at a different godown.
-    const distributorId = orderData.distributorId?._id;
+    // Order's godown id (kept as a plain id, NOT populated, so the
+    // matching logic below keeps working)
     const orderGodownId = orderData.godownId ? String(orderData.godownId) : null;
     const gid = (g) => (g ? String(g._id || g) : null);
+
+    // --- LIVE INVENTORY OVERRIDE ---
+    const distributorId = orderData.distributorId?._id;
 
     if (distributorId && Array.isArray(orderData.lineItems)) {
       const productIds = orderData.lineItems
@@ -83,7 +90,6 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
         .populate("godownId", "godownName godownCode")
         .lean();
 
-      // Group live inventory records by productId
       const inventoryByProduct = {};
       for (const inv of liveInventories) {
         const pid = String(inv.productId);
@@ -94,12 +100,10 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
         const records = inventoryByProduct[String(li.product?._id)] || [];
         const original = li.inventoryId;
 
-        // Always prefer the record belonging to the ORDER's godown
         const orderGodownRecord = orderGodownId
           ? records.find((r) => gid(r.godownId) === orderGodownId)
           : null;
 
-        // true = saved inventoryId belongs to a different godown than the order
         const inventoryMismatch =
           !!original &&
           !!orderGodownId &&
@@ -109,11 +113,21 @@ const detailOrderEntry = asyncHandler(async (req, res) => {
           ...li,
           inventoryId: orderGodownRecord || original,
           inventoryMismatch,
-          liveInventoryAcrossGodowns: records, // optional: expose all godown stock for transparency
+          liveInventoryAcrossGodowns: records,
         };
       });
     }
     // --- END LIVE INVENTORY OVERRIDE ---
+
+    // --- HEADER GODOWN LABEL ---
+    if (orderGodownId) {
+      const godown = await Godown.findById(orderGodownId)
+        .select("godownName godownCode")
+        .lean();
+      orderData.godownName = formatGodown(godown);
+    } else {
+      orderData.godownName = "";
+    }
 
     return res.status(200).json({
       status: 200,
