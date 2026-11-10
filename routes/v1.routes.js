@@ -12,7 +12,7 @@ const brandRoutes = require("./v1Routes/brand.routes");
 const fileUploadRoutes = require("./v1Routes/fileUpload.routes");
 const cloudinaryRoutes = require("./v1Routes/cloudinary.routes");
 const passwordRoutes = require("./v1Routes/password.routes");
-
+const cronRoutes = require("./v1Routes/cron.routes");
 const distributorRoutes = require("./v1Routes/distributer.routes");
 const designationRoutes = require("./v1Routes/designation.routes");
 const employeeRoutes = require("./v1Routes/employee.routes");
@@ -107,6 +107,7 @@ v1Routes.use("/region", regionRoutes);
 v1Routes.use("/state", stateRoutes);
 v1Routes.use("/brand", brandRoutes);
 v1Routes.use("/bulk", fileUploadRoutes);
+v1Routes.use("/cron", cronRoutes);
 v1Routes.use("/cloudinary", cloudinaryRoutes);
 v1Routes.use("/password", passwordRoutes);
 v1Routes.use("/distributor", distributorRoutes);
