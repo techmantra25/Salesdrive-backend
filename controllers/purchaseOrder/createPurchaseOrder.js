@@ -13,6 +13,7 @@ const {
   purchaseOrderNumberGenerator,
   generateCode,
 } = require("../../utils/codeGenerator");
+
 const createPurchaseOrder = asyncHandler(async (req, res) => {
   try {
     const {
@@ -21,7 +22,7 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
       selectedPlant,
       supplierId,
       godownId,
-      poDate, 
+      poDate,
       expectedDeliveryDate,
       lineItems,
       totalLines,
@@ -38,23 +39,29 @@ const createPurchaseOrder = asyncHandler(async (req, res) => {
 
     console.log("Received data for creating purchase order:", req.body);
 
+    if (!Array.isArray(lineItems) || lineItems.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "At least one line item is required" });
+    }
+
     const distributor = await Distributor.findById(distributorId);
     if (!distributor) {
       return res.status(404).json({ message: "Distributor not found" });
     }
 
-
     const godown = await Godown.findOne({
-  _id: godownId,
-  distributorId,
-  isActive: true,
-});
+      _id: godownId,
+      distributorId,
+      isActive: true,
+    });
 
-if (!godown) {
-  return res.status(404).json({
-    message: "Please select godown",
-  });
-}
+    if (!godown) {
+      return res.status(404).json({
+        message: "Please select godown",
+      });
+    }
+
     const supplier = await Supplier.findById(supplierId);
     if (!supplier) {
       return res.status(404).json({ message: "Supplier not found" });
@@ -85,7 +92,8 @@ if (!godown) {
     } catch (error) {
       res.status(400);
       throw new Error(
-        `Error fetching config details: ${error?.response?.data?.message || error.message
+        `Error fetching config details: ${
+          error?.response?.data?.message || error.message
         }`
       );
     }
@@ -113,20 +121,19 @@ if (!godown) {
       approved_by = null;
     }
 
-    // 🔥 LINE ITEM LOOP
+    // 🔥 LINE ITEM VALIDATION + CALCULATION
     for (const item of lineItems) {
-
       const product = await Product.findById(item.product);
       if (!product) {
         return res.status(404).json({
-          message: `Product not found for ID ${item.product}`
+          message: `Product not found for ID ${item.product}`,
         });
       }
 
       const price = await Price.findById(item.price);
       if (!price) {
         return res.status(404).json({
-          message: `Price not found for ID ${item.price}`
+          message: `Price not found for ID ${item.price}`,
         });
       }
 
@@ -144,8 +151,7 @@ if (!godown) {
       }
 
       // ✅ GST RATES come from the product's stored slabs,
-      // but WHICH slab applies (IGST vs CGST+SGST) is decided by state comparison, not by
-      // whether product.igst happens to be non-zero.
+      // but WHICH slab applies (IGST vs CGST+SGST) is decided by state comparison.
       let productCgst = Number(product.cgst || 0);
       let productSgst = Number(product.sgst || 0);
       let productIgst = Number(product.igst || 0);
@@ -214,82 +220,111 @@ if (!godown) {
     // Generate order number
     const orderNumber = await purchaseOrderNumberGenerator("PO");
 
-    // 🔥 SAVE
-    const newPurchaseOrder = new PurchaseOrder({
-      distributorId,
-      selectedBrand,
-      selectedPlant,
-      godownId,
-      purchaseOrderNo: orderNumber,
-      supplierId,
-      manualDate: poDate ? new Date(poDate) : undefined, 
-      expectedDeliveryDate,
-      lineItems,
-      totalLines,
+    // ✅ STEP 1: ADD IN-TRANSIT FIRST (godown-wise), track what was applied
+    const appliedInTransit = []; // [{ productId, qty }]
 
-      grossAmount: grossAmountCalc,
-      taxableAmount: grossAmountCalc,
+    const rollbackInTransit = async () => {
+      for (const a of appliedInTransit) {
+        try {
+          await Inventory.updateOne(
+            { distributorId, productId: a.productId, godownId },
+            { $inc: { intransitQty: -a.qty } }
+          );
+        } catch (e) {
+          console.error("In-transit rollback failed:", a.productId, e.message);
+        }
+      }
+    };
 
-      cgst: totalCGST,
-      sgst: totalSGST,
-      igst: totalIGST,
+    try {
+      for (const item of lineItems) {
+        const qty = Number(item.orderQty || 0);
+        if (qty <= 0) continue;
 
-      netAmount: netAmountCalc,
-      totalGSTAmount: totalGSTAmountCalc,
+        const updated = await Inventory.findOneAndUpdate(
+          { distributorId, productId: item.product, godownId },
+          { $inc: { intransitQty: qty } },
+          { new: true }
+        );
 
-      remarks,
-      approvedStatus,
-      rejectedReason,
-      approved_by,
-      status,
-      invoicestatus: "Pending",
-      orderRemark,
-      totalBasePoints,
-    });
+        if (!updated) {
+          const invitemId = await generateCode("INVT");
+          await Inventory.create({
+            productId: item.product,
+            distributorId,
+            godownId,
+            invitemId,
+            intransitQty: qty,
+            undeliveredQty: 0,
+            damagedQty: 0,
+            availableQty: 0,
+            reservedQty: 0,
+            unsalableQty: 0,
+            offerQty: 0,
+            totalQty: 0,
+            totalStockamtDlp: 0,
+            totalStockamtRlp: 0,
+            totalUnsalableamtDlp: 0,
+            totalUnsalableStockamtRlp: 0,
+            normsQty: 0,
+            godownType: "main",
+            openingStock: false,
+          });
+        }
 
-    const savedPurchaseOrder = await newPurchaseOrder.save();
-    const purchaseOrderId = savedPurchaseOrder._id;
+        appliedInTransit.push({ productId: item.product, qty });
+      }
+    } catch (err) {
+      await rollbackInTransit();
+      return res.status(400).json({
+        message: `Failed to update in-transit qty: ${err.message}`,
+      });
+    }
 
-    // Update Inventory In-Transit Qty
+    // ✅ STEP 2: CREATE PO (only after in-transit is added)
+    let savedPurchaseOrder;
+    try {
+      const newPurchaseOrder = new PurchaseOrder({
+        distributorId,
+        selectedBrand,
+        selectedPlant,
+        godownId,
+        purchaseOrderNo: orderNumber,
+        supplierId,
+        manualDate: poDate ? new Date(poDate) : undefined,
+        expectedDeliveryDate,
+        lineItems,
+        totalLines,
 
+        grossAmount: grossAmountCalc,
+        taxableAmount: grossAmountCalc,
 
-// Update Inventory In-Transit Qty — godown-wise, auto-create if missing
-for (const item of lineItems) {
-  const existing = await Inventory.findOne({
-    distributorId,
-    productId: item.product,
-    godownId,
-  });
+        cgst: totalCGST,
+        sgst: totalSGST,
+        igst: totalIGST,
 
-  if (existing) {
-    existing.intransitQty += Number(item.orderQty || 0);
-    await existing.save();
-  } else {
-    const invitemId = await generateCode("INVT");
+        netAmount: netAmountCalc,
+        totalGSTAmount: totalGSTAmountCalc,
 
-    await Inventory.create({
-      productId: item.product,
-      distributorId,
-      godownId,
-      invitemId,
-      intransitQty: Number(item.orderQty || 0),
-      undeliveredQty: 0,
-      damagedQty: 0,
-      availableQty: 0,
-      reservedQty: 0,
-      unsalableQty: 0,
-      offerQty: 0,
-      totalQty: 0,
-      totalStockamtDlp: 0,
-      totalStockamtRlp: 0,
-      totalUnsalableamtDlp: 0,
-      totalUnsalableStockamtRlp: 0,
-      normsQty: 0,
-      godownType: "main",
-      openingStock: false,
-    });
-  }
-}
+        remarks,
+        approvedStatus,
+        rejectedReason,
+        approved_by,
+        status,
+        invoicestatus: "Pending",
+        orderRemark,
+        totalBasePoints,
+      });
+
+      savedPurchaseOrder = await newPurchaseOrder.save();
+    } catch (err) {
+      // PO failed -> undo the in-transit we just added
+      await rollbackInTransit();
+      return res.status(400).json({
+        message: `Failed to create purchase order: ${err.message}`,
+      });
+    }
+
     // check and fix the calculation
     try {
       await recalculatePurchaseOrder(savedPurchaseOrder._id);
@@ -304,7 +339,6 @@ for (const item of lineItems) {
       message: "Purchase Order created successfully",
       data: freshPO,
     });
-
   } catch (error) {
     res.status(400).json({ message: error.message || "Something went wrong" });
   }
