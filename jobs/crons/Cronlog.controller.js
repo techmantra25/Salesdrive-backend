@@ -39,6 +39,7 @@ const istDayStart = (s) => new Date(`${s}T00:00:00.000+05:30`);
 const istDayEnd = (s) => new Date(`${s}T23:59:59.999+05:30`);
 
 const STATUSES = ["RUNNING", "SUCCESS", "FAILED", "SKIPPED", "INTERRUPTED"];
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // ---------- GET /cron-logs ----------
 // ?jobName=&functionName=&status=&fromDate=2026-11-01&toDate=2026-11-10&page=1&limit=20&sort=desc
@@ -55,7 +56,7 @@ const getCronLogs = asyncHandler(async (req, res) => {
   } = req.query;
 
   const filter = {};
-  if (jobName) filter.jobName = jobName;
+  if (jobName) filter.jobName = { $regex: escapeRegex(jobName.trim()), $options: "i" };
   if (functionName) filter.functionName = functionName;
   if (status) {
     const list = String(status)
