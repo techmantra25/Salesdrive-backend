@@ -73,7 +73,7 @@ app.use(cookieParser());
 // syncOutletCodeUpdatesJob.start();
 // syncInventoryWithProductMasterJob.start();
 syncInventoryWithProductMasterJob.start();
-correctInventoryIntransitQtyJob.start();
+// correctInventoryIntransitQtyJob.start();
 // Health check route
 app.get("/", (req, res) => {
   res.status(200).json({
