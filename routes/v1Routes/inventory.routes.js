@@ -104,7 +104,7 @@ inventoryRoutes.route("/get-stock-product/:productId").get(getStockProduct);
 
 inventoryRoutes
   .route("/sync-inventory-with-product-master")
-  .get(syncInventoryWithProductMaster);
+  .get(protectDisRoute, syncInventoryWithProductMaster);
 
 inventoryRoutes
   .route("/opening-stock-add")
