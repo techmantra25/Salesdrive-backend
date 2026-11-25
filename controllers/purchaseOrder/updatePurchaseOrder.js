@@ -8,7 +8,70 @@ const Price = require("../../models/price.model");
 const { SERVER_URL } = require("../../config/server.config");
 const axios = require("axios");
 const { recalculatePurchaseOrder } = require("./Recalculatepurchaseorder");
+const Inventory = require("../../models/inventory.model");
+const { generateCode } = require("../../utils/codeGenerator");
 
+
+
+const qtyByProduct = (items = []) => {
+  const m = new Map();
+  for (const it of items) {
+    const id = String(it.product?._id || it.product);
+    m.set(id, (m.get(id) || 0) + Number(it.orderQty || 0));
+  }
+  return m;
+};
+
+const computeDeltas = (oldItems, newItems) => {
+  const o = qtyByProduct(oldItems);
+  const n = qtyByProduct(newItems);
+  const out = [];
+  for (const id of new Set([...o.keys(), ...n.keys()])) {
+    const diff = (n.get(id) || 0) - (o.get(id) || 0);
+    if (diff !== 0) out.push({ productId: id, qty: diff });
+  }
+  return out;
+};
+
+const rollbackDeltas = async (distributorId, godownId, applied) => {
+  for (const d of applied) {
+    await Inventory.updateOne(
+      { distributorId, productId: d.productId, godownId },
+      { $inc: { intransitQty: -d.qty } }
+    ).catch((e) => console.error("In-transit rollback failed:", d.productId, e.message));
+  }
+};
+
+const applyDeltas = async (distributorId, godownId, deltas) => {
+  const applied = [];
+  try {
+    for (const d of deltas) {
+      const r = await Inventory.findOneAndUpdate(
+        { distributorId, productId: d.productId, godownId },
+        { $inc: { intransitQty: d.qty } }
+      );
+      if (!r && d.qty > 0) {
+        await Inventory.create({
+          productId: d.productId,
+          distributorId,
+          godownId,
+          invitemId: await generateCode("INVT"),
+          intransitQty: d.qty,
+          undeliveredQty: 0, damagedQty: 0, availableQty: 0, reservedQty: 0,
+          unsalableQty: 0, offerQty: 0, totalQty: 0,
+          totalStockamtDlp: 0, totalStockamtRlp: 0,
+          totalUnsalableamtDlp: 0, totalUnsalableStockamtRlp: 0,
+          normsQty: 0, godownType: "main", openingStock: false,
+        });
+      }
+      applied.push(d);
+    }
+  } catch (e) {
+    await rollbackDeltas(distributorId, godownId, applied);
+    throw e;
+  }
+  return applied;
+};
 // FIX: "plant" is no longer required/used for Purchase Order line items.
 // Previously, if a line item had no plant assigned, the frontend sent
 // plant: "" (empty string), and Mongoose threw:
@@ -449,13 +512,39 @@ const updatePurchaseOrder = asyncHandler(async (req, res) => {
     req.body.approvedStatus = approvedStatus;
     req.body.approved_by = approved_by;
 
-    // Update the purchase order
-    let updatedPurchaseOrder = await PurchaseOrder.findOneAndUpdate(
-      { _id: purchaseOrderId },
-      req.body,
-      { new: true }
-    );
 
+    const oldStatus = purchaseOrder.status;
+const newStatus = req.body.status || oldStatus;
+
+let deltas = [];
+if (newStatus === "Cancelled" && oldStatus !== "Cancelled") {
+  deltas = computeDeltas(purchaseOrder.lineItems, []);              // release all
+} else if (newStatus !== "Cancelled" && oldStatus !== "Cancelled" && req.body.lineItems) {
+  deltas = computeDeltas(purchaseOrder.lineItems, req.body.lineItems); // only the difference
+}
+
+const appliedDeltas = await applyDeltas(
+  purchaseOrder.distributorId,
+  purchaseOrder.godownId,
+  deltas
+);
+    // Update the purchase order
+      // Update the purchase order
+    let updatedPurchaseOrder;
+    try {
+      updatedPurchaseOrder = await PurchaseOrder.findOneAndUpdate(
+        { _id: purchaseOrderId },
+        req.body,
+        { new: true }
+      );
+    } catch (e) {
+      await rollbackDeltas(
+        purchaseOrder.distributorId,
+        purchaseOrder.godownId,
+        appliedDeltas
+      );
+      throw e;
+    }
     // check and fix the calculation (only when line items were part of this
     // update, so a status-only change like Cancel never rewrites old amounts)
     if (req.body.lineItems) {
