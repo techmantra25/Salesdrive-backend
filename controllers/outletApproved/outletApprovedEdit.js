@@ -329,18 +329,26 @@ const outletApprovedEdit = asyncHandler(async (req, res) => {
       "googleMapLink",
     ];
 
+    const unsetFields = {};
+    const REQUIRED_FIELDS = ["outletName", "ownerName"]; // can't be blank (required in model)
+    const UNSET_WHEN_EMPTY = ["retailerClass", "enrolledStatus"]; // enum fields: remove key
+
     allowedFields.forEach((field) => {
-      if (
-        req.body[field] !== undefined &&
-        req.body[field] !== null
-      ) {
-        // Allow gstin, panNumber, aadharNumber, email to be updated with empty strings
-        if (field === 'gstin' || field === 'panNumber' || field === 'aadharNumber') {
-          updateFields[field] = req.body[field];
-        } else if (req.body[field] !== "") {
-          updateFields[field] = req.body[field];
+      const val = req.body[field];
+      if (val === undefined || val === null) return;
+
+      if (val === "") {
+        if (REQUIRED_FIELDS.includes(field)) return;
+        if (UNSET_WHEN_EMPTY.includes(field)) {
+          unsetFields[field] = 1;
+        } else {
+          updateFields[field] =
+            ["gstin", "panNumber", "aadharNumber"].includes(field) ? "" : null;
         }
+        return;
       }
+
+      updateFields[field] = val;
     });
 
     // ---------------- NEW FIELDS: potentialSelection, paymentCategory, birthday, categoryOfOutlet ----------------
