@@ -381,6 +381,8 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
       // Only fall back to the PO's L1 if the screen didn't send it at all.
       const rawL1 = item.l1Basic ?? poItem.l1Basic ?? 0;
       const l1 = Math.min(100, Math.max(0, Number(rawL1) || 0));
+      const rawPoL1 = item.poL1 ?? poItem.poL1 ?? poItem.l1Basic ?? 0;
+const poL1 = Math.min(100, Math.max(0, Number(rawPoL1) || 0));
 
       let basicRate = mrp;
       if (l1 > 0) {
@@ -474,6 +476,7 @@ const confirmGRNAndGenerateInvoice = asyncHandler(async (req, res) => {
         goodsType: "billed",
         mrp,
         l1Basic: l1, // discount %
+           poL1, 
         basicRate, // MRP after discount, per pc
         qty: requestedQty,
         receivedQty: requestedQty,
