@@ -16,6 +16,8 @@ const LineItemSchema = new mongoose.Schema({
     required: true,
   },
   mrp: { type: Number }, // price
+  l1Basic: { type: Number, default: 0 },   // GRN L1 %
+  poL1: { type: Number, default: 0 }, 
   qty: { type: Number },
   receivedQty: { type: Number },
 
